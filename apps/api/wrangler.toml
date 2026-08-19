@@ -1,0 +1,82 @@
+name = "poomas-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Environments ────────────────────────────────────────────────
+[env.production]
+name = "poomas-api"
+workers_dev = false
+routes = [
+  { pattern = "api.poomas.in/*", zone_name = "poomas.in" }
+]
+
+[env.staging]
+name = "poomas-api-staging"
+workers_dev = true
+
+# ── KV Namespaces ────────────────────────────────────────────────
+# Sessions, fare cache, tenant config cache, rate-limit counters
+[[kv_namespaces]]
+binding  = "SESSIONS_KV"
+id       = "REPLACE_WITH_SESSIONS_KV_ID"
+preview_id = "REPLACE_WITH_SESSIONS_KV_PREVIEW_ID"
+
+[[kv_namespaces]]
+binding  = "TENANT_CACHE_KV"
+id       = "REPLACE_WITH_TENANT_CACHE_KV_ID"
+preview_id = "REPLACE_WITH_TENANT_CACHE_KV_PREVIEW_ID"
+
+[[kv_namespaces]]
+binding  = "FARE_CACHE_KV"
+id       = "REPLACE_WITH_FARE_CACHE_KV_ID"
+preview_id = "REPLACE_WITH_FARE_CACHE_KV_PREVIEW_ID"
+
+# ── R2 Buckets ───────────────────────────────────────────────────
+# KYC documents, e-tickets, invoices, tenant logos
+[[r2_buckets]]
+binding    = "DOCUMENTS_R2"
+bucket_name = "poomas-documents"
+
+[[r2_buckets]]
+binding    = "PUBLIC_ASSETS_R2"
+bucket_name = "poomas-public"
+
+# ── Queues ───────────────────────────────────────────────────────
+# Async booking confirmations, notification dispatch
+[[queues.producers]]
+binding    = "BOOKING_QUEUE"
+queue      = "poomas-bookings"
+
+[[queues.producers]]
+binding    = "NOTIFY_QUEUE"
+queue      = "poomas-notifications"
+
+[[queues.consumers]]
+queue      = "poomas-bookings"
+max_batch_size    = 10
+max_batch_timeout = 5
+
+[[queues.consumers]]
+queue      = "poomas-notifications"
+max_batch_size    = 50
+max_batch_timeout = 2
+
+# ── Hyperdrive (Neon Postgres connection pooling at edge) ─────────
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id      = "REPLACE_WITH_HYPERDRIVE_ID"
+
+# ── Durable Objects (per-tenant rate limiter) ─────────────────────
+[[durable_objects.bindings]]
+name       = "TENANT_RATE_LIMITER"
+class_name = "TenantRateLimiter"
+
+[[migrations]]
+tag  = "v1"
+new_classes = ["TenantRateLimiter"]
+
+# ── Environment Variables (non-secret) ───────────────────────────
+[vars]
+ENVIRONMENT = "development"
+PLATFORM_TENANT_SLUG = "poomas"
