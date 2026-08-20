@@ -14,10 +14,10 @@ export function middleware(request: NextRequest) {
 }
 
 function extractTenantSlug(host: string): string {
-  if (host.endsWith(".poomas.in")) {
+  if (host.endsWith(".flypoomas.com")) {
     return host.split(".")[0];
   }
-  if (host === "poomas.in" || host === "www.poomas.in") {
+  if (host === "flypoomas.com" || host === "www.flypoomas.com") {
     return "poomas";
   }
   // Custom domain — return the full host; API will resolve via DB

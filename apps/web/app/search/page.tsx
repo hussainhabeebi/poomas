@@ -15,7 +15,7 @@ async function searchFlights(params: SearchPageProps["searchParams"], tenantSlug
     method:  "POST",
     headers: {
       "Content-Type": "application/json",
-      "host":          `${tenantSlug}.poomas.in`,  // Tenant context for the API
+      "host":          `${tenantSlug}.flypoomas.com`,  // Tenant context for the API
     },
     body: JSON.stringify({
       origin:        params.origin,

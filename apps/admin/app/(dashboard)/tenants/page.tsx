@@ -61,7 +61,7 @@ export default async function TenantsPage() {
             ) : tenants.map((t) => (
               <tr key={t.id} style={{ borderTop: "1px solid #334155" }}>
                 <td style={{ padding: "14px 20px", color: "white", fontWeight: 500 }}>{t.name}</td>
-                <td style={{ padding: "14px 20px", color: "#94a3b8" }}>{t.slug}.poomas.in</td>
+                <td style={{ padding: "14px 20px", color: "#94a3b8" }}>{t.slug}.flypoomas.com</td>
                 <td style={{ padding: "14px 20px" }}>
                   <span style={{
                     background: "#1e40af22", color: "#60a5fa",

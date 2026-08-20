@@ -27,8 +27,8 @@ export const resolveTenant: MiddlewareHandler<{ Bindings: Env; Variables: Variab
 
   // Derive tenant from host:
   //   1. Exact custom domain match    → flights.skyjetagency.com
-  //   2. Subdomain match              → skyjet.poomas.in
-  //   3. Platform domain              → poomas.in / api.poomas.in
+  //   2. Subdomain match              → skyjet.flypoomas.com
+  //   3. Platform domain              → flypoomas.com / api.flypoomas.com
   const slug = extractSlug(host, c.env.PLATFORM_TENANT_SLUG);
 
   const rows = await db
@@ -104,16 +104,16 @@ export const resolveTenant: MiddlewareHandler<{ Bindings: Env; Variables: Variab
 };
 
 function extractSlug(host: string, platformSlug: string): string {
-  // Custom domain: no *.poomas.in pattern — treat as custom
-  if (!host.endsWith(".poomas.in") && host !== "poomas.in" && host !== `api.poomas.in`) {
+  // Custom domain: no *.flypoomas.com pattern — treat as custom
+  if (!host.endsWith(".flypoomas.com") && host !== "flypoomas.com" && host !== `api.flypoomas.com`) {
     return "__custom__";
   }
 
-  // api.poomas.in → platform tenant
-  if (host === "api.poomas.in" || host === "poomas.in") {
+  // api.flypoomas.com → platform tenant
+  if (host === "api.flypoomas.com" || host === "flypoomas.com") {
     return platformSlug;
   }
 
-  // skyjet.poomas.in → "skyjet"
+  // skyjet.flypoomas.com → "skyjet"
   return host.split(".")[0];
 }

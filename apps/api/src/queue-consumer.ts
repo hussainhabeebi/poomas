@@ -201,7 +201,7 @@ async function handleInitiatePayment(
         amount:      total,
         currency:    currency,
         reference:   data.bookingId,
-        redirectUrl: `https://${tenant.slug}.poomas.in/booking/${data.bookingId}/confirm`,
+        redirectUrl: `https://${tenant.slug}.flypoomas.com/booking/${data.bookingId}/confirm`,
         description: `Flight booking ${data.bookingId}`,
       },
     );
@@ -503,7 +503,7 @@ async function handleNotifyBookingConfirmation(
     try {
       await sendEmail(env.RESEND_API_KEY, {
         to:      booking.contactEmail,
-        from:    `bookings@${tenantRow?.customDomain ?? "poomas.in"}`,
+        from:    `bookings@${tenantRow?.customDomain ?? "flypoomas.com"}`,
         subject: `Your booking is confirmed — PNR: ${booking.pnr}`,
         html:    eticketHtml || `<p>Your booking PNR is <strong>${booking.pnr}</strong>.</p>`,
       });

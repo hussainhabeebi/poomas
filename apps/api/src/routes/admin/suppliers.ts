@@ -53,7 +53,7 @@ suppliersAdminRoutes.patch("/:supplier", async (c) => {
 
   // Invalidate tenant cache so next request picks up new supplier config
   const tenant = c.get("tenant");
-  await c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.poomas.in`);
+  await c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.flypoomas.com`);
 
   return c.json({ ok: true });
 });

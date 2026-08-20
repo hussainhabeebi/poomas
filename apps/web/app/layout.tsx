@@ -64,7 +64,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {branding?.showPoweredBy && (
           <div style={{ textAlign: "center", padding: "8px", fontSize: "12px", color: "#666" }}>
             Powered by{" "}
-            <a href="https://poomas.in" style={{ color: "var(--color-primary)" }}>
+            <a href="https://flypoomas.com" style={{ color: "var(--color-primary)" }}>
               POOMAS Traveldays
             </a>
           </div>

@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 name = "poomas-api"
 workers_dev = false
 routes = [
-  { pattern = "api.poomas.in/*", zone_name = "poomas.in" }
+  { pattern = "api.flypoomas.com/*", zone_name = "flypoomas.com" }
 ]
 
 [env.staging]

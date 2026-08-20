@@ -23,7 +23,7 @@ async function seed() {
       secondaryColor: "#F7941D",
       accentColor:    "#F5C518",
       showPoweredBy:  false,
-      supportEmail:   "support@poomas.in",
+      supportEmail:   "support@flypoomas.com",
       allowB2C:       true,
       allowB2B:       true,
       allowWhatsApp:  true,
@@ -85,7 +85,7 @@ async function seed() {
   // Super-admin user
   await db.insert(users).values({
     tenantId:      platformTenant.id,
-    email:         process.env.PLATFORM_ADMIN_EMAIL ?? "admin@poomas.in",
+    email:         process.env.PLATFORM_ADMIN_EMAIL ?? "admin@flypoomas.com",
     name:          "POOMAS Admin",
     role:          "SUPER_ADMIN",
     emailVerified: true,
