@@ -104,8 +104,10 @@ export const leadvyneConfigs = pgTable("leadvyne_configs", {
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
 
   environment:     text("environment").notNull().default("production"),  // staging | production
-  chatwootInboxId: text("chatwoot_inbox_id"),
-  whatsappNumber:  text("whatsapp_number"),
+  chatwootBaseUrl:  text("chatwoot_base_url"),   // e.g. https://app.chatwoot.com
+  chatwootInboxId:  integer("chatwoot_inbox_id"),
+  chatwootApiToken: text("chatwoot_api_token"),
+  whatsappNumber:   text("whatsapp_number"),
 
   // tenant_id is derived from whatsappNumber/inboxId — never from client payload
   endpointMappings: jsonb("endpoint_mappings").notNull(),  // { search, fareHold, bookCreate, ... }

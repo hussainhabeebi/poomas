@@ -5,6 +5,8 @@ import { requireRole } from "../../middleware/auth.js";
 import { tenantsAdminRoutes }  from "./tenants.js";
 import { bookingsAdminRoutes } from "./bookings.js";
 import { suppliersAdminRoutes } from "./suppliers.js";
+import { agentsAdminRoutes }  from "./agents.js";
+import { financeAdminRoutes } from "./finance.js";
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -21,6 +23,8 @@ adminRoutes.use("*", async (c, next) => {
 adminRoutes.route("/tenants",   tenantsAdminRoutes);
 adminRoutes.route("/bookings",  bookingsAdminRoutes);
 adminRoutes.route("/suppliers", suppliersAdminRoutes);
+adminRoutes.route("/agents",    agentsAdminRoutes);
+adminRoutes.route("/finance",   financeAdminRoutes);
 
 // Platform-level dashboard stats (SUPER_ADMIN only)
 adminRoutes.get("/dashboard", async (c) => {

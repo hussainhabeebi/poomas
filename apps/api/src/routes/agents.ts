@@ -93,7 +93,90 @@ agentRoutes.patch("/:id/status", async (c) => {
   return c.json({ ok: true });
 });
 
-// Sub-agent list for a parent agent
+// Invite a sub-agent (simpler form for portal — uses parent agent's region/currency)
+const inviteSchema = z.object({
+  businessName: z.string().min(2),
+  contactEmail: z.string().email(),
+  contactPhone: z.string().min(8),
+});
+
+agentRoutes.post("/sub-agents/invite", zValidator("json", inviteSchema), async (c) => {
+  const body     = c.req.valid("json");
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+  const agentId  = c.get("agentId");
+
+  if (!agentId) throw new HTTPException(403, { message: "Agent auth required" });
+
+  // Get parent agent's region/currency
+  const [parent] = await db
+    .select({ region: agents.region, currency: agents.currency })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+
+  const [existing] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.tenantId, tenantId), eq(agents.email, body.contactEmail)))
+    .limit(1);
+
+  if (existing) throw new HTTPException(409, { message: "Agent with this email already exists" });
+
+  const [agent] = await db.insert(agents).values({
+    tenantId,
+    parentAgentId:  agentId,
+    businessName:   body.businessName,
+    ownerName:      body.businessName,
+    email:          body.contactEmail,
+    phone:          body.contactPhone,
+    status:         "PENDING",
+    region:         parent?.region ?? "INDIA",
+    currency:       parent?.currency ?? "INR",
+  }).returning();
+
+  await db.insert(walletAccounts).values({
+    tenantId,
+    agentId:  agent.id,
+    currency: parent?.currency ?? "INR",
+  });
+
+  return c.json({
+    id:           agent.id,
+    businessName: agent.businessName,
+    contactEmail: agent.email,
+    contactPhone: agent.phone,
+    status:       agent.status,
+    createdAt:    agent.createdAt,
+  }, 201);
+});
+
+// Sub-agents of the currently authenticated agent
+agentRoutes.get("/sub-agents", async (c) => {
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+  const agentId  = c.get("agentId");
+
+  if (!agentId) throw new HTTPException(403, { message: "Agent auth required" });
+
+  const rows = await db
+    .select({
+      id:           agents.id,
+      businessName: agents.businessName,
+      contactEmail: agents.email,
+      contactPhone: agents.phone,
+      status:       agents.status,
+      createdAt:    agents.createdAt,
+    })
+    .from(agents)
+    .where(
+      and(eq(agents.tenantId, tenantId), eq(agents.parentAgentId, agentId)),
+    );
+
+  return c.json({ agents: rows });
+});
+
+// Sub-agent list for a specific parent agent (ADMIN)
 agentRoutes.get("/:id/sub-agents", async (c) => {
   const db       = c.get("db");
   const tenantId = c.get("tenantId");

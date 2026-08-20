@@ -92,6 +92,8 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     supplierBookingRef: holdResult.holdId,
     gstNumber:        body.gstNumber ?? null,
     heldUntil:        new Date(holdResult.expiresAt),
+    contactEmail:     body.contactEmail,
+    contactPhone:     body.contactPhone,
   }).returning();
 
   // Insert passengers
@@ -120,6 +122,39 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
   });
 
   return c.json({ bookingId: booking.id, holdId: holdResult.holdId, expiresAt: holdResult.expiresAt }, 201);
+});
+
+// List bookings for the authenticated user/agent
+bookingRoutes.get("/", async (c) => {
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+  const userId   = c.get("userId");
+  const agentId  = c.get("agentId");
+
+  const conditions = [eq(bookings.tenantId, tenantId)];
+  if (agentId) conditions.push(eq(bookings.agentId, agentId));
+  else if (userId) conditions.push(eq(bookings.userId, userId));
+
+  const rows = await db
+    .select({
+      id:           bookings.id,
+      status:       bookings.status,
+      origin:       bookings.origin,
+      destination:  bookings.destination,
+      departureDate: bookings.departureDate,
+      adultCount:   bookings.adultCount,
+      childCount:   bookings.childCount,
+      totalAmount:  bookings.totalAmount,
+      currency:     bookings.currency,
+      pnr:          bookings.pnr,
+      supplier:     bookings.supplier,
+      createdAt:    bookings.createdAt,
+    })
+    .from(bookings)
+    .where(and(...conditions))
+    .limit(50);
+
+  return c.json({ bookings: rows });
 });
 
 // Get booking details

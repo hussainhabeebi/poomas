@@ -71,6 +71,10 @@ export const bookings = pgTable("bookings", {
   // Group booking reference
   groupRef: text("group_ref"),
 
+  // Contact for confirmation delivery
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+
   // Request metadata
   ipAddress:     text("ip_address"),
   userAgent:     text("user_agent"),

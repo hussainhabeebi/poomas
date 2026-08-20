@@ -14,6 +14,9 @@ import { authRoutes }    from "./routes/auth.js";
 import { adminRoutes }   from "./routes/admin/index.js";
 import { webhookRoutes } from "./routes/webhooks/index.js";
 import { TenantRateLimiter } from "./lib/rate-limiter.js";
+import { handleBookingQueue, handleNotifyQueue } from "./queue-consumer.js";
+import { paymentRoutes } from "./routes/payments.js";
+import { eticketRoutes } from "./routes/eticket.js";
 
 // Export Durable Object class (required for wrangler migration)
 export { TenantRateLimiter };
@@ -51,6 +54,8 @@ app.use("/api/*", authMiddleware);
 
 app.route("/api/search",   searchRoutes);
 app.route("/api/bookings", bookingRoutes);
+app.route("/api/payments", paymentRoutes);
+app.route("/api/eticket",  eticketRoutes);
 app.route("/api/agents",   agentRoutes);
 app.route("/api/wallet",   walletRoutes);
 
@@ -67,4 +72,14 @@ app.onError((err, c) => {
   return c.json({ error: err.message ?? "Internal server error" }, status as 400 | 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch.bind(app),
+
+  async queue(batch: MessageBatch, env: Env): Promise<void> {
+    if (batch.queue === "poomas-bookings") {
+      await handleBookingQueue(batch as MessageBatch<never>, env);
+    } else if (batch.queue === "poomas-notifications") {
+      await handleNotifyQueue(batch as MessageBatch<never>, env);
+    }
+  },
+};

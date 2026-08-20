@@ -34,10 +34,12 @@ walletRoutes.get("/", async (c) => {
   }
 
   return c.json({
-    balance:     wallet.balance,
-    creditLimit: wallet.creditLimit,
-    currency:    wallet.currency,
-    available:   String(parseFloat(wallet.balance) + parseFloat(wallet.creditLimit)),
+    wallet: {
+      balance:     wallet.balance,
+      creditLimit: wallet.creditLimit,
+      currency:    wallet.currency,
+      available:   String(parseFloat(wallet.balance) + parseFloat(wallet.creditLimit)),
+    },
   });
 });
 
@@ -66,21 +68,22 @@ walletRoutes.get("/transactions", async (c) => {
     .orderBy(desc(walletTransactions.createdAt))
     .limit(50);
 
-  return c.json(txns);
+  return c.json({ transactions: txns });
 });
 
 // Initiate wallet top-up (returns payment gateway link)
 const topupSchema = z.object({
   amount:  z.number().positive(),
-  gateway: z.enum(["RAZORPAY", "NOMOD"]),
+  gateway: z.enum(["RAZORPAY", "NOMOD"]).optional(),
 });
 
 walletRoutes.post("/topup", zValidator("json", topupSchema), async (c) => {
-  const { amount, gateway } = c.req.valid("json");
-  const tenant = c.get("tenant");
+  const { amount } = c.req.valid("json");
+  const tenant     = c.get("tenant");
 
-  // Returns a checkout URL for the relevant gateway
-  // Actual payment link creation handled by the payment service
+  // Auto-detect gateway from tenant currency
+  const gateway = tenant.defaultCurrency === "INR" ? "RAZORPAY" : "NOMOD";
+
   await c.env.BOOKING_QUEUE.send({
     type:     "WALLET_TOPUP_INITIATE",
     agentId:  c.get("agentId"),

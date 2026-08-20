@@ -40,6 +40,7 @@ export interface Env {
   NOMOD_API_KEY:          string;
   NOMOD_API_SECRET:       string;
   NOMOD_WEBHOOK_SECRET:   string;
+  RESEND_API_KEY:         string;
 }
 
 // Per-request context variables (populated by middleware)
