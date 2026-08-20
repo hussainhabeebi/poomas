@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev":       "next dev -p 3000",
-    "build":     "next build",
-    "start":     "next start",
-    "typecheck": "tsc --noEmit"
+    "dev":         "next dev -p 3000",
+    "build":       "next build",
+    "pages:build": "npx @cloudflare/next-on-pages",
+    "deploy":      "pnpm run pages:build && wrangler pages deploy .vercel/output/static --project-name poomas-web",
+    "preview":     "pnpm run pages:build && wrangler pages dev .vercel/output/static",
+    "start":       "next start",
+    "typecheck":   "tsc --noEmit"
   },
   "dependencies": {
     "next": "^14.2.0",

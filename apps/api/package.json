@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 4000",
-    "deploy": "wrangler deploy",
+    "dev":      "wrangler dev --port 4000",
+    "build":    "tsc --noEmit",
+    "deploy":   "wrangler deploy",
+    "preview":  "wrangler dev --port 4000 --env staging",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
