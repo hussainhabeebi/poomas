@@ -78,10 +78,11 @@ function deduplicate(fares: NormalizedFare[]): NormalizedFare[] {
 
 // Primary search router: tries suppliers in priority order, combines bookable results.
 // Falls back to SERP only if all bookable suppliers fail AND context is WhatsApp.
+// When includeSerpParallel=true, SERP runs alongside bookable suppliers (trial / explicit config).
 export async function searchFares(
   params: SearchParams,
   supplierConfigs: SupplierConfig[],
-  options: { allowSerpFallback?: boolean } = {},
+  options: { allowSerpFallback?: boolean; includeSerpParallel?: boolean } = {},
 ): Promise<SearchResult> {
   const sorted = supplierConfigs
     .filter((c) => c.isEnabled)
@@ -93,6 +94,20 @@ export async function searchFares(
   const allFares: NormalizedFare[]              = [];
   const usedSuppliers: SearchResult["usedSuppliers"] = [];
   const errors: Record<string, string>          = {};
+
+  // When requested, run SERP concurrently with bookable suppliers
+  const serpFaresPromise =
+    options.includeSerpParallel && serpConfig
+      ? (async () => {
+          try {
+            const adapter = buildAdapter(serpConfig);
+            return await searchWithTimeout(adapter, params, serpConfig.timeoutMs, 1);
+          } catch (err) {
+            errors["GOOGLE_SERP"] = err instanceof Error ? err.message : "SERP failed";
+            return [] as NormalizedFare[];
+          }
+        })()
+      : Promise.resolve([] as NormalizedFare[]);
 
   // Try all bookable suppliers concurrently (Riya + Tripjack in parallel)
   const results = await Promise.allSettled(
@@ -113,12 +128,43 @@ export async function searchFares(
     }
   }
 
-  // If we have bookable results, deduplicate and return
+  const serpFares = await serpFaresPromise;
+
+  // If bookable results exist: deduplicate them, then append SERP-only fares for flights
+  // that have no bookable alternative (identified by flightNumber + departureTime).
   if (allFares.length > 0) {
+    const deduped = deduplicate(allFares);
+
+    if (serpFares.length > 0) {
+      const bookableKeys = new Set(
+        deduped.map((f) => `${f.flightNumber}_${f.departureTime}`),
+      );
+      const serpOnly = serpFares.filter(
+        (f) => !bookableKeys.has(`${f.flightNumber}_${f.departureTime}`),
+      );
+
+      if (serpOnly.length > 0) {
+        usedSuppliers.push("GOOGLE_SERP");
+      }
+
+      const combined = [...deduped, ...serpOnly].sort((a, b) => a.totalFare - b.totalFare);
+      return {
+        fares:        combined,
+        usedSuppliers,
+        isIndicative: serpOnly.length > 0,  // only true when SERP contributed unique fares
+        errors,
+      };
+    }
+
+    return { fares: deduped, usedSuppliers, isIndicative: false, errors };
+  }
+
+  // Bookable suppliers returned nothing — use SERP parallel results if any
+  if (serpFares.length > 0) {
     return {
-      fares:         deduplicate(allFares),
-      usedSuppliers,
-      isIndicative:  false,
+      fares:         serpFares.sort((a, b) => a.totalFare - b.totalFare),
+      usedSuppliers: ["GOOGLE_SERP"],
+      isIndicative:  true,
       errors,
     };
   }
@@ -131,7 +177,7 @@ export async function searchFares(
       return {
         fares:         fares.sort((a, b) => a.totalFare - b.totalFare),
         usedSuppliers: ["GOOGLE_SERP"],
-        isIndicative:  true,  // Caller must display disclaimer
+        isIndicative:  true,
         errors,
       };
     } catch (err) {
