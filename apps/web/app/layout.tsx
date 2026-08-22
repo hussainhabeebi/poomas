@@ -21,7 +21,7 @@ async function getTenantBranding(slug: string) {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const headersList = headers();
+  const headersList = await headers();
   const slug        = headersList.get("x-tenant-slug") ?? "poomas";
   const branding    = await getTenantBranding(slug);
 
@@ -33,7 +33,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const headersList = headers();
+  const headersList = await headers();
   const slug     = headersList.get("x-tenant-slug") ?? "poomas";
   const branding = await getTenantBranding(slug);
 
