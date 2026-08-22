@@ -6,7 +6,7 @@ import PopularRoutes from "./components/PopularRoutes";
 export const runtime = "edge";
 
 export default async function HomePage() {
-  const headersList = headers();
+  const headersList = await headers();
   const slug = headersList.get("x-tenant-slug") ?? "poomas";
 
   // Fetch tenant-specific homepage config (banners, popular routes)

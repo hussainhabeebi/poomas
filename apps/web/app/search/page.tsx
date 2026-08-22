@@ -2,15 +2,17 @@ export const runtime = "edge";
 
 import { headers } from "next/headers";
 
+type SearchParams = {
+  origin?: string; destination?: string; departureDate?: string;
+  returnDate?: string; adults?: string; cabinClass?: string;
+  tripType?: string; currency?: string;
+};
+
 interface SearchPageProps {
-  searchParams: {
-    origin?: string; destination?: string; departureDate?: string;
-    returnDate?: string; adults?: string; cabinClass?: string;
-    tripType?: string; currency?: string;
-  };
+  searchParams: Promise<SearchParams>;
 }
 
-async function searchFlights(params: SearchPageProps["searchParams"], tenantSlug: string) {
+async function searchFlights(params: SearchParams, tenantSlug: string) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/search`, {
     method:  "POST",
     headers: {
@@ -34,17 +36,17 @@ async function searchFlights(params: SearchPageProps["searchParams"], tenantSlug
 }
 
 export default async function SearchResultsPage({ searchParams }: SearchPageProps) {
-  const headersList = headers();
-  const slug        = headersList.get("x-tenant-slug") ?? "poomas";
+  const [headersList, params] = await Promise.all([headers(), searchParams]);
+  const slug = headersList.get("x-tenant-slug") ?? "poomas";
 
-  const result = await searchFlights(searchParams, slug);
+  const result = await searchFlights(params, slug);
 
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>
-        {searchParams.origin} → {searchParams.destination}
+        {params.origin} → {params.destination}
         <span style={{ fontSize: 15, fontWeight: 400, color: "#6b7280", marginLeft: 12 }}>
-          {searchParams.departureDate} · {searchParams.adults} adult(s) · {searchParams.cabinClass}
+          {params.departureDate} · {params.adults} adult(s) · {params.cabinClass}
         </span>
       </h1>
 
