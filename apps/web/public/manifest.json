@@ -1,0 +1,12 @@
+{
+  "name": "POOMAS Traveldays",
+  "short_name": "POOMAS",
+  "description": "Book flights at best prices",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#E31E24",
+  "icons": [
+    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

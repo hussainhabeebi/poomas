@@ -48,7 +48,7 @@ authRoutes.post("/register", zValidator("json", registerSchema), async (c) => {
     email:        body.email,
     phone:        body.phone ?? null,
     passwordHash,
-    role:         "AGENT",
+    role:         "AGENT_ADMIN",
     isActive:     true,
     emailVerified: false,
   });

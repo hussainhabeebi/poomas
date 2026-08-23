@@ -3,59 +3,47 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-const TRIP_TYPES = ["One Way", "Round Trip", "Multi-City"] as const;
+const TRIP_TYPES  = ["One Way", "Round Trip"] as const;
 const CABIN_CLASSES = ["Economy", "Premium Economy", "Business", "First"] as const;
+const CABIN_MAP: Record<string, string> = {
+  "Economy": "ECONOMY", "Premium Economy": "PREMIUM_ECONOMY",
+  "Business": "BUSINESS", "First": "FIRST",
+};
 
 export default function SearchWidget() {
   const router = useRouter();
-  const [tripType, setTripType]     = useState<(typeof TRIP_TYPES)[number]>("One Way");
-  const [origin, setOrigin]         = useState("");
-  const [destination, setDestination] = useState("");
-  const [departDate, setDepartDate] = useState("");
-  const [returnDate, setReturnDate] = useState("");
-  const [adults, setAdults]         = useState(1);
-  const [cabinClass, setCabinClass] = useState<(typeof CABIN_CLASSES)[number]>("Economy");
+  const [tripType, setTripType]         = useState<(typeof TRIP_TYPES)[number]>("One Way");
+  const [origin, setOrigin]             = useState("");
+  const [destination, setDestination]   = useState("");
+  const [departDate, setDepartDate]     = useState("");
+  const [returnDate, setReturnDate]     = useState("");
+  const [adults, setAdults]             = useState(1);
+  const [cabinClass, setCabinClass]     = useState<(typeof CABIN_CLASSES)[number]>("Economy");
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     const params = new URLSearchParams({
-      origin:        origin.toUpperCase(),
-      destination:   destination.toUpperCase(),
+      origin:        origin.toUpperCase().trim(),
+      destination:   destination.toUpperCase().trim(),
       departureDate: departDate,
       adults:        String(adults),
-      cabinClass:    cabinClass.toUpperCase().replace(" ", "_"),
-      tripType:      tripType.toUpperCase().replace(" ", ""),
+      cabinClass:    CABIN_MAP[cabinClass] ?? "ECONOMY",
+      tripType:      tripType === "Round Trip" ? "ROUNDTRIP" : "ONEWAY",
       ...(tripType === "Round Trip" && returnDate ? { returnDate } : {}),
     });
     router.push(`/search?${params}`);
   }
 
   return (
-    <div style={{
-      background: "white",
-      borderRadius: 12,
-      padding: 24,
-      boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-      marginTop: -40,
-      position: "relative",
-      zIndex: 10,
-    }}>
+    <div className="search-widget">
       {/* Trip type tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+      <div className="trip-tabs">
         {TRIP_TYPES.map((t) => (
           <button
             key={t}
+            type="button"
             onClick={() => setTripType(t)}
-            style={{
-              padding: "6px 16px",
-              borderRadius: 20,
-              border: "none",
-              cursor: "pointer",
-              background: tripType === t ? "var(--color-primary)" : "#f3f4f6",
-              color:      tripType === t ? "white" : "#374151",
-              fontWeight: tripType === t ? 600 : 400,
-              fontSize: 14,
-            }}
+            className={t === tripType ? "trip-tab trip-tab-active" : "trip-tab trip-tab-inactive"}
           >
             {t}
           </button>
@@ -63,80 +51,80 @@ export default function SearchWidget() {
       </div>
 
       <form onSubmit={handleSearch}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 12, alignItems: "end" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>FROM</span>
+        <div className="search-fields">
+          <div className="search-field">
+            <label htmlFor="sw-origin">From</label>
             <input
+              id="sw-origin"
+              className="search-input"
               value={origin}
               onChange={(e) => setOrigin(e.target.value)}
-              placeholder="City or airport"
+              placeholder="BOM, DEL, CCJ…"
               required
               maxLength={3}
-              style={inputStyle}
+              inputMode="text"
+              autoCapitalize="characters"
+              autoComplete="off"
             />
-          </label>
+          </div>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>TO</span>
+          <div className="search-field">
+            <label htmlFor="sw-dest">To</label>
             <input
+              id="sw-dest"
+              className="search-input"
               value={destination}
               onChange={(e) => setDestination(e.target.value)}
-              placeholder="City or airport"
+              placeholder="DXB, SIN, LHR…"
               required
               maxLength={3}
-              style={inputStyle}
+              inputMode="text"
+              autoCapitalize="characters"
+              autoComplete="off"
             />
-          </label>
+          </div>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>DEPART</span>
+          <div className="search-field">
+            <label htmlFor="sw-depart">Depart</label>
             <input
+              id="sw-depart"
+              className="search-input"
               type="date"
               value={departDate}
               onChange={(e) => setDepartDate(e.target.value)}
               required
-              style={inputStyle}
+              min={new Date().toISOString().split("T")[0]}
             />
-          </label>
+          </div>
 
           {tripType === "Round Trip" ? (
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>RETURN</span>
+            <div className="search-field">
+              <label htmlFor="sw-return">Return</label>
               <input
+                id="sw-return"
+                className="search-input"
                 type="date"
                 value={returnDate}
                 onChange={(e) => setReturnDate(e.target.value)}
                 required
-                style={inputStyle}
+                min={departDate || new Date().toISOString().split("T")[0]}
               />
-            </label>
+            </div>
           ) : (
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>CLASS</span>
+            <div className="search-field">
+              <label htmlFor="sw-class">Class</label>
               <select
+                id="sw-class"
+                className="search-input"
                 value={cabinClass}
                 onChange={(e) => setCabinClass(e.target.value as typeof cabinClass)}
-                style={{ ...inputStyle, cursor: "pointer" }}
               >
                 {CABIN_CLASSES.map((c) => <option key={c}>{c}</option>)}
               </select>
-            </label>
+            </div>
           )}
 
-          <button
-            type="submit"
-            style={{
-              background: "var(--color-primary)",
-              color: "white",
-              border: "none",
-              borderRadius: 8,
-              padding: "14px 28px",
-              fontWeight: 700,
-              fontSize: 15,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
+          <button type="submit" className="search-btn">
             Search Flights
           </button>
         </div>
@@ -144,12 +132,3 @@ export default function SearchWidget() {
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  padding: "12px 14px",
-  border: "1.5px solid #e5e7eb",
-  borderRadius: 8,
-  fontSize: 15,
-  outline: "none",
-  width: "100%",
-};
