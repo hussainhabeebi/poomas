@@ -53,7 +53,8 @@ export class DuffelAdapter implements SupplierAdapter {
     });
 
     // Step 2: Fetch offers for the request
-    const { offers } = await this.client.get<{ offers: DuffelOffer[] }>(
+    // GET /air/offers returns { data: [...] } — client.get<T> unwraps data, so T is the array
+    const offers = await this.client.get<DuffelOffer[]>(
       "/air/offers",
       {
         offer_request_id: offerRequest.id,
