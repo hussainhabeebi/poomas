@@ -10,12 +10,13 @@ interface SearchPageProps {
   searchParams: Promise<SearchParams>;
 }
 
-async function searchFlights(params: SearchParams, tenantSlug: string) {
+async function searchFlights(params: SearchParams, tenantSlug: string, sessionId: string | null) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/search`, {
     method:  "POST",
     headers: {
-      "Content-Type": "application/json",
-      "host":          `${tenantSlug}.flypoomas.com`,  // Tenant context for the API
+      "Content-Type":  "application/json",
+      "x-tenant-slug": tenantSlug,
+      ...(sessionId ? { "X-Session-ID": sessionId } : {}),
     },
     body: JSON.stringify({
       origin:        params.origin,
@@ -35,9 +36,10 @@ async function searchFlights(params: SearchParams, tenantSlug: string) {
 
 export default async function SearchResultsPage({ searchParams }: SearchPageProps) {
   const [headersList, params] = await Promise.all([headers(), searchParams]);
-  const slug = headersList.get("x-tenant-slug") ?? "poomas";
+  const slug      = headersList.get("x-tenant-slug") ?? "poomas";
+  const sessionId = headersList.get("x-session-id");
 
-  const result = await searchFlights(params, slug);
+  const result = await searchFlights(params, slug, sessionId);
 
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>

@@ -1,14 +1,31 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-// Tenant resolution at the edge — injects tenant slug into request headers
-// so server components can read it without re-deriving from hostname each time
 export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const slug = extractTenantSlug(host);
 
-  const res = NextResponse.next();
-  res.headers.set("x-tenant-slug", slug);
-  res.headers.set("x-tenant-host", host);
+  // Read or generate a stable session ID for SERP trial tracking
+  const sid = request.cookies.get("sid")?.value ?? crypto.randomUUID();
+
+  // Forward extra headers into the request so server components can read them
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-tenant-slug", slug);
+  requestHeaders.set("x-tenant-host", host);
+  requestHeaders.set("x-session-id", sid);
+
+  const res = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+
+  // Persist session cookie if newly generated
+  if (!request.cookies.get("sid")) {
+    res.cookies.set("sid", sid, {
+      maxAge: 60 * 60 * 24 * 30,
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
+  }
 
   return res;
 }
@@ -20,7 +37,6 @@ function extractTenantSlug(host: string): string {
   if (host === "flypoomas.com" || host === "www.flypoomas.com") {
     return "poomas";
   }
-  // Custom domain — return the full host; API will resolve via DB
   return host;
 }
 
