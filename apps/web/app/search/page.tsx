@@ -47,15 +47,19 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
       cache: "no-store",
     });
 
-    const data = await res.json().catch(() => null) as SearchResult | { error?: string } | null;
+    const raw = await res.text();
+    let data: SearchResult | { error?: string } | null = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch {}
+
     if (!res.ok) {
       return {
         fares: [],
         isIndicative: false,
-        apiError: (data && "error" in data ? data.error : undefined) ?? `Search API returned ${res.status}`,
+        apiError: (data && "error" in data ? data.error : undefined) ?? `${res.status} ${res.statusText}${raw ? ` — ${raw.slice(0, 180)}` : ""}`,
       };
     }
-    return data as SearchResult;
+
+    return (data as SearchResult) ?? { fares: [], isIndicative: false, apiError: "Search API returned an empty response" };
   } catch (err) {
     return {
       fares: [],
@@ -111,6 +115,15 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                 ? `Supplier connection issue: ${failingSuppliers.join(", ")}`
                 : "Try different dates or destinations."}
           </p>
+          {result.apiError && (
+            <p style={{
+              margin: "0 auto 16px", maxWidth: 760, fontSize: 12, color: "#991b1b",
+              background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8,
+              padding: "10px 12px", wordBreak: "break-word",
+            }}>
+              {result.apiError}
+            </p>
+          )}
           {missingCredentialSuppliers.length > 0 && (
             <p style={{ margin: "0 0 24px", fontSize: 12, color: "#9ca3af" }}>
               Not configured: {missingCredentialSuppliers.join(", ")}
