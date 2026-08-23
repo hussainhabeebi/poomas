@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 const NAV_ITEMS = [
   { href: "/dashboard",   label: "Dashboard"   },
   { href: "/search",      label: "Book Flights" },

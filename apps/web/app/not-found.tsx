@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 export default function NotFound() {
   return (
     <div style={{ textAlign: "center", padding: "80px 24px" }}>

@@ -1,6 +1,4 @@
 "use client";
-export const runtime = "edge";
-
 import { useState, useEffect } from "react";
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {

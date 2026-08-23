@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   PENDING:   { bg: "#fffbeb", color: "#92400e" },
   APPROVED:  { bg: "#ecfdf5", color: "#065f46" },

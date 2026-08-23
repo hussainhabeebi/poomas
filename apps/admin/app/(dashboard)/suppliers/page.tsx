@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 interface SupplierConfig {
   supplier:    string;
   isEnabled:   boolean;

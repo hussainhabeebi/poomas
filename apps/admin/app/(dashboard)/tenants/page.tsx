@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 async function getTenants() {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/tenants`, {

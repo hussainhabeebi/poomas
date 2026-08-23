@@ -3,8 +3,6 @@ import SearchWidget from "./components/SearchWidget";
 import HeroBanner from "./components/HeroBanner";
 import PopularRoutes from "./components/PopularRoutes";
 
-export const runtime = "edge";
-
 export default async function HomePage() {
   const headersList = await headers();
   const slug = headersList.get("x-tenant-slug") ?? "poomas";

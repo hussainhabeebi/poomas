@@ -1,6 +1,4 @@
 "use client";
-export const runtime = "edge";
-
 import { useState, useEffect } from "react";
 
 const CABIN_CLASSES = ["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"] as const;

@@ -2,8 +2,6 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 
-export const runtime = "edge";
-
 async function getTenantBranding(slug: string) {
   // Fetch tenant config from API (cached at CF edge)
   try {

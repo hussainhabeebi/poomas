@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 const NAV_SECTIONS = [
   {
     title: "Platform",

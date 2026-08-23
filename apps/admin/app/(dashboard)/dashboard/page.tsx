@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 async function getPlatformStats() {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/dashboard`, {

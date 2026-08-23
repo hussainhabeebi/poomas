@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   SEARCHED:        { bg: "#1e293b", color: "#64748b" },
   HELD:            { bg: "#422006", color: "#fbbf24" },
