@@ -24,7 +24,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         working-directory: .
-      - run: pnpm build
+      - run: pnpm exec opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
       - run: pnpm exec wrangler deploy
@@ -44,7 +44,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         working-directory: .
-      - run: pnpm build
+      - run: pnpm exec opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
       - run: pnpm exec wrangler deploy
@@ -64,7 +64,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         working-directory: .
-      - run: pnpm build
+      - run: pnpm exec opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
       - run: pnpm exec wrangler deploy
