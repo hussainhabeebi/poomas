@@ -58,6 +58,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
       </head>
       <body style={{ fontFamily: "var(--font-body)" }}>
+        <header style={{
+          display: "flex", alignItems: "center",
+          padding: "10px 24px",
+          background: "white",
+          borderBottom: "1px solid #e5e7eb",
+          position: "sticky", top: 0, zIndex: 50,
+        }}>
+          <a href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.svg" alt="POOMAS Traveldays" height={38} style={{ display: "block" }} />
+          </a>
+        </header>
         {children}
         {branding?.showPoweredBy && (
           <div style={{ textAlign: "center", padding: "8px", fontSize: "12px", color: "#666" }}>

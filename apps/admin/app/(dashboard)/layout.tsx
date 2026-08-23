@@ -20,9 +20,10 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
         width: 240, background: "#1e293b", borderRight: "1px solid #334155",
         display: "flex", flexDirection: "column", padding: "20px 0",
       }}>
-        <div style={{ padding: "0 20px 24px" }}>
-          <div style={{ fontWeight: 800, fontSize: 16, color: "#E31E24" }}>POOMAS</div>
-          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>Super Admin</div>
+        <div style={{ padding: "0 16px 24px" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="POOMAS Traveldays" height={30} style={{ display: "block" }} />
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>Super Admin</div>
         </div>
 
         {NAV_SECTIONS.map((section) => (

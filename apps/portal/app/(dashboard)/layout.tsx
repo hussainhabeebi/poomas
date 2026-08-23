@@ -15,8 +15,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         display: "flex", flexDirection: "column", padding: "24px 0",
         flexShrink: 0,
       }}>
-        <div style={{ padding: "0 20px 28px", fontWeight: 700, fontSize: 18, color: "#E31E24" }}>
-          POOMAS Portal
+        <div style={{ padding: "0 16px 24px" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="POOMAS Traveldays" height={32} style={{ display: "block" }} />
         </div>
         {NAV_ITEMS.map((item) => (
           <a
