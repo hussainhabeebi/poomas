@@ -6,9 +6,7 @@ type SearchParams = {
   tripType?: string; currency?: string;
 };
 
-interface SearchPageProps {
-  searchParams: Promise<SearchParams>;
-}
+interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
 async function searchFlights(params: SearchParams, sessionId: string | null) {
   try {
@@ -16,9 +14,9 @@ async function searchFlights(params: SearchParams, sessionId: string | null) {
     if (!apiUrl) return null;
 
     const res = await fetch(`${apiUrl}/api/search`, {
-      method:  "POST",
+      method: "POST",
       headers: {
-        "Content-Type":  "application/json",
+        "Content-Type": "application/json",
         "x-tenant-slug": "poomas",
         ...(sessionId ? { "X-Session-ID": sessionId } : {}),
       },
@@ -33,7 +31,6 @@ async function searchFlights(params: SearchParams, sessionId: string | null) {
       }),
       cache: "no-store",
     });
-
     if (!res.ok) return null;
     return await res.json() as { fares: unknown[]; isIndicative: boolean; disclaimer?: string };
   } catch {
@@ -44,26 +41,26 @@ async function searchFlights(params: SearchParams, sessionId: string | null) {
 export default async function SearchResultsPage({ searchParams }: SearchPageProps) {
   const params = await searchParams;
   let sessionId: string | null = null;
-  try {
-    const cookieStore = await cookies();
-    sessionId = cookieStore.get("sid")?.value ?? null;
-  } catch { /* cookies() unavailable */ }
+  try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
 
   const result = await searchFlights(params, sessionId);
 
   return (
-    <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>
-        {params.origin} → {params.destination}
-        <span style={{ fontSize: 15, fontWeight: 400, color: "#6b7280", marginLeft: 12 }}>
-          {params.departureDate} · {params.adults} adult(s) · {params.cabinClass}
-        </span>
-      </h1>
+    <main className="page-container" style={{ paddingTop: 24 }}>
+      {/* Route heading */}
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: "clamp(18px,4vw,24px)", fontWeight: 800, margin: "0 0 4px" }}>
+          {params.origin} → {params.destination}
+        </h1>
+        <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
+          {params.departureDate} · {params.adults ?? 1} adult · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}
+        </p>
+      </div>
 
       {result?.isIndicative && (
         <div style={{
-          background: "#FEF3C7", border: "1px solid #F59E0B",
-          borderRadius: 8, padding: "12px 16px", marginBottom: 20, fontSize: 14,
+          background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 8,
+          padding: "12px 16px", marginBottom: 20, fontSize: 14,
         }}>
           ⚠️ {result.disclaimer}
         </div>
@@ -71,8 +68,17 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
 
       {!result || result.fares.length === 0 ? (
         <div style={{ textAlign: "center", padding: "80px 0", color: "#6b7280" }}>
-          <p style={{ fontSize: 20 }}>No flights found for this route and date.</p>
-          <p>Try different dates or destinations.</p>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>✈️</div>
+          <p style={{ fontSize: 20, fontWeight: 600, color: "#374151", margin: "0 0 8px" }}>
+            No flights found
+          </p>
+          <p style={{ margin: "0 0 24px" }}>Try different dates or destinations.</p>
+          <a href="/" style={{
+            background: "var(--color-primary)", color: "white", textDecoration: "none",
+            padding: "12px 24px", borderRadius: 8, fontWeight: 600, display: "inline-block",
+          }}>
+            Search Again
+          </a>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -86,49 +92,47 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
 }
 
 function FareCard({ fare }: { fare: any }) {
+  const dep = new Date(fare.departureTime);
+  const arr = new Date(fare.arrivalTime);
+  const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+
   return (
-    <div style={{
-      border: "1.5px solid #e5e7eb", borderRadius: 10, padding: "20px 24px",
-      display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 16,
-      alignItems: "center", background: "white",
-    }}>
-      <div>
-        <div style={{ fontWeight: 700, fontSize: 18 }}>{fare.airlineName}</div>
-        <div style={{ color: "#6b7280", fontSize: 13 }}>{fare.flightNumber}</div>
+    <div className="fare-card">
+      <div className="fare-card-airline-col">
+        <div className="fare-card-airline">{fare.airlineName}</div>
+        <div className="fare-card-flight">{fare.flightNumber}</div>
       </div>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontWeight: 600 }}>
-          {new Date(fare.departureTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-          {" → "}
-          {new Date(fare.arrivalTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+      <div className="fare-card-times-col">
+        <div className="fare-card-times">
+          {fmt(dep)} → {fmt(arr)}
         </div>
-        <div style={{ fontSize: 13, color: "#6b7280" }}>
+        <div className="fare-card-stops">
           {fare.stops === 0 ? "Nonstop" : `${fare.stops} stop${fare.stops > 1 ? "s" : ""}`}
           {" · "}{Math.floor(fare.duration / 60)}h {fare.duration % 60}m
         </div>
       </div>
-      <div>
+      <div className="fare-card-info-col">
         <div style={{ fontSize: 12, color: fare.isRefundable ? "#059669" : "#9ca3af" }}>
-          {fare.isRefundable ? "Refundable" : "Non-refundable"}
+          {fare.isRefundable ? "✓ Refundable" : "Non-refundable"}
         </div>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>{fare.baggage?.checked}</div>
+        {fare.baggage?.checked && (
+          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{fare.baggage.checked}</div>
+        )}
       </div>
-      <div style={{ textAlign: "right" }}>
-        <div style={{ fontWeight: 700, fontSize: 22, color: "var(--color-primary)" }}>
+      <div className="fare-card-price-col">
+        <div className="fare-card-price">
           ₹{(fare.displayPrice ?? fare.totalFare).toLocaleString("en-IN")}
         </div>
         {!fare.isBookable && (
-          <div style={{ fontSize: 11, color: "#6b7280" }}>Indicative</div>
+          <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>
         )}
         {fare.isBookable && (
-          <a href={`/book?fareId=${fare.id}&supplier=${fare.supplier}`}
-            style={{
-              display: "inline-block", marginTop: 8,
-              background: "var(--color-primary)", color: "white",
-              padding: "8px 20px", borderRadius: 6, fontWeight: 600,
-              textDecoration: "none", fontSize: 14,
-            }}>
-            Book
+          <a
+            href={`/book?fareId=${fare.id}&supplier=${fare.supplier}`}
+            className="fare-card-book-btn"
+            style={{ marginTop: 8 }}
+          >
+            Book Now
           </a>
         )}
       </div>
