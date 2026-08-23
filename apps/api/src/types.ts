@@ -1,31 +1,18 @@
 import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace } from "@cloudflare/workers-types";
 import type { Db } from "@poomas/db";
 
-// Cloudflare Worker bindings (matches wrangler.toml)
 export interface Env {
   ENVIRONMENT:          string;
   PLATFORM_TENANT_SLUG: string;
-
-  // KV
   SESSIONS_KV:      KVNamespace;
   TENANT_CACHE_KV:  KVNamespace;
   FARE_CACHE_KV:    KVNamespace;
-
-  // R2
   DOCUMENTS_R2:     R2Bucket;
   PUBLIC_ASSETS_R2: R2Bucket;
-
-  // Queues
   BOOKING_QUEUE:    Queue;
   NOTIFY_QUEUE:     Queue;
-
-  // Hyperdrive (Neon Postgres)
   HYPERDRIVE:       Hyperdrive;
-
-  // Durable Objects
   TENANT_RATE_LIMITER: DurableObjectNamespace;
-
-  // Secrets (set via `wrangler secret put`)
   DATABASE_URL:           string;
   JWT_SECRET:             string;
   RIYA_API_KEY:           string;
@@ -35,6 +22,7 @@ export interface Env {
   TRIPJACK_API_BASE_URL:  string;
   SERP_API_KEY:           string;
   DUFFEL_API_KEY:         string;
+  POOMAS_INTEGRATION_KEY: string;
   RAZORPAY_KEY_ID:        string;
   RAZORPAY_KEY_SECRET:    string;
   RAZORPAY_WEBHOOK_SECRET: string;
@@ -44,7 +32,6 @@ export interface Env {
   RESEND_API_KEY:         string;
 }
 
-// Per-request context variables (populated by middleware)
 export interface Variables {
   db:       Db;
   tenantId: string;
