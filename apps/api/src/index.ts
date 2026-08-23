@@ -8,6 +8,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { rateLimitMiddleware } from "./middleware/ratelimit.js";
 import { searchRoutes }  from "./routes/search.js";
 import { bookingRoutes } from "./routes/booking.js";
+import { duffelSandboxRoutes } from "./routes/duffel-sandbox.js";
 import { agentRoutes }   from "./routes/agents.js";
 import { walletRoutes }  from "./routes/wallet.js";
 import { authRoutes }    from "./routes/auth.js";
@@ -19,24 +20,19 @@ import { paymentRoutes } from "./routes/payments.js";
 import { eticketRoutes } from "./routes/eticket.js";
 import { sessionRoutes } from "./routes/session.js";
 
-// Export Durable Object class (required for wrangler migration)
 export { TenantRateLimiter };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// ── Global middleware ──────────────────────────────────────────
 app.use("*", logger());
 app.use("*", secureHeaders());
 app.use("*", cors({
-  origin:      (origin) => origin,
+  origin: (origin) => origin,
   credentials: true,
   allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-API-Key", "x-tenant-slug", "X-Session-ID", "X-Channel"],
 }));
 
-// ── Health check ───────────────────────────────────────────────
-// IMPORTANT: this must run before tenant/database middleware so it can prove the
-// Worker itself is alive even if Hyperdrive/Neon/KV is unavailable.
 app.get("/health", (c) => c.json({
   status: "ok",
   env: c.env.ENVIRONMENT,
@@ -44,45 +40,34 @@ app.get("/health", (c) => c.json({
   timestamp: new Date().toISOString(),
 }));
 
-// ── Tenant resolution ─────────────────────────────────────────
-// Derives tenant from subdomain/custom-domain — never trusts client-supplied tenant_id
 app.use("*", resolveTenant);
-
-// ── Rate limiting (per-tenant, via Durable Objects) ───────────
 app.use("/api/*", rateLimitMiddleware);
 
-// ── Public routes (no auth) ────────────────────────────────────
-app.route("/api/auth",     authRoutes);
+app.route("/api/auth", authRoutes);
+app.route("/webhooks", webhookRoutes);
+app.route("/api/search", searchRoutes);
 
-// Webhooks use their own signature-based verification, not JWT auth
-app.route("/webhooks",     webhookRoutes);
+// Public sandbox checkout is intentionally outside authenticated booking routes.
+// It hard-rejects any non-test Duffel token, so it can never create a live booking.
+app.route("/api/duffel-sandbox", duffelSandboxRoutes);
 
-// ── Public search (no auth) ────────────────────────────────────
-app.route("/api/search",   searchRoutes);
-
-// ── Authenticated routes ───────────────────────────────────────
 app.use("/api/bookings/*", authMiddleware);
 app.use("/api/payments/*", authMiddleware);
-app.use("/api/eticket/*",  authMiddleware);
-app.use("/api/agents/*",   authMiddleware);
-app.use("/api/wallet/*",   authMiddleware);
-app.use("/api/session/*",  authMiddleware);
-app.use("/api/admin/*",    authMiddleware);
+app.use("/api/eticket/*", authMiddleware);
+app.use("/api/agents/*", authMiddleware);
+app.use("/api/wallet/*", authMiddleware);
+app.use("/api/session/*", authMiddleware);
+app.use("/api/admin/*", authMiddleware);
 
-app.route("/api/session",  sessionRoutes);
+app.route("/api/session", sessionRoutes);
 app.route("/api/bookings", bookingRoutes);
 app.route("/api/payments", paymentRoutes);
-app.route("/api/eticket",  eticketRoutes);
-app.route("/api/agents",   agentRoutes);
-app.route("/api/wallet",   walletRoutes);
+app.route("/api/eticket", eticketRoutes);
+app.route("/api/agents", agentRoutes);
+app.route("/api/wallet", walletRoutes);
+app.route("/api/admin", adminRoutes);
 
-// Super-admin routes — additionally require SUPER_ADMIN role (enforced inside)
-app.route("/api/admin",    adminRoutes);
-
-// ── 404 handler ────────────────────────────────────────────────
 app.notFound((c) => c.json({ error: "Not found" }, 404));
-
-// ── Error handler ──────────────────────────────────────────────
 app.onError((err, c) => {
   console.error(err);
   const status = "status" in err ? (err as { status: number }).status : 500;
@@ -91,7 +76,6 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch.bind(app),
-
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     if (batch.queue === "poomas-bookings") {
       await handleBookingQueue(batch as MessageBatch<never>, env);
