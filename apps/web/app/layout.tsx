@@ -1,59 +1,26 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import "./globals.css";
 
-async function getTenantBranding(slug: string) {
-  // Fetch tenant config from API (cached at CF edge)
-  try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tenant/branding`, {
-      headers: { "x-tenant-slug": slug },
-      cache: "no-store",
-    });
-    if (res.ok) return res.json() as Promise<{
-      name: string; primaryColor: string; secondaryColor: string; accentColor: string;
-      logoUrl: string | null; faviconUrl: string | null; fontFamily: string;
-      showPoweredBy: boolean; tagline: string | null;
-    }>;
-  } catch {}
-  return null;
-}
+export const metadata: Metadata = {
+  title: "POOMAS Traveldays",
+  description: "Book flights at best prices",
+  icons: { icon: "/favicon.ico" },
+};
 
-export async function generateMetadata(): Promise<Metadata> {
-  const headersList = await headers();
-  const slug        = headersList.get("x-tenant-slug") ?? "poomas";
-  const branding    = await getTenantBranding(slug);
-
-  return {
-    title:       branding?.name ?? "POOMAS Traveldays",
-    description: branding?.tagline ?? "Book flights at best prices",
-    icons:       { icon: branding?.faviconUrl ?? "/favicon.ico" },
-  };
-}
-
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const headersList = await headers();
-  const slug     = headersList.get("x-tenant-slug") ?? "poomas";
-  const branding = await getTenantBranding(slug);
-
-  const primaryColor   = branding?.primaryColor   ?? "#E31E24";
-  const secondaryColor = branding?.secondaryColor ?? "#F7941D";
-  const accentColor    = branding?.accentColor    ?? "#F5C518";
-  const fontFamily     = branding?.fontFamily     ?? "Inter";
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
-        {/* CSS custom properties injected server-side — no client JS needed for theming */}
         <style>{`
           :root {
-            --color-primary:   ${primaryColor};
-            --color-secondary: ${secondaryColor};
-            --color-accent:    ${accentColor};
-            --font-body:       ${fontFamily}, system-ui, sans-serif;
+            --color-primary:   #E31E24;
+            --color-secondary: #F7941D;
+            --color-accent:    #F5C518;
+            --font-body:       Inter, system-ui, sans-serif;
           }
         `}</style>
         <link
-          href={`https://fonts.googleapis.com/css2?family=${encodeURIComponent(fontFamily)}:wght@400;500;600;700&display=swap`}
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>
@@ -71,14 +38,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </a>
         </header>
         {children}
-        {branding?.showPoweredBy && (
-          <div style={{ textAlign: "center", padding: "8px", fontSize: "12px", color: "#666" }}>
-            Powered by{" "}
-            <a href="https://flypoomas.com" style={{ color: "var(--color-primary)" }}>
-              POOMAS Traveldays
-            </a>
-          </div>
-        )}
       </body>
     </html>
   );
