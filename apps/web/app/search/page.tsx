@@ -1,4 +1,4 @@
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
@@ -10,36 +10,46 @@ interface SearchPageProps {
   searchParams: Promise<SearchParams>;
 }
 
-async function searchFlights(params: SearchParams, tenantSlug: string, sessionId: string | null) {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/search`, {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "x-tenant-slug": tenantSlug,
-      ...(sessionId ? { "X-Session-ID": sessionId } : {}),
-    },
-    body: JSON.stringify({
-      origin:        params.origin,
-      destination:   params.destination,
-      departureDate: params.departureDate,
-      returnDate:    params.returnDate,
-      adults:        parseInt(params.adults ?? "1"),
-      cabinClass:    params.cabinClass ?? "ECONOMY",
-      tripType:      params.tripType ?? "ONEWAY",
-    }),
-    cache: "no-store",
-  });
+async function searchFlights(params: SearchParams, sessionId: string | null) {
+  try {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (!apiUrl) return null;
 
-  if (!res.ok) return null;
-  return res.json() as Promise<{ fares: unknown[]; isIndicative: boolean; disclaimer?: string }>;
+    const res = await fetch(`${apiUrl}/api/search`, {
+      method:  "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "x-tenant-slug": "poomas",
+        ...(sessionId ? { "X-Session-ID": sessionId } : {}),
+      },
+      body: JSON.stringify({
+        origin:        params.origin,
+        destination:   params.destination,
+        departureDate: params.departureDate,
+        returnDate:    params.returnDate,
+        adults:        parseInt(params.adults ?? "1"),
+        cabinClass:    params.cabinClass ?? "ECONOMY",
+        tripType:      params.tripType ?? "ONEWAY",
+      }),
+      cache: "no-store",
+    });
+
+    if (!res.ok) return null;
+    return await res.json() as { fares: unknown[]; isIndicative: boolean; disclaimer?: string };
+  } catch {
+    return null;
+  }
 }
 
 export default async function SearchResultsPage({ searchParams }: SearchPageProps) {
-  const [headersList, cookieStore, params] = await Promise.all([headers(), cookies(), searchParams]);
-  const slug      = headersList.get("x-tenant-slug") ?? "poomas";
-  const sessionId = cookieStore.get("sid")?.value ?? null;
+  const params = await searchParams;
+  let sessionId: string | null = null;
+  try {
+    const cookieStore = await cookies();
+    sessionId = cookieStore.get("sid")?.value ?? null;
+  } catch { /* cookies() unavailable */ }
 
-  const result = await searchFlights(params, slug, sessionId);
+  const result = await searchFlights(params, sessionId);
 
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
