@@ -6,11 +6,22 @@ type SearchParams = {
   tripType?: string; currency?: "INR" | "AED" | "USD";
 };
 
+type SearchResult = {
+  fares: unknown[];
+  isIndicative: boolean;
+  disclaimer?: string;
+  usedSuppliers?: string[];
+  availableSuppliers?: string[];
+  credentialAvailability?: Record<string, boolean>;
+  supplierErrors?: Record<string, string>;
+  apiError?: string;
+};
+
 const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", AED: "د.إ", USD: "$" };
 
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
-async function searchFlights(params: SearchParams, sessionId: string | null) {
+async function searchFlights(params: SearchParams, sessionId: string | null): Promise<SearchResult> {
   try {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
@@ -27,16 +38,30 @@ async function searchFlights(params: SearchParams, sessionId: string | null) {
         departureDate: params.departureDate,
         returnDate:    params.returnDate,
         adults:        parseInt(params.adults ?? "1"),
+        children:      0,
+        infants:       0,
         cabinClass:    params.cabinClass ?? "ECONOMY",
         tripType:      params.tripType ?? "ONEWAY",
         ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
     });
-    if (!res.ok) return null;
-    return await res.json() as { fares: unknown[]; isIndicative: boolean; disclaimer?: string };
-  } catch {
-    return null;
+
+    const data = await res.json().catch(() => null) as SearchResult | { error?: string } | null;
+    if (!res.ok) {
+      return {
+        fares: [],
+        isIndicative: false,
+        apiError: (data && "error" in data ? data.error : undefined) ?? `Search API returned ${res.status}`,
+      };
+    }
+    return data as SearchResult;
+  } catch (err) {
+    return {
+      fares: [],
+      isIndicative: false,
+      apiError: err instanceof Error ? err.message : "Search API unavailable",
+    };
   }
 }
 
@@ -48,10 +73,13 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   const result   = await searchFlights(params, sessionId);
   const currency = params.currency ?? "INR";
   const symbol   = CURRENCY_SYMBOLS[currency] ?? "₹";
+  const failingSuppliers = Object.keys(result.supplierErrors ?? {});
+  const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
+    .filter(([, ok]) => !ok)
+    .map(([name]) => name);
 
   return (
     <main className="page-container" style={{ paddingTop: 24 }}>
-      {/* Route heading */}
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: "clamp(18px,4vw,24px)", fontWeight: 800, margin: "0 0 4px" }}>
           {params.origin} → {params.destination}
@@ -70,13 +98,24 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         </div>
       )}
 
-      {!result || result.fares.length === 0 ? (
+      {result.fares.length === 0 ? (
         <div style={{ textAlign: "center", padding: "80px 0", color: "#6b7280" }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>✈️</div>
           <p style={{ fontSize: 20, fontWeight: 600, color: "#374151", margin: "0 0 8px" }}>
-            No flights found
+            {result.apiError || failingSuppliers.length > 0 ? "Live flight search unavailable" : "No flights found"}
           </p>
-          <p style={{ margin: "0 0 24px" }}>Try different dates or destinations.</p>
+          <p style={{ margin: "0 0 12px" }}>
+            {result.apiError
+              ? "The flight API could not complete this search."
+              : failingSuppliers.length > 0
+                ? `Supplier connection issue: ${failingSuppliers.join(", ")}`
+                : "Try different dates or destinations."}
+          </p>
+          {missingCredentialSuppliers.length > 0 && (
+            <p style={{ margin: "0 0 24px", fontSize: 12, color: "#9ca3af" }}>
+              Not configured: {missingCredentialSuppliers.join(", ")}
+            </p>
+          )}
           <a href="/" style={{
             background: "var(--color-primary)", color: "white", textDecoration: "none",
             padding: "12px 24px", borderRadius: 8, fontWeight: 600, display: "inline-block",
