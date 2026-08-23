@@ -3,8 +3,10 @@ import { cookies } from "next/headers";
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
   returnDate?: string; adults?: string; cabinClass?: string;
-  tripType?: string; currency?: string;
+  tripType?: string; currency?: "INR" | "AED" | "USD";
 };
+
+const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", AED: "د.إ", USD: "$" };
 
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
@@ -28,6 +30,7 @@ async function searchFlights(params: SearchParams, sessionId: string | null) {
         adults:        parseInt(params.adults ?? "1"),
         cabinClass:    params.cabinClass ?? "ECONOMY",
         tripType:      params.tripType ?? "ONEWAY",
+        ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
     });
@@ -43,7 +46,9 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   let sessionId: string | null = null;
   try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
 
-  const result = await searchFlights(params, sessionId);
+  const result   = await searchFlights(params, sessionId);
+  const currency = params.currency ?? "INR";
+  const symbol   = CURRENCY_SYMBOLS[currency] ?? "₹";
 
   return (
     <main className="page-container" style={{ paddingTop: 24 }}>
@@ -83,7 +88,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {(result.fares as any[]).map((fare, i) => (
-            <FareCard key={i} fare={fare} />
+            <FareCard key={i} fare={fare} currencySymbol={symbol} />
           ))}
         </div>
       )}
@@ -91,7 +96,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   );
 }
 
-function FareCard({ fare }: { fare: any }) {
+function FareCard({ fare, currencySymbol }: { fare: any; currencySymbol: string }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -121,7 +126,7 @@ function FareCard({ fare }: { fare: any }) {
       </div>
       <div className="fare-card-price-col">
         <div className="fare-card-price">
-          ₹{(fare.displayPrice ?? fare.totalFare).toLocaleString("en-IN")}
+          {currencySymbol}{(fare.displayPrice ?? fare.totalFare).toLocaleString("en-IN")}
         </div>
         {!fare.isBookable && (
           <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>

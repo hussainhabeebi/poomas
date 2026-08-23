@@ -28,7 +28,14 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const db      = c.get("db");
   const tenantId = c.get("tenantId");
 
-  const currency = params.currency ?? tenant.defaultCurrency as "INR" | "AED" | "USD";
+  // ── Currency resolution: request → session pref → tenant default ────────────
+  const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
+  let currency = params.currency as "INR" | "AED" | "USD" | undefined;
+  if (!currency && sessionId) {
+    const prefs = await c.env.SESSIONS_KV.get(`session_prefs:${tenantId}:${sessionId}`, "json") as { currency?: string } | null;
+    currency = prefs?.currency as "INR" | "AED" | "USD" | undefined;
+  }
+  currency = currency ?? (tenant.defaultCurrency as "INR" | "AED" | "USD");
 
   // ── Platform credential fallbacks (Cloudflare secrets → supplier adapters) ──
   // Tenant DB credentials always take priority; these fill the gap when a supplier
@@ -74,8 +81,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   }
 
   // ── SERP search-count tracking (analytics — does not gate access) ────────────
-  const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
-  const trialKey  = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
+  const trialKey = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
   if (trialKey && supplierConfigs.some((s) => s.name === "GOOGLE_SERP" && s.isEnabled)) {
     const raw          = await c.env.SESSIONS_KV.get(trialKey);
     const serpSearches = raw ? parseInt(raw, 10) : 0;

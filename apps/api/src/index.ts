@@ -17,6 +17,7 @@ import { TenantRateLimiter } from "./lib/rate-limiter.js";
 import { handleBookingQueue, handleNotifyQueue } from "./queue-consumer.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { eticketRoutes } from "./routes/eticket.js";
+import { sessionRoutes } from "./routes/session.js";
 
 // Export Durable Object class (required for wrangler migration)
 export { TenantRateLimiter };
@@ -53,6 +54,7 @@ app.route("/webhooks",     webhookRoutes);
 app.use("/api/*", authMiddleware);
 
 app.route("/api/search",   searchRoutes);
+app.route("/api/session",  sessionRoutes);
 app.route("/api/bookings", bookingRoutes);
 app.route("/api/payments", paymentRoutes);
 app.route("/api/eticket",  eticketRoutes);
