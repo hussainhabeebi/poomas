@@ -5,10 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 account_id = "32263d4999a1bc702f9d0052d7bd281b"
 workers_dev = false
 
-# ── Routes ───────────────────────────────────────────────────────
-[[routes]]
-pattern    = "api.flypoomas.com/*"
-zone_name  = "flypoomas.com"
+# ── Custom Domain ────────────────────────────────────────────────
+# api.flypoomas.com is dedicated to this Worker. Use a Worker Custom Domain
+# instead of a route that depends on a separate proxied DNS origin record.
+# This prevents Cloudflare 530 / error 1016 (Origin DNS error).
+routes = [
+  { pattern = "api.flypoomas.com", custom_domain = true }
+]
 
 # ── KV Namespaces ────────────────────────────────────────────────
 [[kv_namespaces]]
@@ -66,7 +69,7 @@ class_name = "TenantRateLimiter"
 
 # new_sqlite_classes required for free plan Durable Objects
 [[migrations]]
-tag               = "v1"
+tag                = "v1"
 new_sqlite_classes = ["TenantRateLimiter"]
 
 # ── Environment Variables (non-secret) ───────────────────────────
