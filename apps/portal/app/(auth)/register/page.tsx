@@ -17,17 +17,21 @@ export default function RegisterPage() {
     setLoading(true);
     setError("");
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/register`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ name, email, password: pass }),
-    });
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/register`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ name, email, password: pass }),
+      });
 
-    if (res.ok) {
-      router.push("/login?registered=1");
-    } else {
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      setError(data.error ?? "Registration failed. Please try again.");
+      if (res.ok) {
+        router.push("/login?registered=1");
+      } else {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        setError(data.error ?? "Registration failed. Please try again.");
+      }
+    } catch {
+      setError("Could not connect to server. Please try again.");
     }
 
     setLoading(false);

@@ -17,6 +17,45 @@ const loginSchema = z.object({
 }).refine((d) => d.email || d.phone, "email or phone required");
 
 // Issue a JWT scoped to the resolved tenant (tenant_id from domain, not from request body)
+const registerSchema = z.object({
+  name:     z.string().min(2).max(100),
+  email:    z.string().email(),
+  password: z.string().min(8),
+  phone:    z.string().min(8).optional(),
+});
+
+authRoutes.post("/register", zValidator("json", registerSchema), async (c) => {
+  const body     = c.req.valid("json");
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+
+  // Check duplicate email within tenant
+  const [existing] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.email, body.email), eq(users.tenantId, tenantId)))
+    .limit(1);
+
+  if (existing) {
+    throw new HTTPException(409, { message: "Email already registered" });
+  }
+
+  const passwordHash = await pbkdf2HashPassword(body.password);
+
+  await db.insert(users).values({
+    tenantId,
+    name:         body.name,
+    email:        body.email,
+    phone:        body.phone ?? null,
+    passwordHash,
+    role:         "AGENT",
+    isActive:     true,
+    emailVerified: false,
+  });
+
+  return c.json({ ok: true }, 201);
+});
+
 authRoutes.post("/login", zValidator("json", loginSchema), async (c) => {
   const body     = c.req.valid("json");
   const db       = c.get("db");
@@ -113,6 +152,13 @@ authRoutes.post("/otp/request", zValidator("json", otpSchema), async (c) => {
   // Always return 200 to prevent account enumeration
   return c.json({ ok: true, message: "OTP sent if account exists" });
 });
+
+async function pbkdf2HashPassword(password: string): Promise<string> {
+  const iterations = 100_000;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await pbkdf2Hash(password, salt, iterations);
+  return `pbkdf2:sha256:${iterations}:${bytesToHex(salt)}:${hash}`;
+}
 
 // Password hashing/verification using Web Crypto (PBKDF2 — no native argon2 on CF Workers)
 async function verifyPassword(password: string, hash: string): Promise<boolean> {

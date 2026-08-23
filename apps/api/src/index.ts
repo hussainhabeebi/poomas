@@ -30,7 +30,7 @@ app.use("*", cors({
   origin:      (origin) => origin,  // Tenants have different origins
   credentials: true,
   allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-API-Key"],
+  allowHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-API-Key", "x-tenant-slug", "X-Session-ID", "X-Channel"],
 }));
 
 // ── Tenant resolution ─────────────────────────────────────────
