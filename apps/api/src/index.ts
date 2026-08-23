@@ -9,6 +9,7 @@ import { rateLimitMiddleware } from "./middleware/ratelimit.js";
 import { searchRoutes }  from "./routes/search.js";
 import { bookingRoutes } from "./routes/booking.js";
 import { duffelSandboxRoutes } from "./routes/duffel-sandbox.js";
+import { integrationRoutes } from "./routes/integrations.js";
 import { agentRoutes }   from "./routes/agents.js";
 import { walletRoutes }  from "./routes/wallet.js";
 import { authRoutes }    from "./routes/auth.js";
@@ -23,34 +24,17 @@ import { sessionRoutes } from "./routes/session.js";
 export { TenantRateLimiter };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
-
 app.use("*", logger());
 app.use("*", secureHeaders());
-app.use("*", cors({
-  origin: (origin) => origin,
-  credentials: true,
-  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-API-Key", "x-tenant-slug", "X-Session-ID", "X-Channel"],
-}));
-
-app.get("/health", (c) => c.json({
-  status: "ok",
-  env: c.env.ENVIRONMENT,
-  worker: "poomas-api",
-  timestamp: new Date().toISOString(),
-}));
-
+app.use("*", cors({origin:(origin)=>origin,credentials:true,allowMethods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowHeaders:["Content-Type","Authorization","X-Tenant-ID","X-API-Key","x-tenant-slug","X-Session-ID","X-Channel","X-POOMAS-INTEGRATION-KEY"]}));
+app.get("/health",(c)=>c.json({status:"ok",env:c.env.ENVIRONMENT,worker:"poomas-api",timestamp:new Date().toISOString()}));
 app.use("*", resolveTenant);
 app.use("/api/*", rateLimitMiddleware);
-
 app.route("/api/auth", authRoutes);
 app.route("/webhooks", webhookRoutes);
 app.route("/api/search", searchRoutes);
-
-// Public sandbox checkout is intentionally outside authenticated booking routes.
-// It hard-rejects any non-test Duffel token, so it can never create a live booking.
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
-
+app.route("/api/integrations", integrationRoutes);
 app.use("/api/bookings/*", authMiddleware);
 app.use("/api/payments/*", authMiddleware);
 app.use("/api/eticket/*", authMiddleware);
@@ -58,7 +42,6 @@ app.use("/api/agents/*", authMiddleware);
 app.use("/api/wallet/*", authMiddleware);
 app.use("/api/session/*", authMiddleware);
 app.use("/api/admin/*", authMiddleware);
-
 app.route("/api/session", sessionRoutes);
 app.route("/api/bookings", bookingRoutes);
 app.route("/api/payments", paymentRoutes);
@@ -66,21 +49,6 @@ app.route("/api/eticket", eticketRoutes);
 app.route("/api/agents", agentRoutes);
 app.route("/api/wallet", walletRoutes);
 app.route("/api/admin", adminRoutes);
-
-app.notFound((c) => c.json({ error: "Not found" }, 404));
-app.onError((err, c) => {
-  console.error(err);
-  const status = "status" in err ? (err as { status: number }).status : 500;
-  return c.json({ error: err.message ?? "Internal server error" }, status as 400 | 500);
-});
-
-export default {
-  fetch: app.fetch.bind(app),
-  async queue(batch: MessageBatch, env: Env): Promise<void> {
-    if (batch.queue === "poomas-bookings") {
-      await handleBookingQueue(batch as MessageBatch<never>, env);
-    } else if (batch.queue === "poomas-notifications") {
-      await handleNotifyQueue(batch as MessageBatch<never>, env);
-    }
-  },
-};
+app.notFound((c)=>c.json({error:"Not found"},404));
+app.onError((err,c)=>{console.error(err);const status="status" in err?(err as {status:number}).status:500;return c.json({error:err.message??"Internal server error"},status as 400|500);});
+export default {fetch:app.fetch.bind(app),async queue(batch:MessageBatch,env:Env):Promise<void>{if(batch.queue==="poomas-bookings")await handleBookingQueue(batch as MessageBatch<never>,env);else if(batch.queue==="poomas-notifications")await handleNotifyQueue(batch as MessageBatch<never>,env);}};
