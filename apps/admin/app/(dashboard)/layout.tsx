@@ -7,7 +7,8 @@ const NAV_SECTIONS = [
       { href: "/bookings",   label: "Bookings"   },
       { href: "/agents",     label: "Agents"     },
       { href: "/suppliers",  label: "Suppliers"  },
-      { href: "/finance",    label: "Finance"    },
+      { href: "/finance",       label: "Finance"       },
+      { href: "/integrations",  label: "Integrations"  },
     ],
   },
 ];
