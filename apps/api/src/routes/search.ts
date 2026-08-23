@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { searchFares, type SupplierConfig } from "@poomas/suppliers";
+import { searchFares, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 
 const searchSchema = z.object({
@@ -17,9 +17,8 @@ const searchSchema = z.object({
   currency:      z.enum(["INR", "AED", "USD"]).optional(),
 });
 
-// Max free SERP trial searches per session
-const SERP_TRIAL_LIMIT = 2;
-const SERP_TRIAL_TTL   = 60 * 60 * 24; // 24 hours
+// TTL for per-session SERP search counters (analytics only, not a gate)
+const SERP_TRIAL_TTL = 60 * 60 * 24; // 24 hours
 
 export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -31,35 +30,18 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 
   const currency = params.currency ?? tenant.defaultCurrency as "INR" | "AED" | "USD";
 
-  // ── SERP trial tracking ─────────────────────────────────────────────────────
-  // Identify session: prefer authenticated userId, fallback to X-Session-ID header.
-  // Anonymous users should send a stable client-generated UUID in X-Session-ID.
-  const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
-  const trialKey  = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
-
-  let serpTrialsUsed      = SERP_TRIAL_LIMIT; // default: no trials (treated as exhausted)
-  let serpTrialsRemaining = 0;
-  let useSerpTrial        = false;
-
-  if (trialKey) {
-    const raw = await c.env.SESSIONS_KV.get(trialKey);
-    serpTrialsUsed = raw ? parseInt(raw, 10) : 0;
-
-    if (serpTrialsUsed < SERP_TRIAL_LIMIT) {
-      useSerpTrial        = true;
-      serpTrialsRemaining = SERP_TRIAL_LIMIT - serpTrialsUsed - 1;
-
-      // Increment async — don't block search
-      c.executionCtx.waitUntil(
-        c.env.SESSIONS_KV.put(trialKey, String(serpTrialsUsed + 1), {
-          expirationTtl: SERP_TRIAL_TTL,
-        }),
-      );
-    }
-  }
+  // ── Platform credential fallbacks (Cloudflare secrets → supplier adapters) ──
+  // Tenant DB credentials always take priority; these fill the gap when a supplier
+  // is enabled in the DB but the tenant hasn't supplied their own API keys yet.
+  const platformCredentials: PlatformCredentials = {
+    ...(c.env.RIYA_API_KEY     ? { RIYA:        { apiKey: c.env.RIYA_API_KEY, secretKey: c.env.RIYA_API_SECRET, baseUrl: c.env.RIYA_API_BASE_URL } } : {}),
+    ...(c.env.TRIPJACK_API_KEY ? { TRIPJACK:    { apiKey: c.env.TRIPJACK_API_KEY, baseUrl: c.env.TRIPJACK_API_BASE_URL } } : {}),
+    ...(c.env.SERP_API_KEY     ? { GOOGLE_SERP: { apiKey: c.env.SERP_API_KEY, baseUrl: "https://serpapi.com" } } : {}),
+    ...(c.env.DUFFEL_API_KEY   ? { DUFFEL:      { apiKey: c.env.DUFFEL_API_KEY } } : {}),
+  };
 
   // ── Supplier config ──────────────────────────────────────────────────────────
-  // Start with tenant's own configured suppliers
+  // Start with tenant's own configured suppliers from the DB
   const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
     name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
     isEnabled:   sc.isEnabled,
@@ -69,47 +51,51 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     maxRetries:  sc.maxRetries,
   }));
 
-  // Auto-inject SERP for trial searches (uses platform SERP_API_KEY from env)
-  // Only injected if tenant hasn't already configured GOOGLE_SERP themselves
-  const hasSerpConfigured = supplierConfigs.some((s) => s.name === "GOOGLE_SERP");
-  if (useSerpTrial && !hasSerpConfigured && c.env.SERP_API_KEY) {
-    supplierConfigs.push({
-      name:        "GOOGLE_SERP",
-      isEnabled:   true,
-      priority:    99,  // lowest priority — bookable suppliers always take precedence
-      credentials: {
-        apiKey:  c.env.SERP_API_KEY,
-        baseUrl: "https://serpapi.com",
-      },
-      timeoutMs:  8000,
-      maxRetries: 0,
-    });
+  // Auto-inject any platform-level supplier that has a secret but isn't in the
+  // tenant's DB config yet (e.g. SERP when only SERP_API_KEY is set, no DB row).
+  const configuredNames = new Set(supplierConfigs.map((s) => s.name));
+  const PLATFORM_DEFAULTS: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
+    { name: "RIYA",        priority: 10, timeoutMs: 12000 },
+    { name: "TRIPJACK",    priority: 20, timeoutMs: 12000 },
+    { name: "DUFFEL",      priority: 30, timeoutMs: 12000 },
+    { name: "GOOGLE_SERP", priority: 99, timeoutMs: 8000  },
+  ];
+  for (const def of PLATFORM_DEFAULTS) {
+    if (!configuredNames.has(def.name) && platformCredentials[def.name]) {
+      supplierConfigs.push({
+        name:        def.name,
+        isEnabled:   true,
+        priority:    def.priority,
+        credentials: null,  // will be filled from platformCredentials in the router
+        timeoutMs:   def.timeoutMs,
+        maxRetries:  0,
+      });
+    }
   }
 
-  // SERP fallback for WhatsApp channel (separate from trial — always on if configured)
-  const isWhatsApp = c.req.header("X-Channel") === "WHATSAPP";
+  // ── SERP search-count tracking (analytics — does not gate access) ────────────
+  const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
+  const trialKey  = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
+  if (trialKey && supplierConfigs.some((s) => s.name === "GOOGLE_SERP" && s.isEnabled)) {
+    const raw          = await c.env.SESSIONS_KV.get(trialKey);
+    const serpSearches = raw ? parseInt(raw, 10) : 0;
+    c.executionCtx.waitUntil(
+      c.env.SESSIONS_KV.put(trialKey, String(serpSearches + 1), { expirationTtl: SERP_TRIAL_TTL }),
+    );
+  }
 
   // ── Fare cache ───────────────────────────────────────────────────────────────
-  // Cache key includes whether SERP is included (different result sets)
-  const includeSerpParallel = useSerpTrial || hasSerpConfigured;
-  const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency, serp: includeSerpParallel })}`;
+  const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency })}`;
   const cached   = await c.env.FARE_CACHE_KV.get(cacheKey, "json");
-  if (cached) {
-    return c.json({
-      ...(cached as object),
-      fromCache:          true,
-      serpTrialsRemaining: includeSerpParallel ? serpTrialsRemaining + 1 : serpTrialsRemaining,
-    });
-  }
+  if (cached) return c.json({ ...(cached as object), fromCache: true });
 
   // ── Search ───────────────────────────────────────────────────────────────────
+  // All enabled suppliers run concurrently; failures are logged, not fatal.
+  // SERP always acts as the final fallback when bookable suppliers return nothing.
   const result = await searchFares(
     { ...params, currency },
     supplierConfigs,
-    {
-      allowSerpFallback:  isWhatsApp,
-      includeSerpParallel,
-    },
+    { platformCredentials },
   );
 
   // ── Markup ───────────────────────────────────────────────────────────────────
@@ -129,11 +115,13 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   }));
 
   // ── Response ─────────────────────────────────────────────────────────────────
+  const hasErrors = Object.keys(result.errors).length > 0;
   const response = {
-    fares:               pricedFares,
-    usedSuppliers:       result.usedSuppliers,
-    isIndicative:        result.isIndicative,
-    serpTrialsRemaining,
+    fares:         pricedFares,
+    usedSuppliers: result.usedSuppliers,
+    isIndicative:  result.isIndicative,
+    // Include supplier errors so operators can see failures without digging into logs
+    ...(hasErrors ? { supplierErrors: result.errors } : {}),
     disclaimer: result.isIndicative
       ? "Some results are indicative Google Flights fares and cannot be booked directly. Contact an agent to confirm availability and price."
       : undefined,
@@ -147,8 +135,12 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 // Fare rules lookup (expandable fare detail)
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
-  const supplier  = c.req.query("supplier") as "RIYA" | "TRIPJACK" | undefined;
+  const supplier  = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;
   const tenant    = c.get("tenant");
+
+  if (!supplier) {
+    return c.json({ error: "supplier query param required" }, 400);
+  }
 
   const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
     name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
@@ -159,12 +151,14 @@ searchRoutes.get("/fare-rules/:fareId", async (c) => {
     maxRetries:  sc.maxRetries,
   }));
 
-  if (!supplier) {
-    return c.json({ error: "supplier query param required" }, 400);
-  }
+  const platformCredentials: PlatformCredentials = {
+    ...(c.env.RIYA_API_KEY     ? { RIYA:     { apiKey: c.env.RIYA_API_KEY, secretKey: c.env.RIYA_API_SECRET } } : {}),
+    ...(c.env.TRIPJACK_API_KEY ? { TRIPJACK: { apiKey: c.env.TRIPJACK_API_KEY } } : {}),
+    ...(c.env.DUFFEL_API_KEY   ? { DUFFEL:   { apiKey: c.env.DUFFEL_API_KEY } } : {}),
+  };
 
   const { getBookableAdapter } = await import("@poomas/suppliers");
-  const adapter = getBookableAdapter(supplier, supplierConfigs);
+  const adapter = getBookableAdapter(supplier, supplierConfigs, platformCredentials);
   const rules   = await adapter.getFareRules?.(fareId) ?? [];
 
   return c.json({ fareRules: rules });
