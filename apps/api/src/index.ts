@@ -28,10 +28,20 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", logger());
 app.use("*", secureHeaders());
 app.use("*", cors({
-  origin:      (origin) => origin,  // Tenants have different origins
+  origin:      (origin) => origin,
   credentials: true,
   allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-API-Key", "x-tenant-slug", "X-Session-ID", "X-Channel"],
+}));
+
+// ── Health check ───────────────────────────────────────────────
+// IMPORTANT: this must run before tenant/database middleware so it can prove the
+// Worker itself is alive even if Hyperdrive/Neon/KV is unavailable.
+app.get("/health", (c) => c.json({
+  status: "ok",
+  env: c.env.ENVIRONMENT,
+  worker: "poomas-api",
+  timestamp: new Date().toISOString(),
 }));
 
 // ── Tenant resolution ─────────────────────────────────────────
@@ -40,9 +50,6 @@ app.use("*", resolveTenant);
 
 // ── Rate limiting (per-tenant, via Durable Objects) ───────────
 app.use("/api/*", rateLimitMiddleware);
-
-// ── Health check ───────────────────────────────────────────────
-app.get("/health", (c) => c.json({ status: "ok", env: c.env.ENVIRONMENT }));
 
 // ── Public routes (no auth) ────────────────────────────────────
 app.route("/api/auth",     authRoutes);
