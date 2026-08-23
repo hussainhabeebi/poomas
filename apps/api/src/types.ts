@@ -34,6 +34,7 @@ export interface Env {
   TRIPJACK_API_KEY:       string;
   TRIPJACK_API_BASE_URL:  string;
   SERP_API_KEY:           string;
+  DUFFEL_API_KEY:         string;
   RAZORPAY_KEY_ID:        string;
   RAZORPAY_KEY_SECRET:    string;
   RAZORPAY_WEBHOOK_SECRET: string;
