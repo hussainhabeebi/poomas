@@ -17,7 +17,13 @@ type SearchResult = {
   apiError?: string;
 };
 
-const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", AED: "د.إ", USD: "$" };
+const CURRENCY_LOCALES: Record<string, string> = {
+  INR: "en-IN",
+  AED: "en-AE",
+  USD: "en-US",
+  GBP: "en-GB",
+  EUR: "en-IE",
+};
 
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
@@ -74,9 +80,8 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   let sessionId: string | null = null;
   try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
 
-  const result   = await searchFlights(params, sessionId);
-  const currency = params.currency ?? "INR";
-  const symbol   = CURRENCY_SYMBOLS[currency] ?? "₹";
+  const result = await searchFlights(params, sessionId);
+  const requestedCurrency = params.currency ?? null;
   const failingSuppliers = Object.keys(result.supplierErrors ?? {});
   const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
     .filter(([, ok]) => !ok)
@@ -90,6 +95,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         </h1>
         <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
           {params.departureDate} · {params.adults ?? 1} adult · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}
+          {requestedCurrency ? ` · ${requestedCurrency}` : ""}
         </p>
       </div>
 
@@ -139,7 +145,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {(result.fares as any[]).map((fare, i) => (
-            <FareCard key={i} fare={fare} currencySymbol={symbol} />
+            <FareCard key={i} fare={fare} requestedCurrency={requestedCurrency} />
           ))}
         </div>
       )}
@@ -147,10 +153,28 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   );
 }
 
-function FareCard({ fare, currencySymbol }: { fare: any; currencySymbol: string }) {
+function formatMoney(amount: number, currency: string): string {
+  const code = (currency || "").toUpperCase();
+  const locale = CURRENCY_LOCALES[code] ?? "en-US";
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: code || "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim();
+  }
+}
+
+function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: string | null }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const fareCurrency = String(fare.currency || requestedCurrency || "USD").toUpperCase();
+  const price = Number(fare.displayPrice ?? fare.totalFare ?? 0);
+  const currencyDiffers = Boolean(requestedCurrency && fareCurrency !== requestedCurrency);
 
   return (
     <div className="fare-card">
@@ -177,7 +201,10 @@ function FareCard({ fare, currencySymbol }: { fare: any; currencySymbol: string 
       </div>
       <div className="fare-card-price-col">
         <div className="fare-card-price">
-          {currencySymbol}{(fare.displayPrice ?? fare.totalFare).toLocaleString("en-IN")}
+          {formatMoney(price, fareCurrency)}
+        </div>
+        <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
+          {fareCurrency}{currencyDiffers ? ` · supplier currency` : ""}
         </div>
         {!fare.isBookable && (
           <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>
