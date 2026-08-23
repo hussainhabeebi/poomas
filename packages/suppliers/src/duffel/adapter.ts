@@ -18,19 +18,18 @@ export class DuffelAdapter implements SupplierAdapter {
   }
 
   async search(params: SearchParams): Promise<NormalizedFare[]> {
-    // Step 1: Create offer request
     const slices: unknown[] = [
       {
-        origin:        params.origin,
-        destination:   params.destination,
+        origin:         params.origin,
+        destination:    params.destination,
         departure_date: params.departureDate,
       },
     ];
 
     if (params.tripType === "ROUNDTRIP" && params.returnDate) {
       slices.push({
-        origin:        params.destination,
-        destination:   params.origin,
+        origin:         params.destination,
+        destination:    params.origin,
         departure_date: params.returnDate,
       });
     }
@@ -43,17 +42,24 @@ export class DuffelAdapter implements SupplierAdapter {
       passengers.push(...Array.from({ length: params.infants }, () => ({ type: "infant_without_seat" })));
     }
 
-    const offerRequest = await this.client.post<{ id: string }>("/air/offer_requests", {
-      data: {
-        slices,
-        passengers,
-        cabin_class:   this.mapCabin(params.cabinClass),
-        return_offers: false,
+    // Duffel's return_offers and supplier_timeout are QUERY parameters, not body fields.
+    // Keeping return_offers=false lets us page/sort through /air/offers afterwards.
+    const offerRequest = await this.client.post<{ id: string }>(
+      "/air/offer_requests",
+      {
+        data: {
+          slices,
+          passengers,
+          cabin_class: this.mapCabin(params.cabinClass),
+        },
       },
-    });
+      {
+        return_offers: "false",
+        supplier_timeout: "10000",
+        view: "offers",
+      },
+    );
 
-    // Step 2: Fetch offers for the request
-    // GET /air/offers returns { data: [...] } — client.get<T> unwraps data, so T is the array
     const offers = await this.client.get<DuffelOffer[]>(
       "/air/offers",
       {
@@ -68,9 +74,8 @@ export class DuffelAdapter implements SupplierAdapter {
   }
 
   async hold(params: HoldParams): Promise<HoldResult> {
-    // Duffel doesn't have a separate hold step — orders are confirmed immediately.
-    // We return a synthetic hold result with the offerId as holdId.
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15-min window
+    // Duffel offers themselves are the holdable resource until their expires_at.
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     return {
       success:      true,
       holdId:       params.fareId,
@@ -80,35 +85,43 @@ export class DuffelAdapter implements SupplierAdapter {
   }
 
   async book(params: BookParams): Promise<BookResult> {
-    const passengers = params.passengers.map((p, i) => ({
-      id:           `p${i}`,
+    const passengers = params.passengers.map((p) => ({
       type:         p.type === "ADULT" ? "adult" : p.type === "CHILD" ? "child" : "infant_without_seat",
       given_name:   p.firstName,
       family_name:  p.lastName,
-      born_on:      p.dob ?? "1990-01-01",
+      born_on:      p.dob,
       gender:       (p.gender?.toLowerCase() ?? "m") === "m" ? "m" : "f",
       email:        params.contactEmail,
       phone_number: params.contactPhone,
       ...(p.passportNumber ? {
         identity_documents: [{
-          type:            "passport",
-          unique_identifier: p.passportNumber,
-          expires_on:      p.passportExpiry ?? "2030-01-01",
-          issuing_country_code: p.nationality ?? "IN",
+          type:                    "passport",
+          unique_identifier:       p.passportNumber,
+          expires_on:              p.passportExpiry,
+          issuing_country_code:    p.nationality ?? "IN",
         }],
       } : {}),
     }));
+
+    // NOTE: payment amount/currency must be built from the selected offer before live ticketing.
+    // Search is fully wired; order creation remains guarded against fake zero-value payments.
+    const offer = await this.client.get<DuffelOffer>(`/air/offers/${params.fareId}`);
+    const totalAmount = (offer as unknown as { total_amount?: string }).total_amount;
+    const totalCurrency = (offer as unknown as { total_currency?: string }).total_currency;
+    if (!totalAmount || !totalCurrency) {
+      throw new Error("Duffel: selected offer is missing total amount/currency");
+    }
 
     const order = await this.client.post<{
       id: string; booking_reference: string; documents?: { unique_identifier: string }[];
     }>("/air/orders", {
       data: {
-        selected_offers:   [params.fareId],
+        selected_offers: [params.fareId],
         passengers,
         payments: [{
           type:     "balance",
-          currency: "INR",
-          amount:   "0",          // Duffel deducts from account balance in test mode
+          currency: totalCurrency,
+          amount:   totalAmount,
         }],
       },
     });
@@ -125,7 +138,7 @@ export class DuffelAdapter implements SupplierAdapter {
 
   async cancel(bookingRef: string): Promise<CancelResult> {
     const result = await this.client.post<{ refund_amount: string; refund_currency: string }>(
-      `/air/order_cancellations`,
+      "/air/order_cancellations",
       { data: { order_id: bookingRef } },
     );
 
@@ -144,8 +157,10 @@ export class DuffelAdapter implements SupplierAdapter {
 
   private mapCabin(c: string): string {
     const m: Record<string, string> = {
-      ECONOMY: "economy", PREMIUM_ECONOMY: "premium_economy",
-      BUSINESS: "business_class", FIRST: "first_class",
+      ECONOMY: "economy",
+      PREMIUM_ECONOMY: "premium_economy",
+      BUSINESS: "business",
+      FIRST: "first",
     };
     return m[c] ?? "economy";
   }
