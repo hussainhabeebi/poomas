@@ -50,10 +50,18 @@ app.route("/api/auth",     authRoutes);
 // Webhooks use their own signature-based verification, not JWT auth
 app.route("/webhooks",     webhookRoutes);
 
-// ── Authenticated routes ───────────────────────────────────────
-app.use("/api/*", authMiddleware);
-
+// ── Public search (no auth) ────────────────────────────────────
 app.route("/api/search",   searchRoutes);
+
+// ── Authenticated routes ───────────────────────────────────────
+app.use("/api/bookings/*", authMiddleware);
+app.use("/api/payments/*", authMiddleware);
+app.use("/api/eticket/*",  authMiddleware);
+app.use("/api/agents/*",   authMiddleware);
+app.use("/api/wallet/*",   authMiddleware);
+app.use("/api/session/*",  authMiddleware);
+app.use("/api/admin/*",    authMiddleware);
+
 app.route("/api/session",  sessionRoutes);
 app.route("/api/bookings", bookingRoutes);
 app.route("/api/payments", paymentRoutes);

@@ -12,8 +12,7 @@ interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
 async function searchFlights(params: SearchParams, sessionId: string | null) {
   try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (!apiUrl) return null;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
     const res = await fetch(`${apiUrl}/api/search`, {
       method: "POST",
