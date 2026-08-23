@@ -12,7 +12,7 @@ export default async function HomePage() {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tenant/homepage`, {
       headers: { "x-tenant-slug": slug },
-      next: { revalidate: 300 },
+      cache: "no-store",
     });
     if (res.ok) homepageConfig = await res.json();
   } catch {}

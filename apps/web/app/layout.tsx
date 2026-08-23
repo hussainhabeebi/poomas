@@ -7,7 +7,7 @@ async function getTenantBranding(slug: string) {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/tenant/branding`, {
       headers: { "x-tenant-slug": slug },
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (res.ok) return res.json() as Promise<{
       name: string; primaryColor: string; secondaryColor: string; accentColor: string;
