@@ -17,18 +17,16 @@ const searchSchema = z.object({
   currency:      z.enum(["INR", "AED", "USD"]).optional(),
 });
 
-// TTL for per-session SERP search counters (analytics only, not a gate)
-const SERP_TRIAL_TTL = 60 * 60 * 24; // 24 hours
+const SERP_TRIAL_TTL = 60 * 60 * 24;
 
 export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
-  const params  = c.req.valid("json");
-  const tenant  = c.get("tenant");
-  const db      = c.get("db");
+  const params   = c.req.valid("json");
+  const tenant   = c.get("tenant");
+  const db       = c.get("db");
   const tenantId = c.get("tenantId");
 
-  // ── Currency resolution: request → session pref → tenant default ────────────
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
   let currency = params.currency as "INR" | "AED" | "USD" | undefined;
   if (!currency && sessionId) {
@@ -37,9 +35,6 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   }
   currency = currency ?? (tenant.defaultCurrency as "INR" | "AED" | "USD");
 
-  // ── Platform credential fallbacks (Cloudflare secrets → supplier adapters) ──
-  // Tenant DB credentials always take priority; these fill the gap when a supplier
-  // is enabled in the DB but the tenant hasn't supplied their own API keys yet.
   const platformCredentials: PlatformCredentials = {
     ...(c.env.RIYA_API_KEY     ? { RIYA:        { apiKey: c.env.RIYA_API_KEY, secretKey: c.env.RIYA_API_SECRET, baseUrl: c.env.RIYA_API_BASE_URL } } : {}),
     ...(c.env.TRIPJACK_API_KEY ? { TRIPJACK:    { apiKey: c.env.TRIPJACK_API_KEY, baseUrl: c.env.TRIPJACK_API_BASE_URL } } : {}),
@@ -47,8 +42,6 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     ...(c.env.DUFFEL_API_KEY   ? { DUFFEL:      { apiKey: c.env.DUFFEL_API_KEY } } : {}),
   };
 
-  // ── Supplier config ──────────────────────────────────────────────────────────
-  // Start with tenant's own configured suppliers from the DB
   const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
     name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
     isEnabled:   sc.isEnabled,
@@ -58,14 +51,12 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     maxRetries:  sc.maxRetries,
   }));
 
-  // Auto-inject any platform-level supplier that has a secret but isn't in the
-  // tenant's DB config yet (e.g. SERP when only SERP_API_KEY is set, no DB row).
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const PLATFORM_DEFAULTS: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
-    { name: "RIYA",        priority: 10, timeoutMs: 12000 },
-    { name: "TRIPJACK",    priority: 20, timeoutMs: 12000 },
-    { name: "DUFFEL",      priority: 30, timeoutMs: 12000 },
-    { name: "GOOGLE_SERP", priority: 99, timeoutMs: 8000  },
+    { name: "RIYA",        priority: 10, timeoutMs: 15000 },
+    { name: "TRIPJACK",    priority: 20, timeoutMs: 15000 },
+    { name: "DUFFEL",      priority: 30, timeoutMs: 15000 },
+    { name: "GOOGLE_SERP", priority: 99, timeoutMs: 12000 },
   ];
   for (const def of PLATFORM_DEFAULTS) {
     if (!configuredNames.has(def.name) && platformCredentials[def.name]) {
@@ -73,14 +64,21 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
         name:        def.name,
         isEnabled:   true,
         priority:    def.priority,
-        credentials: null,  // will be filled from platformCredentials in the router
+        credentials: null,
         timeoutMs:   def.timeoutMs,
         maxRetries:  0,
       });
     }
   }
 
-  // ── SERP search-count tracking (analytics — does not gate access) ────────────
+  const availableSuppliers = supplierConfigs.filter((s) => s.isEnabled).map((s) => s.name);
+  const credentialAvailability = {
+    RIYA:        Boolean(platformCredentials.RIYA || supplierConfigs.find((s) => s.name === "RIYA")?.credentials),
+    TRIPJACK:    Boolean(platformCredentials.TRIPJACK || supplierConfigs.find((s) => s.name === "TRIPJACK")?.credentials),
+    DUFFEL:      Boolean(platformCredentials.DUFFEL || supplierConfigs.find((s) => s.name === "DUFFEL")?.credentials),
+    GOOGLE_SERP: Boolean(platformCredentials.GOOGLE_SERP || supplierConfigs.find((s) => s.name === "GOOGLE_SERP")?.credentials),
+  };
+
   const trialKey = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
   if (trialKey && supplierConfigs.some((s) => s.name === "GOOGLE_SERP" && s.isEnabled)) {
     const raw          = await c.env.SESSIONS_KV.get(trialKey);
@@ -90,21 +88,24 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     );
   }
 
-  // ── Fare cache ───────────────────────────────────────────────────────────────
   const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency })}`;
-  const cached   = await c.env.FARE_CACHE_KV.get(cacheKey, "json");
-  if (cached) return c.json({ ...(cached as object), fromCache: true });
+  const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json") as {
+    fares?: unknown[];
+    supplierErrors?: Record<string, string>;
+  } | null;
 
-  // ── Search ───────────────────────────────────────────────────────────────────
-  // All enabled suppliers run concurrently; failures are logged, not fatal.
-  // SERP always acts as the final fallback when bookable suppliers return nothing.
+  // Never reuse a cached empty/error result. A temporary supplier failure must not poison
+  // the same route for the next five minutes after credentials or code are fixed.
+  if (cached && Array.isArray(cached.fares) && cached.fares.length > 0 && !cached.supplierErrors) {
+    return c.json({ ...cached, fromCache: true });
+  }
+
   const result = await searchFares(
     { ...params, currency },
     supplierConfigs,
     { platformCredentials },
   );
 
-  // ── Markup ───────────────────────────────────────────────────────────────────
   const { applyMarkup } = await import("../lib/markup.js");
   const { markupRules } = await import("@poomas/db/schema");
   const { eq } = await import("drizzle-orm");
@@ -120,25 +121,45 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     markup:       undefined,
   }));
 
-  // ── Response ─────────────────────────────────────────────────────────────────
   const hasErrors = Object.keys(result.errors).length > 0;
   const response = {
     fares:         pricedFares,
     usedSuppliers: result.usedSuppliers,
+    availableSuppliers,
+    credentialAvailability,
     isIndicative:  result.isIndicative,
-    // Include supplier errors so operators can see failures without digging into logs
     ...(hasErrors ? { supplierErrors: result.errors } : {}),
     disclaimer: result.isIndicative
       ? "Some results are indicative Google Flights fares and cannot be booked directly. Contact an agent to confirm availability and price."
       : undefined,
   };
 
-  await c.env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(response), { expirationTtl: 300 });
+  // Cache only healthy, non-empty search results.
+  if (pricedFares.length > 0 && !hasErrors) {
+    await c.env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(response), { expirationTtl: 300 });
+  } else {
+    await c.env.FARE_CACHE_KV.delete(cacheKey);
+  }
 
   return c.json(response);
 });
 
-// Fare rules lookup (expandable fare detail)
+// Safe operational status: exposes only booleans/names, never secret values.
+searchRoutes.get("/status", async (c) => {
+  const tenant = c.get("tenant");
+  const enabled = tenant.supplierConfigs.filter((s) => s.isEnabled).map((s) => s.supplier);
+  return c.json({
+    tenant: tenant.slug,
+    enabledSuppliers: enabled,
+    platformSecrets: {
+      RIYA:        Boolean(c.env.RIYA_API_KEY && c.env.RIYA_API_BASE_URL),
+      TRIPJACK:    Boolean(c.env.TRIPJACK_API_KEY && c.env.TRIPJACK_API_BASE_URL),
+      DUFFEL:      Boolean(c.env.DUFFEL_API_KEY),
+      GOOGLE_SERP: Boolean(c.env.SERP_API_KEY),
+    },
+  });
+});
+
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
   const supplier  = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;
@@ -158,8 +179,8 @@ searchRoutes.get("/fare-rules/:fareId", async (c) => {
   }));
 
   const platformCredentials: PlatformCredentials = {
-    ...(c.env.RIYA_API_KEY     ? { RIYA:     { apiKey: c.env.RIYA_API_KEY, secretKey: c.env.RIYA_API_SECRET } } : {}),
-    ...(c.env.TRIPJACK_API_KEY ? { TRIPJACK: { apiKey: c.env.TRIPJACK_API_KEY } } : {}),
+    ...(c.env.RIYA_API_KEY     ? { RIYA:     { apiKey: c.env.RIYA_API_KEY, secretKey: c.env.RIYA_API_SECRET, baseUrl: c.env.RIYA_API_BASE_URL } } : {}),
+    ...(c.env.TRIPJACK_API_KEY ? { TRIPJACK: { apiKey: c.env.TRIPJACK_API_KEY, baseUrl: c.env.TRIPJACK_API_BASE_URL } } : {}),
     ...(c.env.DUFFEL_API_KEY   ? { DUFFEL:   { apiKey: c.env.DUFFEL_API_KEY } } : {}),
   };
 
