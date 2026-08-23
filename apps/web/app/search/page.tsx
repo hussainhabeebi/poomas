@@ -1,4 +1,4 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
@@ -35,9 +35,9 @@ async function searchFlights(params: SearchParams, tenantSlug: string, sessionId
 }
 
 export default async function SearchResultsPage({ searchParams }: SearchPageProps) {
-  const [headersList, params] = await Promise.all([headers(), searchParams]);
+  const [headersList, cookieStore, params] = await Promise.all([headers(), cookies(), searchParams]);
   const slug      = headersList.get("x-tenant-slug") ?? "poomas";
-  const sessionId = headersList.get("x-session-id");
+  const sessionId = cookieStore.get("sid")?.value ?? null;
 
   const result = await searchFlights(params, slug, sessionId);
 
