@@ -61,7 +61,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   // ── Supplier config ──────────────────────────────────────────────────────────
   // Start with tenant's own configured suppliers
   const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
-    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP",
+    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
     isEnabled:   sc.isEnabled,
     priority:    sc.priority,
     credentials: sc.credentials,
@@ -151,7 +151,7 @@ searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const tenant    = c.get("tenant");
 
   const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
-    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP",
+    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
     isEnabled:   sc.isEnabled,
     priority:    sc.priority,
     credentials: sc.credentials,

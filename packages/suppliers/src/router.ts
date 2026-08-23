@@ -1,10 +1,11 @@
 import type { NormalizedFare, SearchParams, SupplierAdapter, SupplierCredentials } from "./base.js";
-import { RiyaAdapter } from "./riya/adapter.js";
+import { RiyaAdapter }   from "./riya/adapter.js";
 import { TripjackAdapter } from "./tripjack/adapter.js";
-import { SerpAdapter } from "./serp/adapter.js";
+import { SerpAdapter }   from "./serp/adapter.js";
+import { DuffelAdapter } from "./duffel/adapter.js";
 
 export interface SupplierConfig {
-  name:        "RIYA" | "TRIPJACK" | "GOOGLE_SERP";
+  name:        "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL";
   isEnabled:   boolean;
   priority:    number;  // 1 = first, higher = later fallback
   credentials: SupplierCredentials | null;
@@ -14,7 +15,7 @@ export interface SupplierConfig {
 
 export interface SearchResult {
   fares:          NormalizedFare[];
-  usedSuppliers:  ("RIYA" | "TRIPJACK" | "GOOGLE_SERP")[];
+  usedSuppliers:  ("RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL")[];
   isIndicative:   boolean;   // true if results came from SERP (non-bookable)
   errors:         Record<string, string>;
 }
@@ -26,6 +27,7 @@ function buildAdapter(config: SupplierConfig): SupplierAdapter {
     case "RIYA":        return new RiyaAdapter(creds);
     case "TRIPJACK":    return new TripjackAdapter(creds);
     case "GOOGLE_SERP": return new SerpAdapter(creds);
+    case "DUFFEL":      return new DuffelAdapter(creds);
   }
 }
 
@@ -191,7 +193,7 @@ export async function searchFares(
 // Gets the right bookable adapter for post-search operations (hold, book, cancel)
 // Always uses the supplier that generated the fare (stored in fare.supplier)
 export function getBookableAdapter(
-  supplierName: "RIYA" | "TRIPJACK",
+  supplierName: "RIYA" | "TRIPJACK" | "DUFFEL",
   configs: SupplierConfig[],
 ): SupplierAdapter {
   const config = configs.find((c) => c.name === supplierName && c.isEnabled);

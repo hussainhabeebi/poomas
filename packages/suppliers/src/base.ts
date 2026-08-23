@@ -18,7 +18,7 @@ export interface SearchParams {
 
 export interface NormalizedFare {
   id:            string;         // Supplier-specific fare key (used for hold/book)
-  supplier:      "RIYA" | "TRIPJACK" | "GOOGLE_SERP";
+  supplier:      "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL";
   isBookable:    boolean;        // false for SERP results
   airline:       string;         // IATA airline code
   airlineName:   string;
@@ -117,7 +117,7 @@ export interface CancelResult {
 
 // Core supplier interface — every adapter implements search()
 export interface SupplierAdapter {
-  readonly name: "RIYA" | "TRIPJACK" | "GOOGLE_SERP";
+  readonly name: "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL";
 
   search(params: SearchParams): Promise<NormalizedFare[]>;
   getFareRules?(fareId: string, sessionId?: string): Promise<FareRule[]>;
