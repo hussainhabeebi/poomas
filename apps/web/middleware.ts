@@ -4,22 +4,13 @@ export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const slug = extractTenantSlug(host);
 
-  // Read or generate a stable session ID for SERP trial tracking
-  const sid = request.cookies.get("sid")?.value ?? crypto.randomUUID();
+  const res = NextResponse.next();
+  res.headers.set("x-tenant-slug", slug);
+  res.headers.set("x-tenant-host", host);
 
-  // Forward extra headers into the request so server components can read them
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-tenant-slug", slug);
-  requestHeaders.set("x-tenant-host", host);
-  requestHeaders.set("x-session-id", sid);
-
-  const res = NextResponse.next({
-    request: { headers: requestHeaders },
-  });
-
-  // Persist session cookie if newly generated
+  // Set a stable session cookie for SERP trial tracking
   if (!request.cookies.get("sid")) {
-    res.cookies.set("sid", sid, {
+    res.cookies.set("sid", crypto.randomUUID(), {
       maxAge: 60 * 60 * 24 * 30,
       httpOnly: true,
       sameSite: "lax",
