@@ -6,17 +6,20 @@ import type { Env, Variables } from "./types.js";
 import { resolveTenant } from "./middleware/tenant.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimitMiddleware } from "./middleware/ratelimit.js";
-import { searchRoutes }  from "./routes/search.js";
-import { bookingRoutes } from "./routes/booking.js";
-import { agentRoutes }   from "./routes/agents.js";
-import { walletRoutes }  from "./routes/wallet.js";
-import { authRoutes }    from "./routes/auth.js";
-import { adminRoutes }   from "./routes/admin/index.js";
-import { webhookRoutes } from "./routes/webhooks/index.js";
+import { searchRoutes }   from "./routes/search.js";
+import { bookingRoutes }  from "./routes/booking.js";
+import { agentRoutes }    from "./routes/agents.js";
+import { walletRoutes }   from "./routes/wallet.js";
+import { authRoutes }     from "./routes/auth.js";
+import { adminRoutes }    from "./routes/admin/index.js";
+import { webhookRoutes }  from "./routes/webhooks/index.js";
 import { TenantRateLimiter } from "./lib/rate-limiter.js";
 import { handleBookingQueue, handleNotifyQueue } from "./queue-consumer.js";
-import { paymentRoutes } from "./routes/payments.js";
-import { eticketRoutes } from "./routes/eticket.js";
+import { paymentRoutes }  from "./routes/payments.js";
+import { eticketRoutes }  from "./routes/eticket.js";
+import { sessionRoutes }  from "./routes/session.js";
+import { checkoutRoutes } from "./routes/checkout.js";
+import { whatsappRoutes } from "./routes/whatsapp.js";
 
 // Export Durable Object class (required for wrangler migration)
 export { TenantRateLimiter };
@@ -49,15 +52,29 @@ app.route("/api/auth",     authRoutes);
 // Webhooks use their own signature-based verification, not JWT auth
 app.route("/webhooks",     webhookRoutes);
 
-// ── Authenticated routes ───────────────────────────────────────
-app.use("/api/*", authMiddleware);
-
+// Public search — no auth, rate-limited via DO
 app.route("/api/search",   searchRoutes);
+
+// Checkout token verification — validated by the signed JWT token itself
+app.route("/api/checkout", checkoutRoutes);
+
+// ── Authenticated routes ───────────────────────────────────────
+app.use("/api/bookings/*", authMiddleware);
+app.use("/api/payments/*", authMiddleware);
+app.use("/api/eticket/*",  authMiddleware);
+app.use("/api/agents/*",   authMiddleware);
+app.use("/api/wallet/*",   authMiddleware);
+app.use("/api/session/*",  authMiddleware);
+app.use("/api/admin/*",    authMiddleware);
+app.use("/api/whatsapp/*", authMiddleware);
+
+app.route("/api/session",  sessionRoutes);
 app.route("/api/bookings", bookingRoutes);
 app.route("/api/payments", paymentRoutes);
 app.route("/api/eticket",  eticketRoutes);
 app.route("/api/agents",   agentRoutes);
 app.route("/api/wallet",   walletRoutes);
+app.route("/api/whatsapp", whatsappRoutes);
 
 // Super-admin routes — additionally require SUPER_ADMIN role (enforced inside)
 app.route("/api/admin",    adminRoutes);

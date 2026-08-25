@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import type { Env, Variables } from "../../types.js";
-import { razorpayWebhook } from "./razorpay.js";
-import { nomodWebhook }    from "./nomod.js";
+import { razorpayWebhook }  from "./razorpay.js";
+import { nomodWebhook }     from "./nomod.js";
+import { leadvyneWebhook }  from "./leadvyne.js";
 
 export const webhookRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // Payment gateway webhooks — signature-verified, not JWT-authenticated
-webhookRoutes.post("/razorpay", razorpayWebhook);
-webhookRoutes.post("/nomod",    nomodWebhook);
+webhookRoutes.post("/razorpay",  razorpayWebhook);
+webhookRoutes.post("/nomod",     nomodWebhook);
+webhookRoutes.post("/leadvyne",  leadvyneWebhook);
 
 // Booking engine → Leadvyne notification passthrough
 webhookRoutes.post("/notify/whatsapp", async (c) => {

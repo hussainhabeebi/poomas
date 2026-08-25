@@ -42,6 +42,13 @@ export interface Env {
   NOMOD_API_SECRET:       string;
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
+
+  // Leadvyne WhatsApp gateway
+  LEADVYNE_API_KEY:       string;
+  LEADVYNE_API_SECRET:    string;
+  LEADVYNE_BASE_URL:      string;
+  LEADVYNE_INSTANCE_ID:   string;
+  LEADVYNE_WEBHOOK_SECRET: string;
 }
 
 // Per-request context variables (populated by middleware)
