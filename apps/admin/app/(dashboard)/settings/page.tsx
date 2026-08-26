@@ -1,0 +1,515 @@
+"use client";
+import { useState, useEffect } from "react";
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
+
+/* ── Small shared UI ────────────────────────────────────────────── */
+function Section({ color, title, badge, children }: {
+  color: string; title: string; badge: string; children: React.ReactNode;
+}) {
+  return (
+    <section style={{ ...card, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0 }} />
+        <h2 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", margin: 0 }}>{title}</h2>
+        <span style={{
+          marginLeft: "auto", fontSize: 11, fontWeight: 700, padding: "3px 10px",
+          borderRadius: 20, background: `${color}22`, color, letterSpacing: ".04em",
+        }}>{badge}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", marginBottom: 6 }}>{children}</div>;
+}
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return <p style={{ fontSize: 12, color: "#64748b", margin: "5px 0 0" }}>{children}</p>;
+}
+
+function ErrorBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ background: "#450a0a", color: "#fca5a5", padding: "8px 12px", borderRadius: 6, marginTop: 10, fontSize: 13 }}>
+      {children}
+    </div>
+  );
+}
+
+function Toggle({ label, description, checked, onChange, color }: {
+  label: string; description: string; checked: boolean; onChange: (v: boolean) => void; color: string;
+}) {
+  return (
+    <div onClick={() => onChange(!checked)} style={{
+      background: checked ? `${color}22` : "#0f172a",
+      border: `1px solid ${checked ? color : "#334155"}`,
+      borderRadius: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 16,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontWeight: 600, color: checked ? "#f1f5f9" : "#94a3b8", fontSize: 13 }}>{label}</div>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>{description}</div>
+        </div>
+        <div style={{ width: 34, height: 18, borderRadius: 9, background: checked ? color : "#334155", position: "relative", flexShrink: 0 }}>
+          <div style={{ position: "absolute", top: 2, left: checked ? 16 : 2, width: 14, height: 14,
+            borderRadius: "50%", background: "white", transition: "left .12s" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function saveBtn(disabled: boolean): React.CSSProperties {
+  return { background: "#E31E24", color: "white", border: "none", borderRadius: 8,
+    padding: "9px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: disabled ? 0.7 : 1 };
+}
+
+/* ── Payment Section ────────────────────────────────────────────── */
+function PaymentSettings() {
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [error,   setError]   = useState("");
+  const [s, setS] = useState({
+    defaultGateway: "RAZORPAY" as "RAZORPAY" | "NOMOD",
+    razorpay: { enabled: false, keyId: "", keySecret: "", webhookSecret: "" },
+    nomod:    { enabled: false, apiKey: "", apiSecret: "", webhookSecret: "", environment: "production" as "sandbox" | "production" },
+  });
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/settings/payments`, { headers: { "x-tenant-slug": "poomas" } })
+      .then((r) => r.json())
+      .then((d: any) => { setS((p) => ({ ...p, ...d })); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setError(""); setSaved(false);
+    try {
+      const res = await fetch(`${API}/api/admin/settings/payments`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify(s),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setSaved(true);
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <div style={{ color: "#64748b", fontSize: 13 }}>Loading…</div>;
+
+  return (
+    <form onSubmit={save}>
+      <div style={{ marginBottom: 16 }}>
+        <Label>Default Gateway</Label>
+        <select value={s.defaultGateway}
+          onChange={(e) => setS((p) => ({ ...p, defaultGateway: e.target.value as "RAZORPAY" | "NOMOD" }))}
+          style={inputStyle}>
+          <option value="RAZORPAY">Razorpay (Cards / UPI / Net Banking)</option>
+          <option value="NOMOD">NoMod Pay</option>
+        </select>
+      </div>
+
+      {/* Razorpay */}
+      <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
+        <Toggle label="Enable Razorpay" description="Cards, UPI, Net Banking, Wallets — embedded checkout"
+          checked={s.razorpay.enabled} onChange={(v) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, enabled: v } }))} color="#2563eb" />
+        {s.razorpay.enabled && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <Label>Key ID</Label>
+              <input type="text" placeholder="rzp_live_..." value={s.razorpay.keyId}
+                onChange={(e) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, keyId: e.target.value } }))}
+                style={inputStyle} />
+              <Hint>Public key — shown to client for checkout.js</Hint>
+            </div>
+            <div>
+              <Label>Key Secret</Label>
+              <input type="password" placeholder="••••••••••••" value={s.razorpay.keySecret}
+                onChange={(e) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, keySecret: e.target.value } }))}
+                style={inputStyle} />
+              <Hint>Leave blank to keep existing secret</Hint>
+            </div>
+            <div style={{ gridColumn: "span 2" }}>
+              <Label>Webhook Secret</Label>
+              <input type="password" placeholder="••••••••••••" value={s.razorpay.webhookSecret}
+                onChange={(e) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, webhookSecret: e.target.value } }))}
+                style={inputStyle} />
+              <Hint>
+                Set webhook URL in Razorpay dashboard: <code style={codeStyle}>https://api.flypoomas.com/webhooks/razorpay</code>
+                · Events: payment.captured, payment.failed
+              </Hint>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* NoMod */}
+      <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
+        <Toggle label="Enable NoMod Pay" description="Alternative payment gateway — hosted redirect flow"
+          checked={s.nomod.enabled} onChange={(v) => setS((p) => ({ ...p, nomod: { ...p.nomod, enabled: v } }))} color="#7c3aed" />
+        {s.nomod.enabled && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <Label>API Key</Label>
+              <input type="password" placeholder="••••••••••••" value={s.nomod.apiKey}
+                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, apiKey: e.target.value } }))}
+                style={inputStyle} />
+            </div>
+            <div>
+              <Label>API Secret</Label>
+              <input type="password" placeholder="••••••••••••" value={s.nomod.apiSecret}
+                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, apiSecret: e.target.value } }))}
+                style={inputStyle} />
+            </div>
+            <div>
+              <Label>Environment</Label>
+              <select value={s.nomod.environment}
+                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, environment: e.target.value as "sandbox" | "production" } }))}
+                style={inputStyle}>
+                <option value="sandbox">Sandbox</option>
+                <option value="production">Production</option>
+              </select>
+            </div>
+            <div>
+              <Label>Webhook Secret</Label>
+              <input type="password" placeholder="••••••••••••" value={s.nomod.webhookSecret}
+                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, webhookSecret: e.target.value } }))}
+                style={inputStyle} />
+              <Hint>Webhook: <code style={codeStyle}>https://api.flypoomas.com/webhooks/nomod</code></Hint>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button type="submit" disabled={saving} style={saveBtn(saving)}>
+          {saving ? "Saving…" : "Save Payment Settings"}
+        </button>
+        {saved && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Saved</span>}
+      </div>
+    </form>
+  );
+}
+
+/* ── WhatsApp Section ───────────────────────────────────────────── */
+function WhatsAppSettings() {
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [error,   setError]   = useState("");
+  const [status,  setStatus]  = useState<"unknown" | "connected" | "error">("unknown");
+  const [s, setS] = useState({
+    enabled:  false,
+    provider: "LEADVYNE" as "LEADVYNE" | "WABA_DIRECT",
+    leadvyne: { apiKey: "", apiSecret: "", instanceId: "", baseUrl: "https://api.leadvyne.com" },
+    defaultCountryCode: "91",
+    eticketTemplate: "poomas_eticket_v1",
+    bookingConfirmTemplate: "poomas_booking_confirm_v1",
+    webhookSecret: "",
+  });
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/settings/whatsapp`, { headers: { "x-tenant-slug": "poomas" } })
+      .then((r) => r.json())
+      .then((d: any) => { setS((p) => ({ ...p, ...d })); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  async function testConnection() {
+    try {
+      const res = await fetch(`${API}/api/whatsapp/status`, { headers: { "x-tenant-slug": "poomas" } });
+      const d   = await res.json() as { configured?: boolean; status?: string };
+      setStatus(d.configured && d.status !== "error" ? "connected" : "error");
+    } catch { setStatus("error"); }
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setError(""); setSaved(false);
+    try {
+      const res = await fetch(`${API}/api/admin/settings/whatsapp`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify(s),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setSaved(true);
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <div style={{ color: "#64748b", fontSize: 13 }}>Loading…</div>;
+
+  return (
+    <form onSubmit={save}>
+      <Toggle label="Enable WhatsApp Messaging" description="Send booking confirmations and e-tickets via WhatsApp"
+        checked={s.enabled} onChange={(v) => setS((p) => ({ ...p, enabled: v }))} color="#25D366" />
+
+      {s.enabled && (
+        <>
+          <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase",
+              letterSpacing: ".05em", marginBottom: 12 }}>Leadvyne Configuration</div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <Label>API Key</Label>
+                <input type="password" placeholder="lv_live_••••" value={s.leadvyne.apiKey}
+                  onChange={(e) => setS((p) => ({ ...p, leadvyne: { ...p.leadvyne, apiKey: e.target.value } }))}
+                  style={inputStyle} />
+              </div>
+              <div>
+                <Label>Instance ID</Label>
+                <input type="text" placeholder="inst_••••" value={s.leadvyne.instanceId}
+                  onChange={(e) => setS((p) => ({ ...p, leadvyne: { ...p.leadvyne, instanceId: e.target.value } }))}
+                  style={inputStyle} />
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <Label>API Base URL</Label>
+                <input type="url" placeholder="https://api.leadvyne.com" value={s.leadvyne.baseUrl}
+                  onChange={(e) => setS((p) => ({ ...p, leadvyne: { ...p.leadvyne, baseUrl: e.target.value } }))}
+                  style={inputStyle} />
+                <Hint>Webhook inbound URL: <code style={codeStyle}>https://api.flypoomas.com/webhooks/leadvyne</code></Hint>
+              </div>
+              <div>
+                <Label>Webhook Secret</Label>
+                <input type="password" placeholder="••••••••" value={s.webhookSecret}
+                  onChange={(e) => setS((p) => ({ ...p, webhookSecret: e.target.value }))}
+                  style={inputStyle} />
+                <Hint>Used to verify inbound webhooks from Leadvyne</Hint>
+              </div>
+              <div>
+                <Label>Default Country Code</Label>
+                <input type="text" placeholder="91" value={s.defaultCountryCode}
+                  onChange={(e) => setS((p) => ({ ...p, defaultCountryCode: e.target.value }))}
+                  style={inputStyle} />
+                <Hint>For normalizing phone numbers (91 = India, 971 = UAE)</Hint>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "center" }}>
+              <button type="button" onClick={testConnection} style={{
+                background: "#0f172a", color: "#94a3b8", border: "1px solid #334155",
+                borderRadius: 8, padding: "7px 16px", fontWeight: 600, fontSize: 12, cursor: "pointer",
+              }}>
+                Test Connection
+              </button>
+              {status === "connected" && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Connected</span>}
+              {status === "error"     && <span style={{ color: "#f87171", fontSize: 13 }}>✗ Connection failed</span>}
+            </div>
+          </div>
+
+          <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase",
+              letterSpacing: ".05em", marginBottom: 12 }}>Message Templates</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <Label>Booking Confirmation Template</Label>
+                <input type="text" value={s.bookingConfirmTemplate}
+                  onChange={(e) => setS((p) => ({ ...p, bookingConfirmTemplate: e.target.value }))}
+                  style={inputStyle} />
+              </div>
+              <div>
+                <Label>E-Ticket Template</Label>
+                <input type="text" value={s.eticketTemplate}
+                  onChange={(e) => setS((p) => ({ ...p, eticketTemplate: e.target.value }))}
+                  style={inputStyle} />
+              </div>
+            </div>
+            <Hint style={{ marginTop: 8 }}>
+              Template names must match approved Meta WhatsApp Business templates in your Leadvyne account.
+            </Hint>
+          </div>
+        </>
+      )}
+
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button type="submit" disabled={saving} style={saveBtn(saving)}>
+          {saving ? "Saving…" : "Save WhatsApp Settings"}
+        </button>
+        {saved && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Saved</span>}
+      </div>
+    </form>
+  );
+}
+
+/* ── E-ticket Section ───────────────────────────────────────────── */
+function EticketSettings() {
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [error,   setError]   = useState("");
+  const [s, setS] = useState({
+    autoSendOnConfirm:  true,
+    channels:           ["WHATSAPP", "EMAIL"] as Array<"WHATSAPP" | "EMAIL">,
+    emailFrom:          "tickets@flypoomas.com",
+    emailFromName:      "POOMAS Flights",
+    includeItinerary:   true,
+    includeBaggage:     true,
+    includeCheckinLink: false,
+  });
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/settings/eticket`, { headers: { "x-tenant-slug": "poomas" } })
+      .then((r) => r.json())
+      .then((d: any) => { setS((p) => ({ ...p, ...d })); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  function toggleChannel(ch: "WHATSAPP" | "EMAIL") {
+    setS((p) => ({
+      ...p,
+      channels: p.channels.includes(ch)
+        ? p.channels.filter((c) => c !== ch)
+        : [...p.channels, ch],
+    }));
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setError(""); setSaved(false);
+    try {
+      const res = await fetch(`${API}/api/admin/settings/eticket`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify(s),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setSaved(true);
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <div style={{ color: "#64748b", fontSize: 13 }}>Loading…</div>;
+
+  return (
+    <form onSubmit={save}>
+      <Toggle label="Auto-send on confirmation" description="Automatically deliver e-ticket when booking is confirmed"
+        checked={s.autoSendOnConfirm} onChange={(v) => setS((p) => ({ ...p, autoSendOnConfirm: v }))} color="#E31E24" />
+
+      <div style={{ marginBottom: 16 }}>
+        <Label>Delivery Channels</Label>
+        <div style={{ display: "flex", gap: 10 }}>
+          {(["WHATSAPP", "EMAIL"] as const).map((ch) => (
+            <div key={ch} onClick={() => toggleChannel(ch)} style={{
+              border: `2px solid ${s.channels.includes(ch) ? "#E31E24" : "#334155"}`,
+              borderRadius: 8, padding: "10px 16px", cursor: "pointer",
+              background: s.channels.includes(ch) ? "#1a0a0a" : "#0f172a",
+              color: s.channels.includes(ch) ? "#f1f5f9" : "#94a3b8",
+              fontWeight: 600, fontSize: 13,
+            }}>
+              {ch === "WHATSAPP" ? "📱 WhatsApp" : "✉️ Email"}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div>
+          <Label>From Email Address</Label>
+          <input type="email" value={s.emailFrom}
+            onChange={(e) => setS((p) => ({ ...p, emailFrom: e.target.value }))}
+            style={inputStyle} />
+        </div>
+        <div>
+          <Label>From Name</Label>
+          <input type="text" value={s.emailFromName}
+            onChange={(e) => setS((p) => ({ ...p, emailFromName: e.target.value }))}
+            style={inputStyle} />
+        </div>
+      </div>
+
+      <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase",
+          letterSpacing: ".05em", marginBottom: 12 }}>E-ticket Content</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[
+            { key: "includeItinerary",   label: "Include full itinerary" },
+            { key: "includeBaggage",     label: "Include baggage allowance" },
+            { key: "includeCheckinLink", label: "Include web check-in link" },
+          ].map(({ key, label }) => (
+            <label key={key} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", color: "#cbd5e1", fontSize: 13 }}>
+              <input type="checkbox" checked={(s as any)[key]}
+                onChange={(e) => setS((p) => ({ ...p, [key]: e.target.checked }))}
+                style={{ width: 16, height: 16 }} />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button type="submit" disabled={saving} style={saveBtn(saving)}>
+          {saving ? "Saving…" : "Save E-ticket Settings"}
+        </button>
+        {saved && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Saved</span>}
+      </div>
+    </form>
+  );
+}
+
+/* ── Main page ──────────────────────────────────────────────────── */
+export default function SettingsPage() {
+  return (
+    <div>
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", marginBottom: 8 }}>Settings</h1>
+      <p style={{ color: "#64748b", fontSize: 14, marginBottom: 4 }}>
+        Payment gateways, WhatsApp messaging, and e-ticket delivery configuration.
+      </p>
+
+      <Section color="#E31E24" title="Payment Gateways" badge="Razorpay · NoMod">
+        <PaymentSettings />
+      </Section>
+
+      <Section color="#25D366" title="WhatsApp Messaging" badge="Leadvyne · WABA">
+        <WhatsAppSettings />
+      </Section>
+
+      <Section color="#6366F1" title="E-Ticket Delivery" badge="WhatsApp + Email">
+        <EticketSettings />
+      </Section>
+
+      {/* Secrets cheatsheet */}
+      <section style={{ ...card, marginTop: 16, borderColor: "#854d0e", background: "#1c1100" }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: "#fbbf24", margin: "0 0 12px" }}>
+          Worker Secrets (set via <code style={codeStyle}>wrangler secret put</code>)
+        </h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[
+            ["RAZORPAY_KEY_ID",        "Razorpay live key ID (public, shown to checkout.js)"],
+            ["RAZORPAY_KEY_SECRET",     "Razorpay key secret (server-side signature verification)"],
+            ["RAZORPAY_WEBHOOK_SECRET", "Razorpay webhook signing secret"],
+            ["NOMOD_API_KEY",           "NoMod API key"],
+            ["NOMOD_API_SECRET",        "NoMod API secret"],
+            ["NOMOD_WEBHOOK_SECRET",    "NoMod webhook signing secret"],
+            ["LEADVYNE_API_KEY",        "Leadvyne API key"],
+            ["LEADVYNE_API_SECRET",     "Leadvyne API secret"],
+            ["LEADVYNE_BASE_URL",       "Leadvyne base URL (e.g. https://api.leadvyne.com)"],
+            ["LEADVYNE_INSTANCE_ID",    "Leadvyne WhatsApp instance ID"],
+            ["LEADVYNE_WEBHOOK_SECRET", "Leadvyne inbound webhook secret"],
+            ["RESEND_API_KEY",          "Resend API key for email delivery"],
+          ].map(([k, d]) => (
+            <div key={k} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <code style={{ ...codeStyle, minWidth: 240, flexShrink: 0, fontSize: 11 }}>{k}</code>
+              <span style={{ fontSize: 12, color: "#64748b" }}>{d}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const card: React.CSSProperties = { background: "#1e293b", borderRadius: 12, padding: 24, border: "1px solid #334155" };
+const inputStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "10px 14px",
+  background: "#0f172a", border: "1.5px solid #334155", borderRadius: 8, color: "#e2e8f0", fontSize: 14 };
+const codeStyle: React.CSSProperties = { background: "#0f172a", padding: "1px 6px", borderRadius: 4,
+  fontFamily: "monospace", fontSize: 12, color: "#94a3b8" };

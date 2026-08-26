@@ -6,6 +6,8 @@ const NAV_ITEMS = [
   { href: "/suppliers",    label: "Suppliers",     icon: "🔌" },
   { href: "/finance",      label: "Finance",       icon: "💰" },
   { href: "/integrations", label: "Integrations",  icon: "⚙️" },
+  { href: "/api-keys",     label: "API Keys",       icon: "🔑" },
+  { href: "/settings",     label: "Settings",       icon: "🔧" },
 ];
 
 export default function AdminDashboardLayout({ children }: { children: React.ReactNode }) {

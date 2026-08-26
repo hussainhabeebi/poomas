@@ -19,8 +19,6 @@ const searchSchema = z.object({
 
 const SERP_TRIAL_TTL = 60 * 60 * 24;
 
-export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
-
 function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   return {
     ...(env.RIYA_API_KEY     ? { RIYA:        { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
@@ -63,6 +61,8 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
 
   return supplierConfigs;
 }
+
+export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const params   = c.req.valid("json");
@@ -121,8 +121,6 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     console.error("[search] fare cache read unavailable; continuing live", err);
   }
 
-  // Supplier fan-out is the only critical part of this route. The router catches each
-  // supplier independently, so one broken API never blocks the others.
   const result = await searchFares(
     { ...params, currency },
     supplierConfigs,

@@ -102,12 +102,10 @@ async function verifyApiKey(c: Parameters<MiddlewareHandler>[0], rawKey: string,
   return next();
 }
 
-async function verifyKeyHash(rawKey: string, hash: string): Promise<boolean> {
-  // TODO: Replace with actual argon2/bcrypt verification
-  // Using SubtleCrypto for now as placeholder
-  const keyData = new TextEncoder().encode(rawKey);
-  const hashData = new TextEncoder().encode(hash);
-  return keyData.toString() === hashData.toString();
+async function verifyKeyHash(rawKey: string, storedHash: string): Promise<boolean> {
+  const buf      = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawKey));
+  const computed = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return computed === storedHash;
 }
 
 // Role guard factory — use inside route handlers
