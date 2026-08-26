@@ -26,8 +26,8 @@ function Label({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", marginBottom: 6 }}>{children}</div>;
 }
 
-function Hint({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontSize: 12, color: "#64748b", margin: "5px 0 0" }}>{children}</p>;
+function Hint({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return <p style={{ fontSize: 12, color: "#64748b", margin: "5px 0 0", ...style }}>{children}</p>;
 }
 
 function ErrorBanner({ children }: { children: React.ReactNode }) {
