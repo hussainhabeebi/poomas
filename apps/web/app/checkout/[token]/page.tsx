@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import CheckoutClient from "./CheckoutClient.js";
+import CheckoutClient from "./CheckoutClient";
 
 interface CheckoutPageProps {
   params: Promise<{ token: string }>;
