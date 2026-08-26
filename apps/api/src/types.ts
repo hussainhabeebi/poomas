@@ -31,6 +31,10 @@ export interface Env {
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
 
+  // One-time admin bootstrap (set in Cloudflare dashboard, unset after first use)
+  PLATFORM_ADMIN_EMAIL?:    string;
+  PLATFORM_ADMIN_PASSWORD?: string;
+
   // Leadvyne WhatsApp gateway
   LEADVYNE_API_KEY:       string;
   LEADVYNE_API_SECRET:    string;
