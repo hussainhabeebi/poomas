@@ -122,8 +122,8 @@ authRoutes.post("/logout", async (c) => {
   return c.json({ ok: true });
 });
 
-// One-time admin password initialisation — only works if PLATFORM_ADMIN_PASSWORD is set in env
-// and the target account has no password yet. Safe to call repeatedly; idempotent after first use.
+// One-time admin password initialisation — only works if PLATFORM_ADMIN_PASSWORD is set in env.
+// Creates the admin user if they don't exist yet, or sets their password if they have none.
 authRoutes.post("/admin-init", async (c) => {
   const adminEmail    = c.env.PLATFORM_ADMIN_EMAIL    ?? "admin@flypoomas.com";
   const adminPassword = c.env.PLATFORM_ADMIN_PASSWORD ?? "";
@@ -141,15 +141,26 @@ authRoutes.post("/admin-init", async (c) => {
     .where(and(eq(users.email, adminEmail), eq(users.tenantId, tenantId)))
     .limit(1);
 
+  const passwordHash = await pbkdf2HashPassword(adminPassword);
+
   if (!user) {
-    throw new HTTPException(404, { message: `No user found for ${adminEmail}` });
+    // User doesn't exist yet — create a fresh SUPER_ADMIN account
+    await db.insert(users).values({
+      tenantId,
+      email:         adminEmail,
+      name:          "POOMAS Admin",
+      role:          "SUPER_ADMIN",
+      passwordHash,
+      isActive:      true,
+      emailVerified: true,
+    });
+    return c.json({ ok: true, message: "Admin user created. You can now log in." });
   }
 
   if (user.passwordHash) {
     throw new HTTPException(409, { message: "Password already set — use login instead" });
   }
 
-  const passwordHash = await pbkdf2HashPassword(adminPassword);
   await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
 
   return c.json({ ok: true, message: "Admin password set. You can now log in." });
