@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { searchFares, type SupplierConfig } from "@poomas/suppliers";
+import { searchFares, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 
 const searchSchema = z.object({
@@ -17,113 +17,49 @@ const searchSchema = z.object({
   currency:      z.enum(["INR", "AED", "USD"]).optional(),
 });
 
-const SERP_TRIAL_LIMIT = 2;
-const SERP_TRIAL_TTL   = 60 * 60 * 24; // 24 hours
+const SERP_TRIAL_TTL = 60 * 60 * 24;
 
-type SupplierName = "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL";
-
-const DEFAULT_SUPPLIER_SETTINGS: Record<SupplierName, Pick<SupplierConfig, "priority" | "timeoutMs" | "maxRetries">> = {
-  RIYA:        { priority: 10, timeoutMs: 12000, maxRetries: 1 },
-  TRIPJACK:    { priority: 20, timeoutMs: 12000, maxRetries: 1 },
-  DUFFEL:      { priority: 30, timeoutMs: 12000, maxRetries: 1 },
-  GOOGLE_SERP: { priority: 99, timeoutMs: 8000,  maxRetries: 0 },
-};
-
-function platformCredentials(
-  env: Env,
-  supplier: SupplierName,
-  adminCfg?: Record<string, unknown> | null,
-): Record<string, string> | null {
-  switch (supplier) {
-    case "RIYA": {
-      const key    = (adminCfg?.apiKey    as string) || env.RIYA_API_KEY;
-      const secret = (adminCfg?.apiSecret as string) || env.RIYA_API_SECRET;
-      const base   = (adminCfg?.baseUrl   as string) || env.RIYA_API_BASE_URL;
-      if (!key || !secret) return null;
-      return { apiKey: key, apiSecret: secret, ...(base ? { baseUrl: base } : {}) };
-    }
-    case "TRIPJACK": {
-      const key  = (adminCfg?.apiKey  as string) || env.TRIPJACK_API_KEY;
-      const base = (adminCfg?.baseUrl as string) || env.TRIPJACK_API_BASE_URL;
-      if (!key) return null;
-      return { apiKey: key, ...(base ? { baseUrl: base } : {}) };
-    }
-    case "DUFFEL": {
-      const key = (adminCfg?.apiKey as string) || env.DUFFEL_API_KEY;
-      if (!key) return null;
-      return { apiKey: key, baseUrl: "https://api.duffel.com" };
-    }
-    case "GOOGLE_SERP": {
-      const key = (adminCfg?.apiKey as string) || env.SERP_API_KEY;
-      if (!key) return null;
-      return { apiKey: key, baseUrl: "https://serpapi.com" };
-    }
-  }
-}
-
-async function loadAdminIntegrationConfig(env: Env, tenantId: string, supplier: string) {
-  const raw = await env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:integration:${supplier}`);
-  if (!raw) return null;
-  const cfg = JSON.parse(raw) as Record<string, unknown>;
-  return cfg.enabled !== false ? cfg : null;  // Respect enabled flag
-}
-
-/**
- * Resolve every supplier that is actually available.
- * Priority: tenant DB config > admin KV settings > platform env secrets.
- * Suppliers disabled in admin KV are respected.
- */
-async function resolveSupplierConfigs(tenant: Variables["tenant"], env: Env, tenantId: string): Promise<SupplierConfig[]> {
-  const configured = new Map<SupplierName, SupplierConfig>();
-
-  const supplierNames: SupplierName[] = ["RIYA", "TRIPJACK", "DUFFEL", "GOOGLE_SERP"];
-  const kvSupplierMap: Record<SupplierName, string> = {
-    RIYA: "riya", TRIPJACK: "tripjack", DUFFEL: "duffel", GOOGLE_SERP: "serp",
+function platformCredentialsFromEnv(env: Env): PlatformCredentials {
+  return {
+    ...(env.RIYA_API_KEY     ? { RIYA:        { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
+    ...(env.TRIPJACK_API_KEY ? { TRIPJACK:    { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL } } : {}),
+    ...(env.SERP_API_KEY     ? { GOOGLE_SERP: { apiKey: env.SERP_API_KEY, baseUrl: "https://serpapi.com" } } : {}),
+    ...(env.DUFFEL_API_KEY   ? { DUFFEL:      { apiKey: env.DUFFEL_API_KEY } } : {}),
   };
+}
 
-  // Load admin KV configs for all suppliers in parallel
-  const adminCfgs = Object.fromEntries(
-    await Promise.all(
-      supplierNames.map(async (name) => [
-        name,
-        await loadAdminIntegrationConfig(env, tenantId, kvSupplierMap[name]),
-      ]),
-    ),
-  ) as Record<SupplierName, Record<string, unknown> | null>;
+function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentials: PlatformCredentials): SupplierConfig[] {
+  const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
+    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
+    isEnabled:   sc.isEnabled,
+    priority:    sc.priority,
+    credentials: sc.credentials,
+    timeoutMs:   sc.timeoutMs,
+    maxRetries:  sc.maxRetries,
+  }));
 
-  for (const sc of tenant.supplierConfigs) {
-    const name = sc.supplier as SupplierName;
-    if (!(name in DEFAULT_SUPPLIER_SETTINGS)) continue;
+  const configuredNames = new Set(supplierConfigs.map((s) => s.name));
+  const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
+    { name: "RIYA",        priority: 10, timeoutMs: 15000 },
+    { name: "TRIPJACK",    priority: 20, timeoutMs: 15000 },
+    { name: "DUFFEL",      priority: 30, timeoutMs: 15000 },
+    { name: "GOOGLE_SERP", priority: 99, timeoutMs: 12000 },
+  ];
 
-    const adminCfg = adminCfgs[name];
-    const fallback  = platformCredentials(env, name, adminCfg) ?? {};
-    configured.set(name, {
-      name,
-      isEnabled: sc.isEnabled,
-      priority:  sc.priority   ?? DEFAULT_SUPPLIER_SETTINGS[name].priority,
-      credentials: { ...fallback, ...(sc.credentials ?? {}) },
-      timeoutMs:  sc.timeoutMs  ?? DEFAULT_SUPPLIER_SETTINGS[name].timeoutMs,
-      maxRetries: sc.maxRetries ?? DEFAULT_SUPPLIER_SETTINGS[name].maxRetries,
-    });
+  for (const def of defaults) {
+    if (!configuredNames.has(def.name) && platformCredentials[def.name]) {
+      supplierConfigs.push({
+        name: def.name,
+        isEnabled: true,
+        priority: def.priority,
+        credentials: null,
+        timeoutMs: def.timeoutMs,
+        maxRetries: 0,
+      });
+    }
   }
 
-  for (const name of supplierNames) {
-    if (configured.has(name)) continue;
-    const adminCfg    = adminCfgs[name];
-    const credentials = platformCredentials(env, name, adminCfg);
-    if (!credentials) continue;
-
-    configured.set(name, {
-      name,
-      isEnabled:  true,
-      priority:   DEFAULT_SUPPLIER_SETTINGS[name].priority,
-      credentials,
-      timeoutMs:  DEFAULT_SUPPLIER_SETTINGS[name].timeoutMs,
-      maxRetries: DEFAULT_SUPPLIER_SETTINGS[name].maxRetries,
-    });
-  }
-
-  return Array.from(configured.values());
+  return supplierConfigs;
 }
 
 export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -134,119 +70,134 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const db       = c.get("db");
   const tenantId = c.get("tenantId");
 
-  const currency = params.currency ?? tenant.defaultCurrency as "INR" | "AED" | "USD";
+  const platformCredentials = platformCredentialsFromEnv(c.env);
+  const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
 
-  // ── SERP trial tracking ─────────────────────────────────────────────────────
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
-  const trialKey  = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
+  let currency = params.currency as "INR" | "AED" | "USD" | undefined;
 
-  let serpTrialsUsed      = SERP_TRIAL_LIMIT;
-  let serpTrialsRemaining = 0;
-  let useSerpTrial        = false;
-
-  if (trialKey) {
-    const raw = await c.env.SESSIONS_KV.get(trialKey);
-    serpTrialsUsed = raw ? parseInt(raw, 10) : 0;
-
-    if (serpTrialsUsed < SERP_TRIAL_LIMIT) {
-      useSerpTrial        = true;
-      serpTrialsRemaining = SERP_TRIAL_LIMIT - serpTrialsUsed - 1;
-
-      c.executionCtx.waitUntil(
-        c.env.SESSIONS_KV.put(trialKey, String(serpTrialsUsed + 1), {
-          expirationTtl: SERP_TRIAL_TTL,
-        }),
-      );
+  // Session preferences are optional. KV trouble must never block live supplier search.
+  if (!currency && sessionId) {
+    try {
+      const prefs = await c.env.SESSIONS_KV.get(`session_prefs:${tenantId}:${sessionId}`, "json") as { currency?: string } | null;
+      currency = prefs?.currency as "INR" | "AED" | "USD" | undefined;
+    } catch (err) {
+      console.error("[search] session preference KV unavailable", err);
     }
   }
+  currency = currency ?? (tenant.defaultCurrency as "INR" | "AED" | "USD");
 
-  // ── Supplier config ──────────────────────────────────────────────────────────
-  // Search every available supplier. Tenant credentials override platform secrets.
-  const supplierConfigs  = await resolveSupplierConfigs(tenant, c.env, tenantId);
-  const enabledSuppliers = supplierConfigs.filter((s) => s.isEnabled);
-  const hasSerpAvailable = enabledSuppliers.some((s) => s.name === "GOOGLE_SERP");
+  const availableSuppliers = supplierConfigs.filter((s) => s.isEnabled).map((s) => s.name);
+  const credentialAvailability = {
+    RIYA:        Boolean(platformCredentials.RIYA || supplierConfigs.find((s) => s.name === "RIYA")?.credentials),
+    TRIPJACK:    Boolean(platformCredentials.TRIPJACK || supplierConfigs.find((s) => s.name === "TRIPJACK")?.credentials),
+    DUFFEL:      Boolean(platformCredentials.DUFFEL || supplierConfigs.find((s) => s.name === "DUFFEL")?.credentials),
+    GOOGLE_SERP: Boolean(platformCredentials.GOOGLE_SERP || supplierConfigs.find((s) => s.name === "GOOGLE_SERP")?.credentials),
+  };
 
-  // SERP joins normal web search when it is configured/available. This guarantees that
-  // web searches can still return indicative fares if all bookable suppliers fail/return none.
-  const includeSerpParallel = hasSerpAvailable && useSerpTrial;
-
-  // ── Fare cache ───────────────────────────────────────────────────────────────
-  const cacheKey = `fares:${tenantId}:${JSON.stringify({
-    ...params,
-    currency,
-    suppliers: enabledSuppliers.map((s) => s.name).sort(),
-  })}`;
-  const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json");
-  if (cached) {
-    return c.json({
-      ...(cached as object),
-      fromCache: true,
-      serpTrialsRemaining,
-    });
+  const trialKey = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
+  if (trialKey && supplierConfigs.some((s) => s.name === "GOOGLE_SERP" && s.isEnabled)) {
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const raw = await c.env.SESSIONS_KV.get(trialKey);
+        const count = raw ? parseInt(raw, 10) : 0;
+        await c.env.SESSIONS_KV.put(trialKey, String(count + 1), { expirationTtl: SERP_TRIAL_TTL });
+      } catch (err) {
+        console.error("[search] SERP analytics KV unavailable", err);
+      }
+    })());
   }
 
-  // ── Search ───────────────────────────────────────────────────────────────────
-  // All enabled bookable suppliers run in parallel. If they return nothing or fail,
-  // SERP is allowed as fallback on BOTH website and WhatsApp.
+  const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency })}`;
+  try {
+    const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json") as {
+      fares?: unknown[];
+      supplierErrors?: Record<string, string>;
+    } | null;
+    if (cached && Array.isArray(cached.fares) && cached.fares.length > 0 && !cached.supplierErrors) {
+      return c.json({ ...cached, fromCache: true });
+    }
+  } catch (err) {
+    console.error("[search] fare cache read unavailable; continuing live", err);
+  }
+
   const result = await searchFares(
     { ...params, currency },
     supplierConfigs,
-    {
-      allowSerpFallback: hasSerpAvailable,
-      includeSerpParallel,
-    },
+    { platformCredentials },
   );
 
-  // ── Markup ───────────────────────────────────────────────────────────────────
-  const { applyMarkup } = await import("../lib/markup.js");
-  const { markupRules } = await import("@poomas/db/schema");
-  const { eq } = await import("drizzle-orm");
+  // Markup is optional for availability. If DB/schema/rule loading fails, return the
+  // supplier fare unchanged rather than converting a healthy flight search into HTTP 500.
+  let pricedFares = result.fares.map((fare) => ({ ...fare, displayPrice: fare.totalFare, markup: undefined }));
+  try {
+    const { applyMarkup } = await import("../lib/markup.js");
+    const { markupRules } = await import("@poomas/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+    pricedFares = result.fares.map((fare) => ({
+      ...fare,
+      displayPrice: applyMarkup(fare, rules),
+      markup: undefined,
+    }));
+  } catch (err) {
+    console.error("[search] markup unavailable; returning raw supplier prices", err);
+  }
 
-  const rules = await db
-    .select()
-    .from(markupRules)
-    .where(eq(markupRules.tenantId, tenantId));
-
-  const pricedFares = result.fares.map((fare) => ({
-    ...fare,
-    displayPrice: applyMarkup(fare, rules),
-    markup: undefined,
-  }));
-
-  // ── Response ─────────────────────────────────────────────────────────────────
+  const hasErrors = Object.keys(result.errors).length > 0;
   const response = {
     fares: pricedFares,
     usedSuppliers: result.usedSuppliers,
-    availableSuppliers: enabledSuppliers.map((s) => s.name),
+    availableSuppliers,
+    credentialAvailability,
     isIndicative: result.isIndicative,
-    serpTrialsRemaining,
-    ...(c.env.ENVIRONMENT !== "production" ? { supplierErrors: result.errors } : {}),
+    ...(hasErrors ? { supplierErrors: result.errors } : {}),
     disclaimer: result.isIndicative
       ? "Some results are indicative Google Flights fares and cannot be booked directly. Contact an agent to confirm availability and price."
       : undefined,
   };
 
-  await c.env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(response), { expirationTtl: 300 });
+  // Cache is an optimization only. Never fail the customer request because KV failed.
+  c.executionCtx.waitUntil((async () => {
+    try {
+      if (pricedFares.length > 0 && !hasErrors) {
+        await c.env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(response), { expirationTtl: 300 });
+      } else {
+        await c.env.FARE_CACHE_KV.delete(cacheKey);
+      }
+    } catch (err) {
+      console.error("[search] fare cache write unavailable", err);
+    }
+  })());
 
   return c.json(response);
 });
 
-// Fare rules lookup (expandable fare detail)
+// Safe operational status: exposes only booleans/names, never secret values.
+searchRoutes.get("/status", async (c) => {
+  const tenant = c.get("tenant");
+  return c.json({
+    tenant: tenant.slug,
+    enabledSuppliers: tenant.supplierConfigs.filter((s) => s.isEnabled).map((s) => s.supplier),
+    platformSecrets: {
+      RIYA:        Boolean(c.env.RIYA_API_KEY && c.env.RIYA_API_BASE_URL),
+      TRIPJACK:    Boolean(c.env.TRIPJACK_API_KEY && c.env.TRIPJACK_API_BASE_URL),
+      DUFFEL:      Boolean(c.env.DUFFEL_API_KEY),
+      GOOGLE_SERP: Boolean(c.env.SERP_API_KEY),
+    },
+  });
+});
+
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
   const supplier = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;
-  const tenant   = c.get("tenant");
-  const tenantId = c.get("tenantId");
+  const tenant = c.get("tenant");
+  if (!supplier) return c.json({ error: "supplier query param required" }, 400);
 
-  const supplierConfigs = await resolveSupplierConfigs(tenant, c.env, tenantId);
-
-  if (!supplier) {
-    return c.json({ error: "supplier query param required" }, 400);
-  }
-
+  const platformCredentials = platformCredentialsFromEnv(c.env);
+  const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
   const { getBookableAdapter } = await import("@poomas/suppliers");
-  const adapter = getBookableAdapter(supplier, supplierConfigs);
+  const adapter = getBookableAdapter(supplier, supplierConfigs, platformCredentials);
   const rules = await adapter.getFareRules?.(fareId) ?? [];
-
   return c.json({ fareRules: rules });
 });

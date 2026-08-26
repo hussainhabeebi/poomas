@@ -52,6 +52,13 @@ const CABIN_MAP: Record<string, string> = {
   "Business": "BUSINESS", "First": "FIRST",
 };
 
+const CURRENCIES = [
+  { code: "INR", symbol: "₹" },
+  { code: "AED", symbol: "د.إ" },
+  { code: "USD", symbol: "$" },
+] as const;
+type CurrencyCode = "INR" | "AED" | "USD";
+
 type Airport = typeof AIRPORTS[number];
 type TripType = "One Way" | "Round Trip";
 
@@ -145,6 +152,20 @@ export default function SearchWidget() {
   const [returnDate, setReturnDate] = useState("");
   const [adults,     setAdults]     = useState(1);
   const [cabinClass, setCabinClass] = useState<(typeof CABIN_CLASSES)[number]>("Economy");
+  const [currency,   setCurrencyState] = useState<CurrencyCode>("INR");
+
+  // Restore currency preference from localStorage on first render
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("pref_currency") as CurrencyCode | null;
+      if (saved && CURRENCIES.some((c) => c.code === saved)) setCurrencyState(saved);
+    } catch {}
+  }, []);
+
+  function setCurrency(code: CurrencyCode) {
+    setCurrencyState(code);
+    try { localStorage.setItem("pref_currency", code); } catch {}
+  }
 
   function swap() {
     setOrigin(dest);
@@ -161,6 +182,7 @@ export default function SearchWidget() {
       adults:        String(adults),
       cabinClass:    CABIN_MAP[cabinClass] ?? "ECONOMY",
       tripType:      tripType === "Round Trip" ? "ROUNDTRIP" : "ONEWAY",
+      currency,
       ...(tripType === "Round Trip" && returnDate ? { returnDate } : {}),
     });
     router.push(`/search?${params}`);
@@ -191,6 +213,21 @@ export default function SearchWidget() {
             <option key={n} value={n}>{n} {n === 1 ? "Adult" : "Adults"}</option>
           ))}
         </select>
+
+        {/* Currency selector */}
+        <div className="currency-pills" role="group" aria-label="Currency">
+          {CURRENCIES.map((cur) => (
+            <button
+              key={cur.code}
+              type="button"
+              className={currency === cur.code ? "currency-pill currency-pill-active" : "currency-pill"}
+              onClick={() => setCurrency(cur.code)}
+              aria-pressed={currency === cur.code}
+            >
+              {cur.symbol} {cur.code}
+            </button>
+          ))}
+        </div>
       </div>
 
       <form onSubmit={handleSearch}>

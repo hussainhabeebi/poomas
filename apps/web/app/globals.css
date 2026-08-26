@@ -345,3 +345,30 @@ select.search-input {
 .route-card:active { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 .route-card-title { font-weight: 700; font-size: 15px; }
 .route-card-price { font-size: 13px; color: var(--color-primary); font-weight: 600; }
+
+/* ── Currency pills ────────────────────────────────────────────────────── */
+.currency-pills {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.currency-pill {
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid #d1d5db;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.currency-pill:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.currency-pill-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
