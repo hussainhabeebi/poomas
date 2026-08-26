@@ -29,76 +29,96 @@ const DEFAULT_SUPPLIER_SETTINGS: Record<SupplierName, Pick<SupplierConfig, "prio
   GOOGLE_SERP: { priority: 99, timeoutMs: 8000,  maxRetries: 0 },
 };
 
-function platformCredentials(env: Env, supplier: SupplierName): Record<string, string> | null {
+function platformCredentials(
+  env: Env,
+  supplier: SupplierName,
+  adminCfg?: Record<string, unknown> | null,
+): Record<string, string> | null {
   switch (supplier) {
-    case "RIYA":
-      if (!env.RIYA_API_KEY || !env.RIYA_API_SECRET) return null;
-      return {
-        apiKey: env.RIYA_API_KEY,
-        apiSecret: env.RIYA_API_SECRET,
-        ...(env.RIYA_API_BASE_URL ? { baseUrl: env.RIYA_API_BASE_URL } : {}),
-      };
-    case "TRIPJACK":
-      if (!env.TRIPJACK_API_KEY) return null;
-      return {
-        apiKey: env.TRIPJACK_API_KEY,
-        ...(env.TRIPJACK_API_BASE_URL ? { baseUrl: env.TRIPJACK_API_BASE_URL } : {}),
-      };
-    case "DUFFEL":
-      if (!env.DUFFEL_API_KEY) return null;
-      return {
-        apiKey: env.DUFFEL_API_KEY,
-        baseUrl: "https://api.duffel.com",
-      };
-    case "GOOGLE_SERP":
-      if (!env.SERP_API_KEY) return null;
-      return {
-        apiKey: env.SERP_API_KEY,
-        baseUrl: "https://serpapi.com",
-      };
+    case "RIYA": {
+      const key    = (adminCfg?.apiKey    as string) || env.RIYA_API_KEY;
+      const secret = (adminCfg?.apiSecret as string) || env.RIYA_API_SECRET;
+      const base   = (adminCfg?.baseUrl   as string) || env.RIYA_API_BASE_URL;
+      if (!key || !secret) return null;
+      return { apiKey: key, apiSecret: secret, ...(base ? { baseUrl: base } : {}) };
+    }
+    case "TRIPJACK": {
+      const key  = (adminCfg?.apiKey  as string) || env.TRIPJACK_API_KEY;
+      const base = (adminCfg?.baseUrl as string) || env.TRIPJACK_API_BASE_URL;
+      if (!key) return null;
+      return { apiKey: key, ...(base ? { baseUrl: base } : {}) };
+    }
+    case "DUFFEL": {
+      const key = (adminCfg?.apiKey as string) || env.DUFFEL_API_KEY;
+      if (!key) return null;
+      return { apiKey: key, baseUrl: "https://api.duffel.com" };
+    }
+    case "GOOGLE_SERP": {
+      const key = (adminCfg?.apiKey as string) || env.SERP_API_KEY;
+      if (!key) return null;
+      return { apiKey: key, baseUrl: "https://serpapi.com" };
+    }
   }
+}
+
+async function loadAdminIntegrationConfig(env: Env, tenantId: string, supplier: string) {
+  const raw = await env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:integration:${supplier}`);
+  if (!raw) return null;
+  const cfg = JSON.parse(raw) as Record<string, unknown>;
+  return cfg.enabled !== false ? cfg : null;  // Respect enabled flag
 }
 
 /**
  * Resolve every supplier that is actually available.
- * Tenant configuration wins, while missing credential fields fall back to platform secrets.
- * If a supplier is not configured for the tenant but platform credentials exist, it is added
- * automatically so a healthy supplier can still return fares.
- * Explicitly disabled tenant suppliers remain disabled.
+ * Priority: tenant DB config > admin KV settings > platform env secrets.
+ * Suppliers disabled in admin KV are respected.
  */
-function resolveSupplierConfigs(tenant: Variables["tenant"], env: Env): SupplierConfig[] {
+async function resolveSupplierConfigs(tenant: Variables["tenant"], env: Env, tenantId: string): Promise<SupplierConfig[]> {
   const configured = new Map<SupplierName, SupplierConfig>();
+
+  const supplierNames: SupplierName[] = ["RIYA", "TRIPJACK", "DUFFEL", "GOOGLE_SERP"];
+  const kvSupplierMap: Record<SupplierName, string> = {
+    RIYA: "riya", TRIPJACK: "tripjack", DUFFEL: "duffel", GOOGLE_SERP: "serp",
+  };
+
+  // Load admin KV configs for all suppliers in parallel
+  const adminCfgs = Object.fromEntries(
+    await Promise.all(
+      supplierNames.map(async (name) => [
+        name,
+        await loadAdminIntegrationConfig(env, tenantId, kvSupplierMap[name]),
+      ]),
+    ),
+  ) as Record<SupplierName, Record<string, unknown> | null>;
 
   for (const sc of tenant.supplierConfigs) {
     const name = sc.supplier as SupplierName;
     if (!(name in DEFAULT_SUPPLIER_SETTINGS)) continue;
 
-    const fallback = platformCredentials(env, name) ?? {};
+    const adminCfg = adminCfgs[name];
+    const fallback  = platformCredentials(env, name, adminCfg) ?? {};
     configured.set(name, {
       name,
       isEnabled: sc.isEnabled,
-      priority: sc.priority ?? DEFAULT_SUPPLIER_SETTINGS[name].priority,
-      credentials: {
-        ...fallback,
-        ...(sc.credentials ?? {}),
-      },
-      timeoutMs: sc.timeoutMs ?? DEFAULT_SUPPLIER_SETTINGS[name].timeoutMs,
+      priority:  sc.priority   ?? DEFAULT_SUPPLIER_SETTINGS[name].priority,
+      credentials: { ...fallback, ...(sc.credentials ?? {}) },
+      timeoutMs:  sc.timeoutMs  ?? DEFAULT_SUPPLIER_SETTINGS[name].timeoutMs,
       maxRetries: sc.maxRetries ?? DEFAULT_SUPPLIER_SETTINGS[name].maxRetries,
     });
   }
 
-  const supplierNames: SupplierName[] = ["RIYA", "TRIPJACK", "DUFFEL", "GOOGLE_SERP"];
   for (const name of supplierNames) {
     if (configured.has(name)) continue;
-    const credentials = platformCredentials(env, name);
+    const adminCfg    = adminCfgs[name];
+    const credentials = platformCredentials(env, name, adminCfg);
     if (!credentials) continue;
 
     configured.set(name, {
       name,
-      isEnabled: true,
-      priority: DEFAULT_SUPPLIER_SETTINGS[name].priority,
+      isEnabled:  true,
+      priority:   DEFAULT_SUPPLIER_SETTINGS[name].priority,
       credentials,
-      timeoutMs: DEFAULT_SUPPLIER_SETTINGS[name].timeoutMs,
+      timeoutMs:  DEFAULT_SUPPLIER_SETTINGS[name].timeoutMs,
       maxRetries: DEFAULT_SUPPLIER_SETTINGS[name].maxRetries,
     });
   }
@@ -142,7 +162,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 
   // ── Supplier config ──────────────────────────────────────────────────────────
   // Search every available supplier. Tenant credentials override platform secrets.
-  const supplierConfigs = resolveSupplierConfigs(tenant, c.env);
+  const supplierConfigs  = await resolveSupplierConfigs(tenant, c.env, tenantId);
   const enabledSuppliers = supplierConfigs.filter((s) => s.isEnabled);
   const hasSerpAvailable = enabledSuppliers.some((s) => s.name === "GOOGLE_SERP");
 
@@ -215,9 +235,10 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
   const supplier = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;
-  const tenant = c.get("tenant");
+  const tenant   = c.get("tenant");
+  const tenantId = c.get("tenantId");
 
-  const supplierConfigs = resolveSupplierConfigs(tenant, c.env);
+  const supplierConfigs = await resolveSupplierConfigs(tenant, c.env, tenantId);
 
   if (!supplier) {
     return c.json({ error: "supplier query param required" }, 400);
