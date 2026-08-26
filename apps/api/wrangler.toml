@@ -6,9 +6,6 @@ account_id = "32263d4999a1bc702f9d0052d7bd281b"
 workers_dev = false
 
 # ── Custom Domain ────────────────────────────────────────────────
-# api.flypoomas.com is dedicated to this Worker. Use a Worker Custom Domain
-# instead of a route that depends on a separate proxied DNS origin record.
-# This prevents Cloudflare 530 / error 1016 (Origin DNS error).
 routes = [
   { pattern = "api.flypoomas.com", custom_domain = true }
 ]
@@ -62,15 +59,26 @@ max_batch_timeout = 2
 binding = "HYPERDRIVE"
 id      = "4cd8c2e342f4419590460c43c1b25943"
 
-# ── Durable Objects (per-tenant rate limiter) ─────────────────────
+# ── Browser Rendering (PDF e-tickets + OG images) ────────────────
+[browser]
+binding = "BROWSER"
+
+# ── Durable Objects ───────────────────────────────────────────────
 [[durable_objects.bindings]]
 name       = "TENANT_RATE_LIMITER"
 class_name = "TenantRateLimiter"
 
-# new_sqlite_classes required for free plan Durable Objects
+[[durable_objects.bindings]]
+name       = "BOOKING_AGENT"
+class_name = "BookingAgent"
+
 [[migrations]]
 tag                = "v1"
 new_sqlite_classes = ["TenantRateLimiter"]
+
+[[migrations]]
+tag                = "v2"
+new_sqlite_classes = ["BookingAgent"]
 
 # ── Environment Variables (non-secret) ───────────────────────────
 [vars]
@@ -84,4 +92,5 @@ PLATFORM_TENANT_SLUG = "poomas"
 # NOMOD_API_KEY, NOMOD_API_SECRET, NOMOD_WEBHOOK_SECRET,
 # RESEND_API_KEY,
 # LEADVYNE_API_KEY, LEADVYNE_API_SECRET, LEADVYNE_BASE_URL,
-# LEADVYNE_INSTANCE_ID, LEADVYNE_WEBHOOK_SECRET
+# LEADVYNE_INSTANCE_ID, LEADVYNE_WEBHOOK_SECRET,
+# GEMINI_API_KEY

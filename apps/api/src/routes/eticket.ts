@@ -1,4 +1,5 @@
 // GET  /api/eticket/:bookingId      — serves e-ticket HTML for a confirmed booking
+// GET  /api/eticket/:bookingId/pdf  — serves e-ticket PDF (generated via Browser Rendering)
 // POST /api/eticket/:bookingId/send — send e-ticket via WhatsApp (Leadvyne) + email (Resend)
 
 import { Hono } from "hono";
@@ -7,6 +8,7 @@ import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
+import { htmlToPdf } from "../lib/browser-pdf.js";
 import type { Env, Variables } from "../types.js";
 
 export const eticketRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -39,10 +41,63 @@ eticketRoutes.get("/:bookingId", async (c) => {
   });
 });
 
+// ── PDF endpoint ──────────────────────────────────────────────────────────────
+
+eticketRoutes.get("/:bookingId/pdf", async (c) => {
+  const db        = c.get("db");
+  const tenantId  = c.get("tenantId");
+  const bookingId = c.req.param("bookingId");
+
+  const [booking] = await db
+    .select({ id: bookings.id, status: bookings.status, pnr: bookings.pnr })
+    .from(bookings)
+    .where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, tenantId)))
+    .limit(1);
+
+  if (!booking) throw new HTTPException(404, { message: "Booking not found" });
+  if (!["CONFIRMED", "TICKETED"].includes(booking.status)) {
+    throw new HTTPException(400, { message: "E-ticket only available for confirmed bookings" });
+  }
+
+  // Serve cached PDF if available
+  const pdfKey = `etickets/${bookingId}.pdf`;
+  const cached = await c.env.DOCUMENTS_R2.get(pdfKey);
+  if (cached) {
+    return new Response(await cached.arrayBuffer(), {
+      headers: {
+        "Content-Type":        "application/pdf",
+        "Content-Disposition": `attachment; filename="eticket-${booking.pnr ?? bookingId}.pdf"`,
+        "Cache-Control":       "private, max-age=3600",
+      },
+    });
+  }
+
+  // Load the HTML source
+  const htmlObj = await c.env.DOCUMENTS_R2.get(`etickets/${bookingId}.html`);
+  if (!htmlObj) throw new HTTPException(404, { message: "E-ticket HTML not yet generated" });
+
+  const html = await htmlObj.text();
+  const pdfBytes = await htmlToPdf(c.env.BROWSER, html);
+
+  // Cache PDF in R2 for subsequent requests
+  await c.env.DOCUMENTS_R2.put(pdfKey, pdfBytes, {
+    httpMetadata:   { contentType: "application/pdf" },
+    customMetadata: { bookingId, generatedAt: new Date().toISOString() },
+  });
+
+  return new Response(pdfBytes, {
+    headers: {
+      "Content-Type":        "application/pdf",
+      "Content-Disposition": `attachment; filename="eticket-${booking.pnr ?? bookingId}.pdf"`,
+      "Cache-Control":       "private, max-age=3600",
+    },
+  });
+});
+
 const sendSchema = z.object({
   channels: z.array(z.enum(["WHATSAPP", "EMAIL"])).min(1).default(["WHATSAPP", "EMAIL"]),
-  whatsappPhone: z.string().optional(),  // Override; falls back to booking.whatsappPhone
-  email:         z.string().email().optional(),  // Override; falls back to booking.contactEmail
+  whatsappPhone: z.string().optional(),
+  email:         z.string().email().optional(),
 });
 
 eticketRoutes.post("/:bookingId/send", zValidator("json", sendSchema), async (c) => {
@@ -71,12 +126,10 @@ eticketRoutes.post("/:bookingId/send", zValidator("json", sendSchema), async (c)
   const flightData = booking.flightData as Record<string, unknown>;
   const pnr       = booking.pnr ?? "TBD";
 
-  // Public URL for the e-ticket HTML (stored in PUBLIC_ASSETS_R2 after generation)
   const eticketUrl = `https://assets.flypoomas.com/etickets/${bookingId}.html`;
 
   const results: Record<string, unknown> = {};
 
-  // ── WhatsApp via Leadvyne ──────────────────────────────────────────────────
   if (body.channels.includes("WHATSAPP") && c.env.LEADVYNE_API_KEY) {
     const phone = body.whatsappPhone ?? booking.whatsappPhone;
     if (phone) {
@@ -109,7 +162,6 @@ eticketRoutes.post("/:bookingId/send", zValidator("json", sendSchema), async (c)
     }
   }
 
-  // ── Email via Resend ───────────────────────────────────────────────────────
   if (body.channels.includes("EMAIL") && c.env.RESEND_API_KEY) {
     const email = body.email ?? booking.contactEmail;
     if (email) {

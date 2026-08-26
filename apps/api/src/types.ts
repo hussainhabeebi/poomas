@@ -1,4 +1,4 @@
-import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace, BrowserWorker } from "@cloudflare/workers-types";
 import type { Db } from "@poomas/db";
 
 export interface Env {
@@ -13,6 +13,9 @@ export interface Env {
   NOTIFY_QUEUE:     Queue;
   HYPERDRIVE:       Hyperdrive;
   TENANT_RATE_LIMITER: DurableObjectNamespace;
+  BOOKING_AGENT: DurableObjectNamespace;
+  BROWSER: BrowserWorker;
+  GEMINI_API_KEY: string;
   DATABASE_URL:           string;
   JWT_SECRET:             string;
   RIYA_API_KEY:           string;
@@ -31,11 +34,9 @@ export interface Env {
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
 
-  // One-time admin bootstrap (set in Cloudflare dashboard, unset after first use)
   PLATFORM_ADMIN_EMAIL?:    string;
   PLATFORM_ADMIN_PASSWORD?: string;
 
-  // Leadvyne WhatsApp gateway
   LEADVYNE_API_KEY:       string;
   LEADVYNE_API_SECRET:    string;
   LEADVYNE_BASE_URL:      string;

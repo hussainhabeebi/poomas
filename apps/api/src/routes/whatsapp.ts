@@ -1,6 +1,7 @@
 // POST /api/whatsapp/send     — send message to WhatsApp via Leadvyne
 // POST /api/whatsapp/template — send template message (for e-ticket / booking confirmation)
 // GET  /api/whatsapp/status   — check connection status with Leadvyne
+// GET  /api/whatsapp/agent    — WebSocket upgrade → BookingAgent Durable Object (per-user AI chat)
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
@@ -9,8 +10,6 @@ import { HTTPException } from "hono/http-exception";
 import type { Env, Variables } from "../types.js";
 
 export const whatsappRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
-
-// ── Leadvyne client helpers ────────────────────────────────────────────────────
 
 interface LeadvyneConfig {
   apiKey:    string;
@@ -46,10 +45,8 @@ async function leadvyneFetch(cfg: LeadvyneConfig, path: string, body?: unknown) 
   return res.json();
 }
 
-// ── Routes ─────────────────────────────────────────────────────────────────────
-
 const sendSchema = z.object({
-  to:      z.string().min(8),  // E.164 phone, e.g. "971501234567"
+  to:      z.string().min(8),
   message: z.string().min(1).max(4096),
   mediaUrl: z.string().url().optional(),
   mediaType: z.enum(["image", "document", "audio", "video"]).optional(),
@@ -100,4 +97,11 @@ whatsappRoutes.get("/status", async (c) => {
     if (err.status === 503) return c.json({ configured: false, error: err.message });
     return c.json({ configured: true, error: err.message, status: "error" });
   }
+});
+
+whatsappRoutes.get("/agent", async (c) => {
+  const userId  = c.get("userId") ?? c.get("agentId") ?? "anon";
+  const agentDO = c.env.BOOKING_AGENT.idFromName(`user:${userId}`);
+  const stub    = c.env.BOOKING_AGENT.get(agentDO);
+  return stub.fetch(c.req.raw);
 });

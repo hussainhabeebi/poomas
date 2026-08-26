@@ -118,9 +118,7 @@ export default function LoginPage() {
 
   return (
     <>
-      {/* Mobile full-screen WhatsApp layout */}
       <div className="wa-screen">
-        {/* Header */}
         <div className="wa-header">
           <a href="/" className="wa-back" aria-label="Back">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -147,7 +145,6 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Encrypted label */}
         <div className="wa-encrypted-label">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
             <rect x="3" y="11" width="18" height="11" rx="2" stroke="#8e8e8e" strokeWidth="2" />
@@ -156,7 +153,6 @@ export default function LoginPage() {
           Messages are end-to-end encrypted
         </div>
 
-        {/* Messages */}
         <div className="wa-messages">
           {messages.map((msg) => (
             <div
@@ -199,7 +195,6 @@ export default function LoginPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input bar */}
         <div className="wa-input-bar">
           <div className="wa-input-pill">
             <input
@@ -261,7 +256,6 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Desktop fallback — traditional card */}
       <div className="wa-desktop-fallback">
         <div className="wa-desktop-card">
           <img src="/logo.svg" alt="POOMAS" height={40} style={{ margin: "0 auto 24px", display: "block" }} />
@@ -275,7 +269,6 @@ export default function LoginPage() {
   );
 }
 
-/* Desktop form reused independently */
 function DesktopLoginForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");

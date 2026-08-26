@@ -22,8 +22,10 @@ import { eticketRoutes }       from "./routes/eticket.js";
 import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
+import { ogRoutes }            from "./routes/og.js";
+import { BookingAgent }        from "./lib/booking-agent.js";
 
-export { TenantRateLimiter };
+export { TenantRateLimiter, BookingAgent };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", logger());
@@ -61,6 +63,7 @@ app.route("/api/agents",   agentRoutes);
 app.route("/api/wallet",   walletRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/admin",    adminRoutes);
+app.route("/api/og",       ogRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {

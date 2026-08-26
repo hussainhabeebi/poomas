@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const AIRPORTS = [
@@ -69,9 +69,9 @@ function AirportInput({
   onChange: (a: Airport) => void; placeholder: string; tabIndex?: number;
 }) {
   const displayVal = value ? `${value.city} (${value.code})` : "";
-  const [query, setQuery] = useState(displayVal);
-  const [open,  setOpen]  = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [query,    setQuery]    = useState(displayVal);
+  const [open,     setOpen]     = useState(false);
+  const wrapRef  = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -90,13 +90,18 @@ function AirportInput({
   }, [value]);
 
   const q = query.toLowerCase().trim();
-  const matches = q
+  const localMatches = q
     ? AIRPORTS.filter(
         (a) =>
           a.code.toLowerCase().startsWith(q) ||
           a.city.toLowerCase().includes(q)
       ).slice(0, 8)
     : AIRPORTS.slice(0, 8);
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setQuery(e.target.value);
+    setOpen(true);
+  }
 
   function pick(a: Airport) {
     onChange(a);
@@ -117,12 +122,12 @@ function AirportInput({
         inputMode="text"
         tabIndex={tabIndex}
         onFocus={() => { setQuery(""); setOpen(true); }}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onChange={handleChange}
         required
       />
-      {open && matches.length > 0 && (
+      {open && localMatches.length > 0 && (
         <ul className="airport-dropdown">
-          {matches.map((a) => (
+          {localMatches.map((a) => (
             <li
               key={a.code}
               onMouseDown={(e) => { e.preventDefault(); pick(a); }}
@@ -154,7 +159,6 @@ export default function SearchWidget() {
   const [cabinClass, setCabinClass] = useState<(typeof CABIN_CLASSES)[number]>("Economy");
   const [currency,   setCurrencyState] = useState<CurrencyCode>("INR");
 
-  // Restore currency preference from localStorage on first render
   useEffect(() => {
     try {
       const saved = localStorage.getItem("pref_currency") as CurrencyCode | null;
@@ -192,7 +196,6 @@ export default function SearchWidget() {
 
   return (
     <div className="search-widget">
-      {/* Top bar: trip type + passengers */}
       <div className="trip-tabs">
         {(["One Way", "Round Trip"] as TripType[]).map((t) => (
           <button
@@ -214,7 +217,6 @@ export default function SearchWidget() {
           ))}
         </select>
 
-        {/* Currency selector */}
         <div className="currency-pills" role="group" aria-label="Currency">
           {CURRENCIES.map((cur) => (
             <button
@@ -232,7 +234,6 @@ export default function SearchWidget() {
 
       <form onSubmit={handleSearch}>
         <div className="sw-grid">
-          {/* Route row: FROM ⇄ TO */}
           <div className="sw-route-row">
             <AirportInput
               id="sw-origin" label="From" value={origin}
@@ -247,7 +248,6 @@ export default function SearchWidget() {
             />
           </div>
 
-          {/* Extras row: DEPART + RETURN/CLASS */}
           <div className="sw-extras-row">
             <div className="search-field">
               <label htmlFor="sw-depart">Depart</label>
@@ -281,7 +281,6 @@ export default function SearchWidget() {
             )}
           </div>
 
-          {/* Search button */}
           <button type="submit" className="search-btn" tabIndex={5}>
             🔍 Search Flights
           </button>
