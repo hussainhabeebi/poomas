@@ -1,4 +1,4 @@
-/* ── Reset ─────────────────────────────────────────────────────────────── */
+/* ── Reset ────────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 :root {
@@ -22,7 +22,7 @@ body {
 
 img { max-width: 100%; display: block; }
 
-/* ── Header ────────────────────────────────────────────────────────────── */
+/* ── Header ───────────────────────────────────────────────────────────────────── */
 .site-header {
   display: flex;
   align-items: center;
@@ -43,7 +43,7 @@ img { max-width: 100%; display: block; }
   padding: 8px 4px;
 }
 
-/* ── Search Widget ─────────────────────────────────────────────────────── */
+/* ── Search Widget ────────────────────────────────────────────────────────────────── */
 .search-widget {
   background: white;
   border-radius: var(--radius-lg);
@@ -233,7 +233,7 @@ select.search-input {
   .search-btn    { flex-shrink: 0; width: auto; align-self: end; }
 }
 
-/* ── Hero Banner ───────────────────────────────────────────────────────── */
+/* ── Hero Banner ─────────────────────────────────────────────────────────────────── */
 .hero {
   min-height: 280px;
   display: flex;
@@ -270,14 +270,14 @@ select.search-input {
 }
 .hero-dot-active { background: white; transform: scale(1.3); }
 
-/* ── Page container ────────────────────────────────────────────────────── */
+/* ── Page container ────────────────────────────────────────────────────────────────── */
 .page-container {
   max-width: 1100px;
   margin: 0 auto;
   padding: 0 16px 40px;
 }
 
-/* ── Fare card ─────────────────────────────────────────────────────────── */
+/* ── Fare card ──────────────────────────────────────────────────────────────────── */
 .fare-card {
   border: 1.5px solid #e5e7eb;
   border-radius: var(--radius-md);
@@ -319,7 +319,7 @@ select.search-input {
   .fare-card-price-col   { text-align: right; min-width: 140px; }
 }
 
-/* ── Popular routes ────────────────────────────────────────────────────── */
+/* ── Popular routes ────────────────────────────────────────────────────────────────── */
 .routes-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -346,7 +346,7 @@ select.search-input {
 .route-card-title { font-weight: 700; font-size: 15px; }
 .route-card-price { font-size: 13px; color: var(--color-primary); font-weight: 600; }
 
-/* ── Currency pills ────────────────────────────────────────────────────── */
+/* ── Currency pills ────────────────────────────────────────────────────────────────── */
 .currency-pills {
   display: flex;
   gap: 4px;
@@ -378,7 +378,7 @@ select.search-input {
    Visible only on mobile (< 768px); desktop shows .wa-desktop-fallback.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Visibility split ────────────────────────────────────────────────────── */
+/* ── Visibility split ─────────────────────────────────────────────────────────────────── */
 .wa-screen           { display: flex; }
 .wa-desktop-fallback { display: none; }
 
@@ -387,7 +387,7 @@ select.search-input {
   .wa-desktop-fallback { display: flex; }
 }
 
-/* ── Full-screen overlay ─────────────────────────────────────────────────── */
+/* ── Full-screen overlay ───────────────────────────────────────────────────────────────── */
 .wa-screen {
   position: fixed;
   inset: 0;
@@ -398,7 +398,7 @@ select.search-input {
   overflow: hidden;
 }
 
-/* ── Header ──────────────────────────────────────────────────────────────── */
+/* ── Header ────────────────────────────────────────────────────────────────────────── */
 .wa-header {
   background: #075E54;
   display: flex;
@@ -439,7 +439,7 @@ select.search-input {
 .wa-contact-status { color: rgba(255,255,255,.82); font-size: 12px; margin-top: 1px; }
 .wa-header-icons { color: white; display: flex; padding: 4px; }
 
-/* ── Encrypted label ─────────────────────────────────────────────────────── */
+/* ── Encrypted label ────────────────────────────────────────────────────────────────── */
 .wa-encrypted-label {
   background: #FFF3CC;
   color: #7a6000;
@@ -453,7 +453,7 @@ select.search-input {
   flex-shrink: 0;
 }
 
-/* ── Chat area ───────────────────────────────────────────────────────────── */
+/* ── Chat area ─────────────────────────────────────────────────────────────────────── */
 .wa-messages {
   flex: 1;
   overflow-y: auto;
@@ -463,14 +463,13 @@ select.search-input {
   gap: 3px;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  /* Subtle tiled pattern matching WhatsApp's wallpaper vibe */
   background-color: #ECE5DD;
   background-image:
     radial-gradient(circle at 1px 1px, rgba(0,0,0,0.035) 1px, transparent 0);
   background-size: 20px 20px;
 }
 
-/* ── Message rows ────────────────────────────────────────────────────────── */
+/* ── Message rows ──────────────────────────────────────────────────────────────────── */
 .wa-msg-row {
   display: flex;
   justify-content: flex-start;
@@ -478,7 +477,7 @@ select.search-input {
 }
 .wa-msg-row--out { justify-content: flex-end; }
 
-/* ── Bubbles ─────────────────────────────────────────────────────────────── */
+/* ── Bubbles ─────────────────────────────────────────────────────────────────────────── */
 .wa-bubble {
   max-width: 82%;
   padding: 7px 10px 20px;
@@ -494,7 +493,6 @@ select.search-input {
   border-top-left-radius: 0;
   margin-left: 4px;
 }
-/* Tail for incoming */
 .wa-bubble--in::before {
   content: "";
   position: absolute;
@@ -510,7 +508,6 @@ select.search-input {
   border-top-right-radius: 0;
   margin-right: 4px;
 }
-/* Tail for outgoing */
 .wa-bubble--out::after {
   content: "";
   position: absolute;
@@ -544,7 +541,7 @@ select.search-input {
 
 .wa-ticks { display: flex; align-items: center; }
 
-/* ── Typing indicator ────────────────────────────────────────────────────── */
+/* ── Typing indicator ────────────────────────────────────────────────────────────────── */
 .wa-typing {
   display: flex;
   gap: 4px;
@@ -569,7 +566,7 @@ select.search-input {
   30%           { transform: translateY(-6px); opacity: 1; }
 }
 
-/* ── Input bar ───────────────────────────────────────────────────────────── */
+/* ── Input bar ────────────────────────────────────────────────────────────────────────── */
 .wa-input-bar {
   background: #F0F0F0;
   display: flex;
@@ -637,7 +634,7 @@ select.search-input {
 .wa-send:active:not(:disabled) { background: #054d45; transform: scale(0.94); }
 .wa-send:disabled { background: #b0b0b0; cursor: default; box-shadow: none; }
 
-/* ── Desktop fallback card ───────────────────────────────────────────────── */
+/* ── Desktop fallback card ────────────────────────────────────────────────────────────────── */
 .wa-desktop-fallback {
   min-height: 100vh;
   align-items: center;

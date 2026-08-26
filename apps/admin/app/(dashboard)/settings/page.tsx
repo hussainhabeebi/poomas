@@ -3,7 +3,6 @@ import { useState, useEffect } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
-/* ── Small shared UI ────────────────────────────────────────────── */
 function Section({ color, title, badge, children }: {
   color: string; title: string; badge: string; children: React.ReactNode;
 }) {
@@ -66,7 +65,6 @@ function saveBtn(disabled: boolean): React.CSSProperties {
     padding: "9px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: disabled ? 0.7 : 1 };
 }
 
-/* ── Payment Section ────────────────────────────────────────────── */
 function PaymentSettings() {
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
@@ -114,7 +112,6 @@ function PaymentSettings() {
         </select>
       </div>
 
-      {/* Razorpay */}
       <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
         <Toggle label="Enable Razorpay" description="Cards, UPI, Net Banking, Wallets — embedded checkout"
           checked={s.razorpay.enabled} onChange={(v) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, enabled: v } }))} color="#2563eb" />
@@ -148,7 +145,6 @@ function PaymentSettings() {
         )}
       </div>
 
-      {/* NoMod */}
       <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
         <Toggle label="Enable NoMod Pay" description="Alternative payment gateway — hosted redirect flow"
           checked={s.nomod.enabled} onChange={(v) => setS((p) => ({ ...p, nomod: { ...p.nomod, enabled: v } }))} color="#7c3aed" />
@@ -197,7 +193,6 @@ function PaymentSettings() {
   );
 }
 
-/* ── WhatsApp Section ───────────────────────────────────────────── */
 function WhatsAppSettings() {
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
@@ -322,9 +317,6 @@ function WhatsAppSettings() {
                   style={inputStyle} />
               </div>
             </div>
-            <Hint style={{ marginTop: 8 }}>
-              Template names must match approved Meta WhatsApp Business templates in your Leadvyne account.
-            </Hint>
           </div>
         </>
       )}
@@ -340,7 +332,6 @@ function WhatsAppSettings() {
   );
 }
 
-/* ── E-ticket Section ───────────────────────────────────────────── */
 function EticketSettings() {
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
@@ -456,7 +447,6 @@ function EticketSettings() {
   );
 }
 
-/* ── Main page ──────────────────────────────────────────────────── */
 export default function SettingsPage() {
   return (
     <div>
@@ -477,7 +467,6 @@ export default function SettingsPage() {
         <EticketSettings />
       </Section>
 
-      {/* Secrets cheatsheet */}
       <section style={{ ...card, marginTop: 16, borderColor: "#854d0e", background: "#1c1100" }}>
         <h2 style={{ fontSize: 15, fontWeight: 700, color: "#fbbf24", margin: "0 0 12px" }}>
           Worker Secrets (set via <code style={codeStyle}>wrangler secret put</code>)

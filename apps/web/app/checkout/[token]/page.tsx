@@ -69,7 +69,6 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
     <main style={{ minHeight: "100vh", background: "#f8fafc", padding: "24px 16px" }}>
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
 
-        {/* Header */}
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <span style={{ fontSize: 22 }}>✈️</span>
@@ -82,7 +81,6 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
           </p>
         </div>
 
-        {/* Fare summary */}
         <div style={card}>
           <SectionTitle>Flight Summary</SectionTitle>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -114,7 +112,6 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
           )}
         </div>
 
-        {/* Passengers */}
         <div style={card}>
           <SectionTitle>Passengers</SectionTitle>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -145,7 +142,6 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
           </div>
         </div>
 
-        {/* Payment — client component handles Razorpay / NoMod */}
         <CheckoutClient
           bookingId={booking.id}
           token={token}
