@@ -17,8 +17,8 @@ export default function AdminLoginPage() {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
       method:      "POST",
       credentials: "include",
-      headers:     { "Content-Type": "application/json" },
-      body:        JSON.stringify({ email, password: pass, role: "superadmin" }),
+      headers:     { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+      body:        JSON.stringify({ email, password: pass }),
     });
 
     if (res.ok) {
@@ -26,8 +26,8 @@ export default function AdminLoginPage() {
       document.cookie = `poomas_admin_token=${token}; Path=/; SameSite=Lax; Secure`;
       router.push("/dashboard");
     } else {
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      setError(data.error ?? "Login failed");
+      const data = await res.json().catch(() => ({})) as { error?: string; message?: string };
+      setError(data.message ?? data.error ?? "Login failed");
     }
 
     setLoading(false);
