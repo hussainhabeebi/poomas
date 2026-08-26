@@ -122,6 +122,39 @@ authRoutes.post("/logout", async (c) => {
   return c.json({ ok: true });
 });
 
+// One-time admin password initialisation — only works if PLATFORM_ADMIN_PASSWORD is set in env
+// and the target account has no password yet. Safe to call repeatedly; idempotent after first use.
+authRoutes.post("/admin-init", async (c) => {
+  const adminEmail    = c.env.PLATFORM_ADMIN_EMAIL    ?? "admin@flypoomas.com";
+  const adminPassword = c.env.PLATFORM_ADMIN_PASSWORD ?? "";
+
+  if (!adminPassword) {
+    throw new HTTPException(400, { message: "PLATFORM_ADMIN_PASSWORD not set in Cloudflare env" });
+  }
+
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+
+  const [user] = await db
+    .select({ id: users.id, passwordHash: users.passwordHash })
+    .from(users)
+    .where(and(eq(users.email, adminEmail), eq(users.tenantId, tenantId)))
+    .limit(1);
+
+  if (!user) {
+    throw new HTTPException(404, { message: `No user found for ${adminEmail}` });
+  }
+
+  if (user.passwordHash) {
+    throw new HTTPException(409, { message: "Password already set — use login instead" });
+  }
+
+  const passwordHash = await pbkdf2HashPassword(adminPassword);
+  await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
+
+  return c.json({ ok: true, message: "Admin password set. You can now log in." });
+});
+
 // OTP request (sends via WhatsApp/SMS — returns success regardless to prevent enumeration)
 const otpSchema = z.object({ phone: z.string().min(8) });
 authRoutes.post("/otp/request", zValidator("json", otpSchema), async (c) => {
