@@ -90,7 +90,7 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
               <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a" }}>
                 {booking.origin} → {booking.destination}
               </div>
-              {fd.airlineName && (
+              {fd.airlineName != null && (
                 <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
                   {String(fd.airlineName)} · {fd.flightNumber ? String(fd.flightNumber) : ""}
                 </div>
