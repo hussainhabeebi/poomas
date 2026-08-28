@@ -18,7 +18,7 @@ export interface SupplierConfig {
 // enabled but the tenant hasn't supplied their own API keys yet.
 export interface PlatformCredentials {
   RIYA?:        { apiKey?: string; secretKey?: string; baseUrl?: string };
-  TRIPJACK?:    { apiKey?: string; baseUrl?: string };
+  TRIPJACK?:    { apiKey?: string; baseUrl?: string; proxyKey?: string };
   GOOGLE_SERP?: { apiKey?: string; baseUrl?: string };
   DUFFEL?:      { apiKey?: string };
 }
@@ -215,3 +215,4 @@ export function getBookableAdapter(
   if (!config) throw new Error(`Supplier ${supplierName} not available`);
   return buildAdapter(config, platform);
 }
+
