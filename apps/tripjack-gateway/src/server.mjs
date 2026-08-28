@@ -95,13 +95,18 @@ const server = http.createServer(async (req, res) => {
     const upstreamPath = ROUTES.get(url.pathname);
     if (!upstreamPath) return json(res, 404, { error: "UNSUPPORTED_TRIPJACK_ROUTE", requestId }, requestId);
 
+    const tripjackApiKey = String(req.headers["apikey"] ?? config.tripjackApiKey ?? "");
+    if (!tripjackApiKey) {
+      return json(res, 502, { error: "TRIPJACK_CREDENTIAL_MISSING", requestId }, requestId);
+    }
+
     const body = await readJson(req);
     const response = await fetch(upstreamUrl(config.upstream, upstreamPath), {
       method: "POST",
       headers: {
         "accept": "application/json",
         "content-type": "application/json",
-        "apikey": config.tripjackApiKey,
+        "apikey": tripjackApiKey,
         "x-request-id": requestId,
       },
       body: JSON.stringify(body),
