@@ -14,8 +14,20 @@ export class TripjackAdapter implements SupplierAdapter {
   }
 
   async search(params: SearchParams): Promise<NormalizedFare[]> {
-    const raw = await this.client.search(params) as { searchResult?: { tripInfos?: Record<string, unknown[]> } };
-    const trips = raw?.searchResult?.tripInfos?.["ONWARD"] ?? [];
+    const raw = await this.client.search(params) as Record<string, unknown>;
+    // Some whitelisted proxies wrap the upstream JSON in `data` or `result`.
+    const response = ((raw.data ?? raw.result ?? raw) as Record<string, unknown>);
+    const status = response.status as { success?: boolean } | undefined;
+    if (status?.success === false) {
+      throw new Error("TripJack rejected the flight search request");
+    }
+
+    const searchResult = response.searchResult as { tripInfos?: Record<string, unknown[]> } | undefined;
+    if (!searchResult?.tripInfos) {
+      throw new Error("TripJack returned an unrecognized flight-search response");
+    }
+
+    const trips = searchResult.tripInfos["ONWARD"] ?? [];
     return trips.map(normalizeTripjackFare);
   }
 
@@ -65,3 +77,4 @@ export class TripjackAdapter implements SupplierAdapter {
     };
   }
 }
+
