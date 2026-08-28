@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { API, apiHeaders } from "@/lib/api";
 
 type Env = "UAT" | "PRODUCTION";
 
@@ -46,20 +47,46 @@ const SERP_WIRING = [
 
 /* ── Page ───────────────────────────────────────────────────────── */
 export default function IntegrationsPage() {
-  const [tj, setTj] = useState({ apiKey: "", env: "UAT" as Env, enabled: false, tripsafe: false, cabs: false, saving: false, saved: false, error: "" });
+  const [tj, setTj] = useState({ apiKey: "", configured: false, env: "UAT" as Env, enabled: false, tripsafe: false, cabs: false, saving: false, saved: false, error: "" });
   const [duffel, setDuffel] = useState({ apiKey: "", env: "test" as "test" | "live", enabled: false, saving: false, saved: false, error: "" });
   const [serp, setSerp] = useState({ apiKey: "", saving: false, saved: false, error: "" });
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`${API}/api/admin/integrations/tripjack`, { headers: apiHeaders() });
+        if (!res.ok) throw new Error(`Unable to load TripJack configuration (${res.status})`);
+        const data = await res.json() as {
+          enabled?: boolean; apiKey?: string; environment?: Env;
+          tripsafeEnabled?: boolean; cabsEnabled?: boolean;
+        };
+        setTj((s) => ({
+          ...s,
+          configured: Boolean(data.apiKey),
+          enabled: data.enabled === true,
+          env: data.environment ?? "UAT",
+          tripsafe: data.tripsafeEnabled === true,
+          cabs: data.cabsEnabled === true,
+        }));
+      } catch (err) {
+        setTj((s) => ({ ...s, error: err instanceof Error ? err.message : "Unable to load TripJack configuration" }));
+      }
+    })();
+  }, []);
 
   async function saveTj(e: React.FormEvent) {
     e.preventDefault();
     setTj((s) => ({ ...s, saving: true, error: "", saved: false }));
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/integrations/tripjack`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+      const res = await fetch(`${API}/api/admin/integrations/tripjack`, {
+        method: "POST", headers: apiHeaders(),
         body: JSON.stringify({ enabled: tj.enabled, apiKey: tj.apiKey, environment: tj.env, tripsafeEnabled: tj.tripsafe, cabsEnabled: tj.cabs }),
       });
-      if (!res.ok) throw new Error("Failed — check API connectivity");
-      setTj((s) => ({ ...s, saved: true }));
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string; message?: string };
+        throw new Error(data.message ?? data.error ?? `Failed to save TripJack configuration (${res.status})`);
+      }
+      setTj((s) => ({ ...s, configured: s.configured || Boolean(s.apiKey), apiKey: "", saved: true }));
     } catch (e: any) { setTj((s) => ({ ...s, error: e.message })); }
     finally { setTj((s) => ({ ...s, saving: false })); }
   }
@@ -192,10 +219,10 @@ export default function IntegrationsPage() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <div>
               <Label>TripJack API Key</Label>
-              <input type="password" placeholder="Your TripJack API key"
+              <input type="password" placeholder={tj.configured ? "Configured — leave blank to keep existing key" : "Your TripJack API key"}
                 value={tj.apiKey} onChange={(e) => setTj((s) => ({ ...s, apiKey: e.target.value }))}
                 style={inputStyle} />
-              <p style={hint}>Set as <code style={codeStyle}>TRIPJACK_API_KEY</code> on poomas-api.</p>
+              <p style={hint}>{tj.configured ? "An API key is saved for this tenant." : <>Set as <code style={codeStyle}>TRIPJACK_API_KEY</code> on poomas-api.</>}</p>
             </div>
             <div>
               <Label>Environment</Label>
