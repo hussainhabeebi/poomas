@@ -19,6 +19,24 @@ const searchSchema = z.object({
 
 const SERP_TRIAL_TTL = 60 * 60 * 24;
 
+interface TripjackAdminConfig {
+  enabled?: boolean;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+async function tripjackAdminConfig(env: Env, tenantId: string): Promise<TripjackAdminConfig | null> {
+  try {
+    return await env.TENANT_CACHE_KV.get(
+      `admin_settings:${tenantId}:integration:tripjack`,
+      "json",
+    ) as TripjackAdminConfig | null;
+  } catch (err) {
+    console.error("[search] TripJack admin configuration unavailable; using existing credentials", err);
+    return null;
+  }
+}
+
 function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   return {
     ...(env.RIYA_API_KEY     ? { RIYA:        { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
@@ -71,7 +89,40 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const tenantId = c.get("tenantId");
 
   const platformCredentials = platformCredentialsFromEnv(c.env);
+  const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
+  if (savedTripjack?.apiKey && savedTripjack.baseUrl) {
+    platformCredentials.TRIPJACK = {
+      apiKey: savedTripjack.apiKey,
+      baseUrl: savedTripjack.baseUrl,
+    };
+  }
   const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
+
+  // The Admin flight-search toggle is authoritative when a TripJack integration
+  // has been saved. Its credentials override only TripJack, leaving every other
+  // supplier's existing DB/secret resolution unchanged.
+  if (savedTripjack) {
+    const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
+    if (tripjackConfig) {
+      tripjackConfig.isEnabled = savedTripjack.enabled === true;
+      if (savedTripjack.apiKey && savedTripjack.baseUrl) {
+        tripjackConfig.credentials = {
+          ...(tripjackConfig.credentials ?? {}),
+          apiKey: savedTripjack.apiKey,
+          baseUrl: savedTripjack.baseUrl,
+        };
+      }
+    } else if (savedTripjack.enabled && savedTripjack.apiKey && savedTripjack.baseUrl) {
+      supplierConfigs.push({
+        name: "TRIPJACK",
+        isEnabled: true,
+        priority: 20,
+        credentials: { apiKey: savedTripjack.apiKey, baseUrl: savedTripjack.baseUrl },
+        timeoutMs: 15000,
+        maxRetries: 0,
+      });
+    }
+  }
 
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
   let currency = params.currency as "INR" | "AED" | "USD" | undefined;
@@ -201,3 +252,4 @@ searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const rules = await adapter.getFareRules?.(fareId) ?? [];
   return c.json({ fareRules: rules });
 });
+
