@@ -11,6 +11,10 @@ export class TripjackClient {
   }
 
   private async request<T>(path: string, body: unknown): Promise<T> {
+    if (!this.apiKey || !this.baseUrl) {
+      throw new Error("TripJack is enabled but its API key or base URL is missing");
+    }
+
     const res = await fetch(`${this.baseUrl}${path}`, {
       method:  "POST",
       headers: {
@@ -22,7 +26,8 @@ export class TripjackClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new SupplierError("TRIPJACK", res.status, text);
+      console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
+      throw new SupplierError("TRIPJACK", res.status, "Upstream request failed");
     }
 
     return res.json() as Promise<T>;
@@ -71,3 +76,4 @@ export class TripjackClient {
     return this.request("/air-cancel/v2", { bookingId: bookingRef });
   }
 }
+
