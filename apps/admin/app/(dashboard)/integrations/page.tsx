@@ -46,7 +46,7 @@ const SERP_WIRING = [
 
 /* ── Page ───────────────────────────────────────────────────────── */
 export default function IntegrationsPage() {
-  const [tj, setTj] = useState({ apiKey: "", env: "UAT" as Env, tripsafe: false, cabs: false, saving: false, saved: false, error: "" });
+  const [tj, setTj] = useState({ apiKey: "", env: "UAT" as Env, enabled: false, tripsafe: false, cabs: false, saving: false, saved: false, error: "" });
   const [duffel, setDuffel] = useState({ apiKey: "", env: "test" as "test" | "live", enabled: false, saving: false, saved: false, error: "" });
   const [serp, setSerp] = useState({ apiKey: "", saving: false, saved: false, error: "" });
 
@@ -56,7 +56,7 @@ export default function IntegrationsPage() {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/integrations/tripjack`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: tj.apiKey, environment: tj.env, tripsafeEnabled: tj.tripsafe, cabsEnabled: tj.cabs }),
+        body: JSON.stringify({ enabled: tj.enabled, apiKey: tj.apiKey, environment: tj.env, tripsafeEnabled: tj.tripsafe, cabsEnabled: tj.cabs }),
       });
       if (!res.ok) throw new Error("Failed — check API connectivity");
       setTj((s) => ({ ...s, saved: true }));
@@ -181,9 +181,9 @@ export default function IntegrationsPage() {
       </Section>
 
       {/* ── TripJack ─────────────────────────────────────────────── */}
-      <Section color="#2563eb" title="TripJack — TripSafe & Cabs" badge="TripJack partner API">
+      <Section color="#2563eb" title="TripJack — Flights, TripSafe & Cabs" badge="TripJack partner API">
         <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
-          TripSafe travel insurance (Aditya Birla Health Insurance) and Cabs ground transfers.
+          Flight search, TripSafe travel insurance (Aditya Birla Health Insurance), and Cabs ground transfers.
           Both use a shared <code style={codeStyle}>apiKey</code> header.
           Generate your key via TripJack partner portal → User Details → API Configuration → IP whitelist.
         </p>
@@ -205,6 +205,11 @@ export default function IntegrationsPage() {
               </select>
               <p style={hint}>Switch to Production after UAT certification.</p>
             </div>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <Toggle label="Enable TripJack flight search" description="Search TripJack flights alongside the other enabled suppliers"
+              checked={tj.enabled} onChange={(v) => setTj((s) => ({ ...s, enabled: v }))} color="#2563eb" />
           </div>
 
           <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
@@ -338,3 +343,4 @@ const inputStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box"
 const hint: React.CSSProperties = { fontSize: 12, color: "#64748b", margin: "5px 0 0" };
 const codeStyle: React.CSSProperties = { background: "#0f172a", padding: "1px 6px", borderRadius: 4,
   fontFamily: "monospace", fontSize: 12, color: "#94a3b8" };
+
