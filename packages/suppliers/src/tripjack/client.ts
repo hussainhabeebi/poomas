@@ -4,22 +4,25 @@ import { SupplierError } from "../riya/client.js";
 export class TripjackClient {
   private baseUrl: string;
   private apiKey:  string;
+  private proxyKey: string;
 
   constructor(creds: SupplierCredentials) {
     this.baseUrl = ((creds.baseUrl as string) ?? process.env.TRIPJACK_API_BASE_URL ?? "").replace(/\/$/, "");
     this.apiKey  = (creds.apiKey   as string) ?? process.env.TRIPJACK_API_KEY      ?? "";
+    this.proxyKey = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
   }
 
   private async request<T>(path: string, body: unknown): Promise<T> {
-    if (!this.apiKey || !this.baseUrl) {
-      throw new Error("TripJack is enabled but its API key or base URL is missing");
+    if (!this.baseUrl || (!this.apiKey && !this.proxyKey)) {
+      throw new Error("TripJack is enabled but its gateway or API credentials are missing");
     }
 
     const res = await fetch(`${this.baseUrl}${path}`, {
       method:  "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey":        this.apiKey,
+        ...(this.apiKey ? { "apikey": this.apiKey } : {}),
+        ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
       },
       body: JSON.stringify(body),
     });
