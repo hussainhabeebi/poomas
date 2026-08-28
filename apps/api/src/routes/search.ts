@@ -90,10 +90,11 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 
   const platformCredentials = platformCredentialsFromEnv(c.env);
   const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
-  if (savedTripjack?.apiKey && savedTripjack.baseUrl) {
+  const tripjackBaseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
+  if (savedTripjack?.apiKey && tripjackBaseUrl) {
     platformCredentials.TRIPJACK = {
       apiKey: savedTripjack.apiKey,
-      baseUrl: savedTripjack.baseUrl,
+      baseUrl: tripjackBaseUrl,
     };
   }
   const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
@@ -105,19 +106,19 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
     if (tripjackConfig) {
       tripjackConfig.isEnabled = savedTripjack.enabled === true;
-      if (savedTripjack.apiKey && savedTripjack.baseUrl) {
+      if (savedTripjack.apiKey && tripjackBaseUrl) {
         tripjackConfig.credentials = {
           ...(tripjackConfig.credentials ?? {}),
           apiKey: savedTripjack.apiKey,
-          baseUrl: savedTripjack.baseUrl,
+          baseUrl: tripjackBaseUrl,
         };
       }
-    } else if (savedTripjack.enabled && savedTripjack.apiKey && savedTripjack.baseUrl) {
+    } else if (savedTripjack.enabled && savedTripjack.apiKey && tripjackBaseUrl) {
       supplierConfigs.push({
         name: "TRIPJACK",
         isEnabled: true,
         priority: 20,
-        credentials: { apiKey: savedTripjack.apiKey, baseUrl: savedTripjack.baseUrl },
+        credentials: { apiKey: savedTripjack.apiKey, baseUrl: tripjackBaseUrl },
         timeoutMs: 15000,
         maxRetries: 0,
       });
