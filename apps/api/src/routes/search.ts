@@ -99,6 +99,14 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   }
   const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
 
+  // TripJack is the primary supplier for this deployment. A configured Worker
+  // secret activates an existing tenant row unless Admin explicitly saved the
+  // flight-search toggle as disabled.
+  if (!savedTripjack && platformCredentials.TRIPJACK) {
+    const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
+    if (tripjackConfig) tripjackConfig.isEnabled = true;
+  }
+
   // The Admin flight-search toggle is authoritative when a TripJack integration
   // has been saved. Its credentials override only TripJack, leaving every other
   // supplier's existing DB/secret resolution unchanged.
