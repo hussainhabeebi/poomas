@@ -1,13 +1,13 @@
 import { timingSafeEqual } from "node:crypto";
 
 export const ROUTES = new Map([
-  ["/v1/air/search", "/air-search-all/v2"],
+  ["/v1/air/search", "/fms/v1/air-search-all"],
   ["/v1/air/fare-detail", "/air-fare-detail/v2"],
   ["/v1/air/book", "/air-book/v2"],
   ["/v1/air/booking-detail", "/air-booking-detail/v2"],
   ["/v1/air/cancel", "/air-cancel/v2"],
   // Compatibility while Poomas still appends TripJack's native paths.
-  ["/air-search-all/v2", "/air-search-all/v2"],
+  ["/air-search-all/v2", "/fms/v1/air-search-all"],
   ["/air-fare-detail/v2", "/air-fare-detail/v2"],
   ["/air-book/v2", "/air-book/v2"],
   ["/air-booking-detail/v2", "/air-booking-detail/v2"],
