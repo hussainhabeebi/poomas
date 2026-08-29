@@ -92,10 +92,11 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 
   const platformCredentials = platformCredentialsFromEnv(c.env);
   const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
+  const tripjackApiKey = savedTripjack?.apiKey || c.env.TRIPJACK_API_KEY;
   const tripjackBaseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
-  if ((savedTripjack?.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+  if ((tripjackApiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
     platformCredentials.TRIPJACK = {
-      apiKey: savedTripjack.apiKey,
+      apiKey: tripjackApiKey,
       baseUrl: tripjackBaseUrl,
       proxyKey: c.env.TRIPJACK_PROXY_KEY,
     };
