@@ -58,7 +58,96 @@ Supplier failures are isolated. Working suppliers can still return offers while
 - `400` - invalid search payload
 - `429` - tenant rate limit exceeded
 
-## Current scope
 
-This release implements partner authentication and flight search only. Checkout,
-booking, webhook delivery, and signed portable offer tokens are separate phases.
+
+## Reserve an offer
+
+Requires the `booking` scope. Offers are opaque, partner-owned, and expire at
+the `expiresAt` returned by search.
+
+```http
+POST /api/partner/v1/offers/{offerId}/reserve
+Authorization: Bearer pmsk_...
+Content-Type: application/json
+```
+
+```json
+{
+  "externalReference": "leadv-yne-order-123",
+  "customer": {
+    "email": "customer@example.com",
+    "phone": "+971500000000"
+  }
+}
+```
+
+The response returns a logical `HELD` reservation. Supplier availability and
+price must still be revalidated during the eventual supplier booking.
+
+## Create a hosted checkout session
+
+Requires the `booking` scope. Provide either `offerId` or `reservationId`,
+never both. Passenger data is required before payment because the current hosted
+checkout displays and charges an existing booking record.
+
+```http
+POST /api/partner/v1/checkout-sessions
+Authorization: Bearer pmsk_...
+Content-Type: application/json
+```
+
+```json
+{
+  "reservationId": "00000000-0000-0000-0000-000000000000",
+  "externalReference": "leadv-yne-order-123",
+  "customer": {
+    "email": "customer@example.com",
+    "phone": "+971500000000"
+  },
+  "passengers": [
+    {
+      "type": "ADULT",
+      "title": "MR",
+      "firstName": "Test",
+      "lastName": "Traveller",
+      "dob": "1990-01-01",
+      "gender": "M",
+      "nationality": "IN",
+      "passportNumber": "P1234567",
+      "passportExpiry": "2030-01-01",
+      "passportCountry": "IN"
+    }
+  ],
+  "returnUrl": "https://partner.example/flights/success",
+  "cancelUrl": "https://partner.example/flights/cancel"
+}
+```
+
+Redirect the customer to the returned `checkoutUrl`.
+
+## Booking status
+
+Requires the `booking` scope. The reference is the partner's
+`externalReference` supplied during reservation or direct checkout creation.
+
+```http
+GET /api/partner/v1/bookings/leadv-yne-order-123
+Authorization: Bearer pmsk_...
+```
+
+## Test webhook delivery
+
+Requires the `webhook` scope. This endpoint sends only to an active webhook
+already registered for the tenant; callers cannot supply an arbitrary URL.
+Configure the webhook for `webhook.test` or `*`.
+
+```http
+POST /api/partner/v1/webhooks/test
+Authorization: Bearer pmsk_...
+Content-Type: application/json
+
+{}
+```
+
+The receiver must verify `X-Poomas-Timestamp` and
+`X-Poomas-Signature: sha256=<HMAC-SHA256(timestamp + "." + rawBody)>`.
