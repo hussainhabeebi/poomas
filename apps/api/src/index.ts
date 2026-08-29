@@ -22,6 +22,7 @@ import { eticketRoutes }       from "./routes/eticket.js";
 import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
+import { partnerRoutes }       from "./routes/partner.js";
 
 export { TenantRateLimiter };
 
@@ -39,6 +40,7 @@ app.route("/webhooks",           webhookRoutes);
 app.route("/api/search",         searchRoutes);
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
 app.route("/api/integrations",   integrationRoutes);
+app.route("/api/partner/v1",    partnerRoutes);
 
 // Checkout token verification — validated by the signed JWT token itself
 app.route("/api/checkout",       checkoutRoutes);
