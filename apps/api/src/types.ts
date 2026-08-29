@@ -51,6 +51,8 @@ export interface Variables {
   userId?:  string;
   userRole?: string;
   agentId?: string;
+  partnerApiKeyId?: string;
+  partnerName?: string;
 }
 
 export interface TenantContext {
