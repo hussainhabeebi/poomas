@@ -33,7 +33,7 @@ export class RiyaClient {
   }
 
   async search(params: SearchParams) {
-    return this.request("/search/availability", {
+    return this.request<{ Results?: Record<string, unknown>[] }>("/search/availability", {
       Origin:         params.origin,
       Destination:    params.destination,
       DepartureDate:  params.departureDate,
@@ -48,11 +48,11 @@ export class RiyaClient {
   }
 
   async fareRules(fareId: string, sessionId?: string) {
-    return this.request("/search/farerules", { FareId: fareId, SessionId: sessionId });
+    return this.request<{ FareRules?: Array<{ Category: string; Rules: string }> }>("/search/farerules", { FareId: fareId, SessionId: sessionId });
   }
 
   async hold(params: HoldParams) {
-    return this.request("/booking/hold", {
+    return this.request<{ Status: string; HoldId: string; PNR?: string; ExpiresAt: string; FareSnapshot: Record<string, unknown> }>("/booking/hold", {
       FareId:     params.fareId,
       SessionId:  params.sessionId,
       Passengers: params.passengers,
@@ -60,7 +60,7 @@ export class RiyaClient {
   }
 
   async book(params: BookParams) {
-    return this.request("/booking/create", {
+    return this.request<{ Status: string; BookingId: string; PNR?: string; TicketStatus?: string; Tickets?: string[] }>("/booking/create", {
       HoldId:       params.holdId,
       ContactEmail: params.contactEmail,
       ContactPhone: params.contactPhone,
@@ -69,15 +69,15 @@ export class RiyaClient {
   }
 
   async pnrStatus(pnr: string) {
-    return this.request("/booking/pnrstatus", { PNR: pnr });
+    return this.request<{ Status: string; Passengers?: unknown[]; Itinerary?: unknown }>("/booking/pnrstatus", { PNR: pnr });
   }
 
   async cancel(bookingRef: string, pnr: string) {
-    return this.request("/booking/cancel", { BookingId: bookingRef, PNR: pnr });
+    return this.request<{ Status: string; RefundAmount?: number; Penalty?: number }>("/booking/cancel", { BookingId: bookingRef, PNR: pnr });
   }
 
   async reissue(bookingRef: string, params: unknown) {
-    return this.request("/booking/reissue", { BookingId: bookingRef, ...params as object });
+    return this.request<unknown>("/booking/reissue", { BookingId: bookingRef, ...params as object });
   }
 }
 

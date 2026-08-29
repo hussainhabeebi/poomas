@@ -22,7 +22,7 @@ export class TripjackAdapter implements SupplierAdapter {
       throw new Error("TripJack rejected the flight search request");
     }
 
-    const searchResult = response.searchResult as { tripInfos?: Record<string, unknown[]> } | undefined;
+    const searchResult = response.searchResult as { tripInfos?: Record<string, Record<string, unknown>[]> } | undefined;
     if (!searchResult?.tripInfos) {
       throw new Error("TripJack returned an unrecognized flight-search response");
     }
