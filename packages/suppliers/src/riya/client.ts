@@ -60,7 +60,7 @@ export class RiyaClient {
   }
 
   async book(params: BookParams) {
-    return this.request<{ Status: string; BookingId: string; PNR?: string; TicketStatus?: string; Tickets?: string[] }>("/booking/create", {
+    return this.request<{ Status: string; BookingId: string; PNR: string; TicketStatus?: string; Tickets?: string[] }>("/booking/create", {
       HoldId:       params.holdId,
       ContactEmail: params.contactEmail,
       ContactPhone: params.contactPhone,
@@ -69,7 +69,7 @@ export class RiyaClient {
   }
 
   async pnrStatus(pnr: string) {
-    return this.request<{ Status: string; Passengers?: unknown[]; Itinerary?: unknown }>("/booking/pnrstatus", { PNR: pnr });
+    return this.request<{ Status: string; Passengers?: Array<{ name: string; ticketNumber: string; status: string }>; Itinerary?: unknown }>("/booking/pnrstatus", { PNR: pnr });
   }
 
   async cancel(bookingRef: string, pnr: string) {
