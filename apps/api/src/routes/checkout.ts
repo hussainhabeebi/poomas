@@ -20,7 +20,7 @@ const createSchema = z.object({
 export const checkoutRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // Helpers — HMAC-SHA256 JWT (HS256) using Web Crypto
-async function signToken(payload: Record<string, unknown>, secret: string): Promise<string> {
+export async function signToken(payload: Record<string, unknown>, secret: string): Promise<string> {
   const header  = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   const body    = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   const data    = `${header}.${body}`;
