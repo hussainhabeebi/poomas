@@ -25,8 +25,8 @@ test("compares gateway secrets without accepting length mismatches", () => {
 
 test("constructs the TripJack URL without duplicating paths", () => {
   assert.equal(
-    upstreamUrl(new URL("https://apitest.tripjack.com"), "/air-search-all/v2"),
-    "https://apitest.tripjack.com/air-search-all/v2",
+    upstreamUrl(new URL("https://apitest.tripjack.com"), "/fms/v1/air-search-all"),
+    "https://apitest.tripjack.com/fms/v1/air-search-all",
   );
 });
 
