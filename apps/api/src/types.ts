@@ -20,6 +20,7 @@ export interface Env {
   RIYA_API_BASE_URL:      string;
   TRIPJACK_API_KEY:       string;
   TRIPJACK_API_BASE_URL:  string;
+  TRIPJACK_PROXY_KEY:     string;
   SERP_API_KEY:           string;
   DUFFEL_API_KEY:         string;
   POOMAS_INTEGRATION_KEY: string;
@@ -78,3 +79,4 @@ export interface PaymentConfig {
   razorpay?: { keyId: string; keySecret: string };
   nomod?:    { apiKey: string; apiSecret: string };
 }
+

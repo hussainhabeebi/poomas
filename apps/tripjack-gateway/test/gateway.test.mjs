@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { loadConfig, secretsEqual, upstreamUrl } from "../src/gateway.mjs";
 
 test("loads a secure UAT configuration", () => {
-  const config = loadConfig({ TRIPJACK_API_KEY: "tripjack", POOMAS_GATEWAY_KEY: "internal" });
+  const config = loadConfig({ POOMAS_GATEWAY_KEY: "internal" });
   assert.equal(config.upstream.origin, "https://apitest.tripjack.com");
   assert.equal(config.port, 3000);
+  assert.equal(config.tripjackApiKey, "");
 });
 
 test("rejects missing secrets and insecure upstreams", () => {
   assert.throws(() => loadConfig({}), /Missing required/);
   assert.throws(() => loadConfig({
-    TRIPJACK_API_KEY: "tripjack",
     POOMAS_GATEWAY_KEY: "internal",
     TRIPJACK_UPSTREAM: "http://apitest.tripjack.com",
   }), /must use HTTPS/);

@@ -15,7 +15,7 @@ export const ROUTES = new Map([
 ]);
 
 export function loadConfig(env = process.env) {
-  const required = ["TRIPJACK_API_KEY", "POOMAS_GATEWAY_KEY"];
+  const required = ["POOMAS_GATEWAY_KEY"];
   const missing = required.filter((name) => !env[name]);
   if (missing.length > 0) throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
 
@@ -25,7 +25,9 @@ export function loadConfig(env = process.env) {
   return {
     port: Number(env.PORT ?? 3000),
     upstream,
-    tripjackApiKey: env.TRIPJACK_API_KEY,
+    // Optional fallback for self-hosted callers. Cloudflare normally supplies
+    // the TripJack key per request after authenticating to this gateway.
+    tripjackApiKey: env.TRIPJACK_API_KEY ?? "",
     gatewayKey: env.POOMAS_GATEWAY_KEY,
     requestTimeoutMs: Number(env.REQUEST_TIMEOUT_MS ?? 45000),
     maxBodyBytes: Number(env.MAX_BODY_BYTES ?? 2_097_152),
@@ -45,4 +47,3 @@ export function secretsEqual(provided, expected) {
 export function upstreamUrl(upstream, pathname) {
   return new URL(pathname, `${upstream.origin}/`).toString();
 }
-
