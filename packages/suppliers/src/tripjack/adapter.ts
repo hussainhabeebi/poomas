@@ -16,7 +16,20 @@ export class TripjackAdapter implements SupplierAdapter {
   async search(params: SearchParams): Promise<NormalizedFare[]> {
     const raw = await this.client.search(params) as { searchResult?: { tripInfos?: Record<string, unknown[]> } };
     const trips = raw?.searchResult?.tripInfos?.["ONWARD"] ?? [];
-    return trips.map(normalizeTripjackFare);
+    // TripJack puts the bookable fare id and price inside totalPriceList, not
+    // on the itinerary wrapper. Expand every price option so Leadvyne receives
+    // the real id required by fare rules and checkout instead of an empty id.
+    return trips.flatMap((trip) => {
+      const row = trip as Record<string, unknown>;
+      const prices = Array.isArray(row.totalPriceList) ? row.totalPriceList as Record<string, unknown>[] : [];
+      if (!prices.length) return [normalizeTripjackFare(row)];
+      return prices.map((price) => normalizeTripjackFare({
+        ...row,
+        ...price,
+        id: price.id,
+        totalPriceInfo: price,
+      }));
+    });
   }
 
   async getFareRules(fareId: string): Promise<FareRule[]> {
