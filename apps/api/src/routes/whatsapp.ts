@@ -19,13 +19,26 @@ interface LeadvyneConfig {
   instanceId: string;
 }
 
-function getLeadvyneConfig(env: Env): LeadvyneConfig {
-  if (!env.LEADVYNE_API_KEY) throw new HTTPException(503, { message: "WhatsApp gateway not configured" });
+async function getLeadvyneConfig(env: Env, tenantId: string): Promise<LeadvyneConfig> {
+  let saved: any = null;
+  try {
+    const raw = await env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:whatsapp`);
+    saved = raw ? JSON.parse(raw) : null;
+  } catch {
+    saved = null;
+  }
+
+  const apiKey = saved?.leadvyne?.apiKey || env.LEADVYNE_API_KEY;
+  const instanceId = saved?.leadvyne?.instanceId || env.LEADVYNE_INSTANCE_ID;
+  if (!apiKey || !instanceId) {
+    throw new HTTPException(503, { message: "WhatsApp gateway not configured" });
+  }
+
   return {
-    apiKey:     env.LEADVYNE_API_KEY,
-    apiSecret:  env.LEADVYNE_API_SECRET ?? "",
-    baseUrl:    env.LEADVYNE_BASE_URL ?? "https://api.leadvyne.com",
-    instanceId: env.LEADVYNE_INSTANCE_ID ?? "",
+    apiKey,
+    apiSecret: saved?.leadvyne?.apiSecret || env.LEADVYNE_API_SECRET || "",
+    baseUrl: (saved?.leadvyne?.baseUrl || env.LEADVYNE_BASE_URL || "https://api.leadvyne.com").replace(/\/$/, ""),
+    instanceId,
   };
 }
 
@@ -57,7 +70,7 @@ const sendSchema = z.object({
 
 whatsappRoutes.post("/send", zValidator("json", sendSchema), async (c) => {
   const { to, message, mediaUrl, mediaType } = c.req.valid("json");
-  const cfg = getLeadvyneConfig(c.env);
+  const cfg = await getLeadvyneConfig(c.env, c.get("tenantId"));
 
   const payload: Record<string, unknown> = { to, message };
   if (mediaUrl) {
@@ -80,7 +93,7 @@ const templateSchema = z.object({
 
 whatsappRoutes.post("/template", zValidator("json", templateSchema), async (c) => {
   const body = c.req.valid("json");
-  const cfg  = getLeadvyneConfig(c.env);
+  const cfg  = await getLeadvyneConfig(c.env, c.get("tenantId"));
 
   const result = await leadvyneFetch(cfg, "/v1/messages/template", {
     to:           body.to,
@@ -93,7 +106,7 @@ whatsappRoutes.post("/template", zValidator("json", templateSchema), async (c) =
 
 whatsappRoutes.get("/status", async (c) => {
   try {
-    const cfg    = getLeadvyneConfig(c.env);
+    const cfg    = await getLeadvyneConfig(c.env, c.get("tenantId"));
     const result = await leadvyneFetch(cfg, "/v1/instance/status");
     return c.json({ configured: true, ...result as object });
   } catch (err: any) {
