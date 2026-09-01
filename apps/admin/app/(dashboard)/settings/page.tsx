@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
+import { API, apiHeaders } from "../../../lib/api";
 
 /* ── Small shared UI ────────────────────────────────────────────── */
 function Section({ color, title, badge, children }: {
@@ -79,7 +78,7 @@ function PaymentSettings() {
   });
 
   useEffect(() => {
-    fetch(`${API}/api/admin/settings/payments`, { headers: { "x-tenant-slug": "poomas" } })
+    fetch(`${API}/api/admin/settings/payments`, { headers: apiHeaders() })
       .then((r) => r.json())
       .then((d: any) => { setS((p) => ({ ...p, ...d })); setLoading(false); })
       .catch(() => setLoading(false));
@@ -91,7 +90,7 @@ function PaymentSettings() {
     try {
       const res = await fetch(`${API}/api/admin/settings/payments`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        headers: apiHeaders(),
         body: JSON.stringify(s),
       });
       if (!res.ok) throw new Error("Save failed");
@@ -215,17 +214,24 @@ function WhatsAppSettings() {
   });
 
   useEffect(() => {
-    fetch(`${API}/api/admin/settings/whatsapp`, { headers: { "x-tenant-slug": "poomas" } })
+    fetch(`${API}/api/admin/settings/whatsapp`, { headers: apiHeaders() })
       .then((r) => r.json())
       .then((d: any) => { setS((p) => ({ ...p, ...d })); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
   async function testConnection() {
+    setStatus("unknown");
     try {
-      const res = await fetch(`${API}/api/whatsapp/status`, { headers: { "x-tenant-slug": "poomas" } });
-      const d   = await res.json() as { configured?: boolean; status?: string };
-      setStatus(d.configured && d.status !== "error" ? "connected" : "error");
+      const saveRes = await fetch(`${API}/api/admin/settings/whatsapp`, {
+        method: "PUT",
+        headers: apiHeaders(),
+        body: JSON.stringify(s),
+      });
+      if (!saveRes.ok) throw new Error("Unable to save WhatsApp settings");
+      const res = await fetch(`${API}/api/whatsapp/status`, { headers: apiHeaders() });
+      const d = await res.json() as { configured?: boolean; status?: string };
+      setStatus(res.ok && d.configured && d.status !== "error" ? "connected" : "error");
     } catch { setStatus("error"); }
   }
 
@@ -235,7 +241,7 @@ function WhatsAppSettings() {
     try {
       const res = await fetch(`${API}/api/admin/settings/whatsapp`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        headers: apiHeaders(),
         body: JSON.stringify(s),
       });
       if (!res.ok) throw new Error("Save failed");
@@ -357,7 +363,7 @@ function EticketSettings() {
   });
 
   useEffect(() => {
-    fetch(`${API}/api/admin/settings/eticket`, { headers: { "x-tenant-slug": "poomas" } })
+    fetch(`${API}/api/admin/settings/eticket`, { headers: apiHeaders() })
       .then((r) => r.json())
       .then((d: any) => { setS((p) => ({ ...p, ...d })); setLoading(false); })
       .catch(() => setLoading(false));
@@ -378,7 +384,7 @@ function EticketSettings() {
     try {
       const res = await fetch(`${API}/api/admin/settings/eticket`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        headers: apiHeaders(),
         body: JSON.stringify(s),
       });
       if (!res.ok) throw new Error("Save failed");
