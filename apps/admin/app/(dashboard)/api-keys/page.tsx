@@ -1,8 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-
-const API    = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
-const TENANT = "poomas";
+import { API, apiHeaders } from "../../../lib/api";
 
 const SCOPES = [
   { id: "search",   label: "Search",   desc: "Call POST /api/search — flight availability" },
@@ -25,7 +23,7 @@ interface ApiKey {
 }
 
 function headers() {
-  return { "Content-Type": "application/json", "x-tenant-slug": TENANT };
+  return apiHeaders();
 }
 
 export default function ApiKeysPage() {
@@ -39,8 +37,9 @@ export default function ApiKeysPage() {
     setLoading(true);
     try {
       const res  = await fetch(`${API}/api/admin/api-keys`, { headers: headers() });
-      const data = await res.json() as ApiKey[];
-      setKeys(data);
+      if (!res.ok) throw new Error(`Unable to load API keys (${res.status})`);
+      const data = await res.json();
+      setKeys(Array.isArray(data) ? data as ApiKey[] : []);
     } finally { setLoading(false); }
   }
 
