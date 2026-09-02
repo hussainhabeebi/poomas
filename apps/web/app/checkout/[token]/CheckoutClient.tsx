@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 declare global {
   interface Window {
@@ -33,17 +33,24 @@ export default function CheckoutClient({
   const [state,    setState]    = useState<PaymentState>("idle");
   const [error,    setError]    = useState<string | null>(null);
   const [pnr,      setPnr]      = useState<string | null>(null);
-  const razorpayScriptRef = useRef(false);
+  async function ensureRazorpay() {
+    if (window.Razorpay) return;
+    await new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector<HTMLScriptElement>('script[src*="checkout.razorpay.com"]');
+      if (existing) {
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => reject(new Error("Payment service failed to load")), { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Payment service failed to load"));
+      document.head.appendChild(script);
+    });
+  }
 
-  // Inject Razorpay checkout.js on mount
-  useEffect(() => {
-    if (razorpayScriptRef.current) return;
-    razorpayScriptRef.current = true;
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.async = true;
-    document.head.appendChild(s);
-  }, []);
 
   async function initiatePayment() {
     setError(null);
@@ -76,6 +83,7 @@ export default function CheckoutClient({
 
       if (gateway === "RAZORPAY" && order.orderId && order.keyId) {
         setState("paying");
+        await ensureRazorpay();
         await openRazorpay(order.orderId, order.keyId, order.amount, order.currency);
       } else if (gateway === "NOMOD" && order.paymentUrl) {
         // NoMod: redirect to hosted payment page
