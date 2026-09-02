@@ -26,10 +26,7 @@ export default function PopularRoutes({ routes }: { routes: Route[] }) {
   }
 
   return (
-    <section style={{ marginTop: 48 }}>
-      <h2 style={{ fontSize: 22, fontWeight: 700, color: "#111827", marginBottom: 20 }}>
-        Popular Routes
-      </h2>
+    <section style={{ marginTop: 24 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
         {displayRoutes.map((r, i) => (
           <a
