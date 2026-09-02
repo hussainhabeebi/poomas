@@ -31,6 +31,7 @@ export interface Env {
   NOMOD_API_SECRET:       string;
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
+  GEMINI_API_KEY:         string;
 
   // One-time admin bootstrap (set in Cloudflare dashboard, unset after first use)
   PLATFORM_ADMIN_EMAIL?:    string;
