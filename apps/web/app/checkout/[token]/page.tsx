@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import CheckoutClient from "./CheckoutClient";
+import CheckoutFlow from "./CheckoutFlow";
 
 interface CheckoutPageProps {
   params: Promise<{ token: string }>;
@@ -30,6 +30,10 @@ interface BookingContext {
     gender:        string | null;
     nationality:   string | null;
     passportNumber: string | null;
+    passportExpiry?: string | null;
+    passportCountry?: string | null;
+    dob?: string | null;
+    title?: string | null;
   }>;
   meta: {
     whatsappPhone:  string | null;
@@ -114,41 +118,10 @@ export default async function CheckoutPage({ params }: CheckoutPageProps) {
           )}
         </div>
 
-        {/* Passengers */}
-        <div style={card}>
-          <SectionTitle>Passengers</SectionTitle>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {passengers.map((p, i) => (
-              <div key={p.id} style={{
-                background: "#f8fafc", borderRadius: 8, padding: "12px 14px",
-                border: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 12,
-              }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: "50%", background: "#EEF2FF",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontWeight: 700, fontSize: 14, color: "#4338CA", flexShrink: 0,
-                }}>
-                  {i + 1}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>
-                    {p.firstName} {p.lastName}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>
-                    {p.passengerType}
-                    {p.nationality ? ` · ${p.nationality}` : ""}
-                    {p.passportNumber ? ` · PP: ${p.passportNumber}` : ""}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Payment — client component handles Razorpay / NoMod */}
-        <CheckoutClient
+        <CheckoutFlow
           bookingId={booking.id}
           token={token}
+          passengers={passengers}
           totalAmount={booking.totalAmount}
           currency={booking.currency}
           currencySymbol={symbol}
