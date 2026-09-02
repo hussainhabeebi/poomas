@@ -53,7 +53,7 @@ async function searchWithTimeout(
   maxRetries: number,
 ): Promise<NormalizedFare[]> {
   let lastError: Error | null = null;
-  const totalBudgetMs = Math.min(Math.max(timeoutMs || 6_000, 3_000), 8_000);
+  const totalBudgetMs = Math.min(Math.max(timeoutMs || 4_000, 2_500), 5_000);
   const deadline = Date.now() + totalBudgetMs;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
