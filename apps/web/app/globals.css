@@ -782,3 +782,46 @@ html { scroll-behavior: smooth; }
 @media(prefers-reduced-motion:reduce){
   .search-btn-loading,.search-spinner,.search-plane,.search-progress-track i,.loading-orbit,.loading-steps .active:before,.skeleton{animation:none}
 }
+
+
+/* ── Interactive search-results controls ─────────────────────────────── */
+.result-tools { position:relative; margin:0 0 18px; padding:14px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; box-shadow:0 9px 30px rgba(15,23,42,.055); transition:opacity .2s, transform .2s; }
+.result-tools.is-loading { opacity:.72; }
+.date-switcher { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; }
+.date-switcher button { position:relative; min-width:0; padding:9px 4px; border:1px solid #e2e8f0; border-radius:11px; background:#fff; color:#64748b; cursor:pointer; transition:transform .16s, border-color .16s, background .16s; }
+.date-switcher button:hover { transform:translateY(-2px); border-color:#fca5a5; }
+.date-switcher button span,.date-switcher button strong { display:block; }
+.date-switcher button span { font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.date-switcher button strong { margin-top:2px; color:#0f172a; font-size:13px; }
+.date-switcher button i { display:block; margin-top:3px; font-size:8px; font-style:normal; font-weight:800; text-transform:uppercase; letter-spacing:.07em; }
+.date-switcher button.active { color:#fff; border-color:#e31e24; background:linear-gradient(135deg,#e31e24,#ef4444); box-shadow:0 6px 16px rgba(227,30,36,.22); }
+.date-switcher button.active strong { color:#fff; }
+.result-tool-row { display:grid; grid-template-columns:1fr 38px 1fr; gap:8px; align-items:end; margin-top:12px; }
+.airport-select span { display:block; margin:0 0 5px 2px; color:#64748b; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
+.airport-select select,.filter-scroll select { width:100%; border:1px solid #cbd5e1; border-radius:10px; background:#f8fafc; color:#0f172a; font:inherit; font-size:12px; font-weight:700; outline:none; }
+.airport-select select { height:40px; padding:0 9px; }
+.airport-select select:focus,.filter-scroll select:focus { border-color:#e31e24; box-shadow:0 0 0 3px #fee2e2; }
+.result-swap { width:38px; height:40px; border:1px solid #cbd5e1; border-radius:10px; background:#fff; color:#e31e24; font-size:20px; cursor:pointer; transition:transform .2s, background .2s; }
+.result-swap:hover { transform:rotate(180deg); background:#fff1f2; }
+.filter-scroll { display:flex; gap:7px; margin-top:12px; overflow-x:auto; padding:1px 0 3px; scrollbar-width:none; }
+.filter-scroll::-webkit-scrollbar { display:none; }
+.filter-scroll select,.filter-scroll button { flex:0 0 auto; height:36px; padding:0 12px; border:1px solid #cbd5e1; border-radius:999px; background:#fff; color:#334155; font-size:11px; font-weight:800; cursor:pointer; }
+.filter-scroll select { width:auto; }
+.filter-scroll button.active { border-color:#e31e24; background:#fff1f2; color:#c4141a; box-shadow:inset 0 0 0 1px #fecaca; }
+.result-refresh { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:10px; color:#e31e24; font-size:11px; font-weight:800; animation:searchReveal .2s ease both; }
+.result-refresh span { width:13px; height:13px; border:2px solid #fecaca; border-top-color:#e31e24; border-radius:50%; animation:spin .65s linear infinite; }
+
+@media(max-width:620px) {
+  .result-tools { margin-left:-2px; margin-right:-2px; padding:10px; border-radius:14px; }
+  .date-switcher { gap:4px; }
+  .date-switcher button { padding:8px 2px; border-radius:9px; }
+  .date-switcher button span { font-size:8px; }
+  .date-switcher button strong { font-size:11px; }
+  .date-switcher button i { display:none; }
+  .result-tool-row { grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr); gap:5px; }
+  .result-swap { width:34px; }
+  .airport-select select { font-size:11px; padding:0 5px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .date-switcher button,.result-swap,.result-tools,.result-refresh span { transition:none; animation:none; }
+}
