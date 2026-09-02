@@ -49,6 +49,7 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
         ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
 
     const raw = await res.text();
