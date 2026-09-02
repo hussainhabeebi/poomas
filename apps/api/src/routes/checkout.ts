@@ -158,6 +158,150 @@ checkoutRoutes.get("/session/:token", async (c) => {
   });
 });
 
+// Passport extraction and passenger confirmation use the signed checkout token.
+// The raw passport is processed in memory and is not persisted.
+const passengerUpdateSchema = z.object({
+  contactEmail: z.string().email().optional().or(z.literal("")),
+  contactPhone: z.string().min(8).optional().or(z.literal("")),
+  passengers: z.array(z.object({
+    id: z.string(),
+    title: z.string().optional(),
+    firstName: z.string().min(1),
+    lastName: z.string().min(1),
+    dob: z.string().optional().or(z.literal("")),
+    gender: z.string().optional(),
+    nationality: z.string().optional(),
+    passportNumber: z.string().optional(),
+    passportExpiry: z.string().optional().or(z.literal("")),
+    passportCountry: z.string().optional(),
+  })).min(1),
+});
+
+async function checkoutBookingId(c: any, token: string): Promise<string> {
+  let payload: Record<string, unknown>;
+  try { payload = await verifyToken(token, c.env.JWT_SECRET); }
+  catch (err: any) { throw new HTTPException(401, { message: err.message ?? "Invalid token" }); }
+  if (payload.tenantId !== c.get("tenantId")) throw new HTTPException(403, { message: "Token tenant mismatch" });
+  const bookingId = String(payload.sub);
+  const kvRaw = await c.env.SESSIONS_KV.get(`checkout:${c.get("tenantId")}:${bookingId}`);
+  if (!kvRaw) throw new HTTPException(410, { message: "Checkout session expired" });
+  const kv = JSON.parse(kvRaw) as { token: string; used: boolean };
+  if (kv.token !== token || kv.used) throw new HTTPException(401, { message: "Checkout session is no longer valid" });
+  return bookingId;
+}
+
+checkoutRoutes.post("/session/:token/passport-extract", async (c) => {
+  const token = c.req.param("token");
+  const bookingId = await checkoutBookingId(c, token);
+  if (!c.env.GEMINI_API_KEY) throw new HTTPException(503, { message: "Passport scanner is not configured" });
+
+  const form = await c.req.formData();
+  const file = form.get("passport");
+  const passengerId = String(form.get("passengerId") ?? "");
+  if (!(file instanceof File)) throw new HTTPException(400, { message: "Passport image or PDF is required" });
+  if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type)) {
+    throw new HTTPException(415, { message: "Use JPG, PNG, WEBP or PDF" });
+  }
+  if (file.size > 8 * 1024 * 1024) throw new HTTPException(413, { message: "Passport file must be below 8 MB" });
+
+  const db = c.get("db");
+  const [passenger] = await db.select({ id: bookingPassengers.id })
+    .from(bookingPassengers)
+    .where(and(eq(bookingPassengers.id, passengerId), eq(bookingPassengers.bookingId, bookingId)))
+    .limit(1);
+  if (!passenger) throw new HTTPException(404, { message: "Passenger not found" });
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const base64 = btoa(binary);
+  const prompt = "Extract the passport identity page. Return only the requested JSON. Copy names exactly. Dates must be YYYY-MM-DD. Use ISO alpha-3 country codes when clear. Confidence is 0 to 1. If unreadable, return empty strings and low confidence. Do not infer missing values.";
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(c.env.GEMINI_API_KEY)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: prompt },
+          { inlineData: { mimeType: file.type, data: base64 } },
+        ] }],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              documentType: { type: "STRING" },
+              surname: { type: "STRING" },
+              givenNames: { type: "STRING" },
+              passportNumber: { type: "STRING" },
+              nationality: { type: "STRING" },
+              dateOfBirth: { type: "STRING" },
+              gender: { type: "STRING" },
+              countryOfIssue: { type: "STRING" },
+              issueDate: { type: "STRING" },
+              expiryDate: { type: "STRING" },
+              mrzLine1: { type: "STRING" },
+              mrzLine2: { type: "STRING" },
+              confidence: {
+                type: "OBJECT",
+                properties: {
+                  name: { type: "NUMBER" },
+                  passportNumber: { type: "NUMBER" },
+                  dateOfBirth: { type: "NUMBER" },
+                  expiryDate: { type: "NUMBER" },
+                },
+              },
+            },
+            required: ["surname", "givenNames", "passportNumber", "nationality", "dateOfBirth", "gender", "countryOfIssue", "expiryDate", "confidence"],
+          },
+        },
+      }),
+    },
+  );
+  if (!geminiRes.ok) {
+    const detail = await geminiRes.text();
+    throw new HTTPException(502, { message: `Passport extraction failed: ${detail.slice(0, 160)}` });
+  }
+  const response = await geminiRes.json() as any;
+  const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new HTTPException(422, { message: "Passport details could not be read" });
+  let extracted: any;
+  try { extracted = JSON.parse(text); }
+  catch { throw new HTTPException(422, { message: "Passport details could not be parsed" }); }
+  return c.json({ extracted, rawFileStored: false });
+});
+
+checkoutRoutes.put("/session/:token/passengers", zValidator("json", passengerUpdateSchema), async (c) => {
+  const token = c.req.param("token");
+  const bookingId = await checkoutBookingId(c, token);
+  const body = c.req.valid("json");
+  const db = c.get("db");
+
+  for (const p of body.passengers) {
+    await db.update(bookingPassengers).set({
+      title: p.title || null,
+      firstName: p.firstName.trim().toUpperCase(),
+      lastName: p.lastName.trim().toUpperCase(),
+      dob: p.dob ? new Date(p.dob) : null,
+      gender: p.gender || null,
+      nationality: p.nationality?.toUpperCase() || null,
+      passportNumber: p.passportNumber?.replace(/\s/g, "").toUpperCase() || null,
+      passportExpiry: p.passportExpiry ? new Date(p.passportExpiry) : null,
+      passportCountry: p.passportCountry?.toUpperCase() || null,
+    }).where(and(eq(bookingPassengers.id, p.id), eq(bookingPassengers.bookingId, bookingId)));
+  }
+
+  await db.update(bookings).set({
+    contactEmail: body.contactEmail || null,
+    contactPhone: body.contactPhone || null,
+    updatedAt: new Date(),
+  }).where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, c.get("tenantId"))));
+
+  return c.json({ ok: true });
+});
+
 // POST /api/checkout/session/:token/mark-paid — called after successful payment to invalidate token
 checkoutRoutes.post("/session/:token/mark-paid", async (c) => {
   const token    = c.req.param("token");
