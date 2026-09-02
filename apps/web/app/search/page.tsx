@@ -1,9 +1,12 @@
 import { cookies } from "next/headers";
+import SearchResultControls from "./SearchResultControls";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
   returnDate?: string; adults?: string; cabinClass?: string;
   tripType?: string; currency?: "INR" | "AED" | "USD"; all?: string;
+  sort?: "price" | "duration" | "departure"; stops?: string;
+  refundable?: string; baggage?: string;
 };
 
 type SearchResult = {
@@ -74,7 +77,10 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
     .filter(([, ok]) => !ok).map(([name]) => name);
   const allFares = result.fares as any[];
-  const displayFares = params.all === "1" ? allFares : recommendedFares(allFares);
+  const filteredFares = filterAndSortFares(allFares, params);
+  const displayFares = params.all === "1" || params.sort
+    ? filteredFares
+    : recommendedFares(filteredFares);
   const allQuery = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
   allQuery.set("all", "1");
 
@@ -87,9 +93,15 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         </p>
       </div>
 
+      <SearchResultControls
+        origin={params.origin ?? ""}
+        destination={params.destination ?? ""}
+        departureDate={params.departureDate ?? new Date().toISOString().slice(0, 10)}
+      />
+
       {result?.isIndicative && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13 }}>⚠️ {result.disclaimer}</div>}
 
-      {result.fares.length === 0 ? (
+      {filteredFares.length === 0 ? (
         <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
           <div style={{ fontSize: 44, marginBottom: 14 }}>✈️</div>
           <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{result.apiError || failingSuppliers.length > 0 ? "Live flight search unavailable" : "No flights found"}</p>
@@ -102,15 +114,35 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {params.all !== "1" && <div style={{ fontSize: 13, color: "#475569", fontWeight: 700, marginBottom: 2 }}>Recommended for you</div>}
           {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} />)}
-          {params.all !== "1" && allFares.length > displayFares.length && (
+          {params.all !== "1" && filteredFares.length > displayFares.length && (
             <a href={`/search?${allQuery.toString()}`} style={{ textAlign: "center", padding: 14, border: "1px solid #cbd5e1", borderRadius: 12, color: "#0f172a", textDecoration: "none", fontWeight: 800 }}>
-              View all {allFares.length} flights
+              View all {filteredFares.length} flights
             </a>
           )}
         </div>
       )}
     </main>
   );
+}
+
+function filterAndSortFares(fares: any[], params: SearchParams): any[] {
+  const filtered = fares.filter((fare) => {
+    if (params.stops === "0" && Number(fare.stops ?? 0) !== 0) return false;
+    if (params.refundable === "1" && !fare.isRefundable) return false;
+    if (params.baggage === "1" && !fare.baggage?.checked) return false;
+    return true;
+  });
+
+  if (params.sort === "price") {
+    return [...filtered].sort((a, b) => Number(a.displayPrice ?? a.totalFare ?? Infinity) - Number(b.displayPrice ?? b.totalFare ?? Infinity));
+  }
+  if (params.sort === "duration") {
+    return [...filtered].sort((a, b) => Number(a.duration ?? Infinity) - Number(b.duration ?? Infinity));
+  }
+  if (params.sort === "departure") {
+    return [...filtered].sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime());
+  }
+  return filtered;
 }
 
 function recommendedFares(fares: any[]): any[] {
