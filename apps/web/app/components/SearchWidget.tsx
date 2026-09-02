@@ -153,6 +153,16 @@ export default function SearchWidget() {
   const [adults,     setAdults]     = useState(1);
   const [cabinClass, setCabinClass] = useState<(typeof CABIN_CLASSES)[number]>("Economy");
   const [currency,   setCurrencyState] = useState<CurrencyCode>("INR");
+  const [searching,  setSearching] = useState(false);
+  const [searchStage, setSearchStage] = useState(0);
+
+  const SEARCH_STAGES = ["Checking live fares", "Comparing airlines", "Finding your best options"];
+
+  useEffect(() => {
+    if (!searching) { setSearchStage(0); return; }
+    const timer = window.setInterval(() => setSearchStage((s) => Math.min(s + 1, SEARCH_STAGES.length - 1)), 1600);
+    return () => window.clearInterval(timer);
+  }, [searching]);
 
   // Restore currency preference from localStorage on first render
   useEffect(() => {
@@ -185,7 +195,11 @@ export default function SearchWidget() {
       currency,
       ...(tripType === "Round Trip" && returnDate ? { returnDate } : {}),
     });
-    router.push(`/search?${params}`);
+    const url = `/search?${params.toString()}`;
+    setSearching(true);
+    router.prefetch(url);
+    // Give mobile Safari one frame to paint the loading state before navigation.
+    window.requestAnimationFrame(() => router.push(url));
   }
 
   const today = new Date().toISOString().split("T")[0];
@@ -230,7 +244,7 @@ export default function SearchWidget() {
         </div>
       </div>
 
-      <form onSubmit={handleSearch}>
+      <form onSubmit={handleSearch} aria-busy={searching}>
         <div className="sw-grid">
           {/* Route row: FROM ⇄ TO */}
           <div className="sw-route-row">
@@ -282,11 +296,22 @@ export default function SearchWidget() {
           </div>
 
           {/* Search button */}
-          <button type="submit" className="search-btn" tabIndex={5}>
-            🔍 Search Flights
+          <button type="submit" className={searching ? "search-btn search-btn-loading" : "search-btn"} tabIndex={5} disabled={searching}>
+            {searching ? <><span className="search-spinner" /> {SEARCH_STAGES[searchStage]}</> : <>Search live flights <span aria-hidden="true">→</span></>}
           </button>
         </div>
       </form>
+
+      {searching && (
+        <div className="search-progress" role="status" aria-live="polite">
+          <div className="search-progress-track"><span className="search-plane">✈</span><i /></div>
+          <div><strong>{SEARCH_STAGES[searchStage]}</strong><small>Live supplier results can take a few seconds. Please don’t close this page.</small></div>
+        </div>
+      )}
+
+      <div className="search-shortcuts" aria-label="Quick travel benefits">
+        <span>✓ Live fares</span><span>✓ Baggage details</span><span>✓ Secure checkout</span>
+      </div>
     </div>
   );
 }
