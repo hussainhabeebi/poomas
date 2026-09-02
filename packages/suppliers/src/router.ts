@@ -43,7 +43,9 @@ function buildAdapter(config: SupplierConfig, platform: PlatformCredentials = {}
   }
 }
 
-// Wraps a supplier search with per-supplier timeout + retry
+// Wraps a supplier search with retries inside one strict interactive-search budget.
+// Promise.race is intentional: not every supplier adapter accepts an AbortSignal, so
+// an unresponsive upstream can never keep the entire results page waiting forever.
 async function searchWithTimeout(
   adapter: SupplierAdapter,
   params: SearchParams,
@@ -51,27 +53,34 @@ async function searchWithTimeout(
   maxRetries: number,
 ): Promise<NormalizedFare[]> {
   let lastError: Error | null = null;
+  const totalBudgetMs = Math.min(Math.max(timeoutMs || 6_000, 3_000), 8_000);
+  const deadline = Date.now() + totalBudgetMs;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const results = await adapter.search(params);
-        clearTimeout(timer);
-        return results;
-      } finally {
-        clearTimeout(timer);
-      }
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Supplier timed out after ${totalBudgetMs}ms`)),
+          remainingMs,
+        );
+      });
+      return await Promise.race([adapter.search(params), timeout]);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      if (attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      const retryDelay = Math.min(500 * (attempt + 1), Math.max(0, deadline - Date.now()));
+      if (attempt < maxRetries && retryDelay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
       }
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
-  throw lastError ?? new Error("Unknown supplier error");
+  throw lastError ?? new Error(`Supplier timed out after ${totalBudgetMs}ms`);
 }
 
 // Deduplicates by flight number + departure time (same physical flight from both suppliers)
