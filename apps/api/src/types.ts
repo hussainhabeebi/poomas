@@ -54,6 +54,7 @@ export interface Variables {
   agentId?: string;
   partnerApiKeyId?: string;
   partnerName?: string;
+  checkoutBookingId?: string;
 }
 
 export interface TenantContext {
