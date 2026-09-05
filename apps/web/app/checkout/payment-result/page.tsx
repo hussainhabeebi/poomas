@@ -1,11 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
 export default function NomodPaymentResultPage() {
+  return (
+    <Suspense fallback={<main style={{ minHeight: "100vh", background: "#f8fafc", display: "grid", placeItems: "center" }}>Confirming payment…</main>}>
+      <NomodPaymentResult />
+    </Suspense>
+  );
+}
+
+function NomodPaymentResult() {
   const params = useSearchParams();
   const bookingId = params.get("bookingId") ?? "";
   const token = params.get("token") ?? "";
