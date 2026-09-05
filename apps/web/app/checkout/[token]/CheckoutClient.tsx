@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 declare global {
   interface Window {
@@ -29,10 +29,28 @@ export default function CheckoutClient({
   bookingId, token, totalAmount, currency, currencySymbol,
   contactEmail, contactPhone, whatsappPhone,
 }: Props) {
-  const [gateway,  setGateway]  = useState<Gateway>("RAZORPAY");
+  const [gateway,  setGateway]  = useState<Gateway>("NOMOD");
+  const [available, setAvailable] = useState<Record<Gateway, boolean>>({ RAZORPAY: false, NOMOD: false });
+  const [configLoading, setConfigLoading] = useState(true);
   const [state,    setState]    = useState<PaymentState>("idle");
   const [error,    setError]    = useState<string | null>(null);
   const [pnr,      setPnr]      = useState<string | null>(null);
+  useEffect(() => {
+    fetch(`${API}/api/payments/config`, {
+      headers: { "x-tenant-slug": TENANT, "X-Checkout-Token": token },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Unable to load payment methods");
+        return res.json() as Promise<{ defaultGateway: Gateway | null; gateways: Record<Gateway, boolean> }>;
+      })
+      .then((config) => {
+        setAvailable(config.gateways);
+        if (config.defaultGateway) setGateway(config.defaultGateway);
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setConfigLoading(false));
+  }, [token]);
+
   async function ensureRazorpay() {
     if (window.Razorpay) return;
     await new Promise<void>((resolve, reject) => {
@@ -57,6 +75,7 @@ export default function CheckoutClient({
     setState("creating");
 
     try {
+      if (!available[gateway]) throw new Error("Selected payment method is not configured");
       // 1. Create payment order on the API
       const orderRes = await fetch(`${API}/api/payments/checkout`, {
         method:  "POST",
@@ -87,7 +106,7 @@ export default function CheckoutClient({
         await openRazorpay(order.orderId, order.keyId, order.amount, order.currency);
       } else if (gateway === "NOMOD" && order.paymentUrl) {
         // NoMod: redirect to hosted payment page
-        window.location.href = order.paymentUrl;
+        window.location.assign(order.paymentUrl);
       } else {
         throw new Error("Gateway returned unexpected response");
       }
@@ -216,19 +235,27 @@ export default function CheckoutClient({
       <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase",
         letterSpacing: "0.05em", marginBottom: 14 }}>Payment</div>
 
-      {/* Gateway selector */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        <GatewayOption
-          id="RAZORPAY" label="Cards / UPI / Net Banking"
-          subtitle="Razorpay · Secure embedded checkout"
-          icon="💳" active={gateway === "RAZORPAY"}
-          onClick={() => setGateway("RAZORPAY")} />
-        <GatewayOption
-          id="NOMOD" label="NoMod Pay"
-          subtitle="Alternative gateway"
-          icon="🔗" active={gateway === "NOMOD"}
-          onClick={() => setGateway("NOMOD")} />
-      </div>
+      {/* Only show methods enabled by the administrator */}
+      {configLoading ? (
+        <div style={{ ...loadingBar, marginBottom: 20 }} />
+      ) : (available.NOMOD || available.RAZORPAY) ? (
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          {available.NOMOD && <GatewayOption
+            id="NOMOD" label="Pay securely with Nomod"
+            subtitle="Cards · Apple Pay · Google Pay · Tabby · Tamara"
+            icon="⚡" active={gateway === "NOMOD"}
+            onClick={() => setGateway("NOMOD")} />}
+          {available.RAZORPAY && <GatewayOption
+            id="RAZORPAY" label="Cards / UPI / Net Banking"
+            subtitle="Razorpay secure checkout"
+            icon="💳" active={gateway === "RAZORPAY"}
+            onClick={() => setGateway("RAZORPAY")} />}
+        </div>
+      ) : (
+        <div style={{ background: "#FEF2F2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 10, padding: 13, marginBottom: 20, fontSize: 13 }}>
+          Online payment is not configured. Please contact the booking agent.
+        </div>
+      )}
 
       {/* Summary line */}
       <div style={{
@@ -254,13 +281,13 @@ export default function CheckoutClient({
 
       <button
         onClick={initiatePayment}
-        disabled={isProcessing}
+        disabled={isProcessing || configLoading || !available[gateway]}
         style={{ ...primaryBtn, width: "100%", fontSize: 16, padding: "14px 24px", opacity: isProcessing ? 0.7 : 1 }}
       >
         {state === "creating" ? "Creating order…"
           : state === "paying"   ? "Opening payment…"
           : state === "polling"  ? "Confirming payment…"
-          : `Pay ${currencySymbol}${parseFloat(totalAmount).toLocaleString("en-IN")}`}
+          : `Pay now · ${currencySymbol}${parseFloat(totalAmount).toLocaleString("en-IN")}`}
       </button>
 
       <p style={{ fontSize: 12, color: "#94a3b8", textAlign: "center", margin: "12px 0 0" }}>
@@ -305,3 +332,5 @@ const primaryBtn: React.CSSProperties = {
   background: "#E31E24", color: "white", border: "none", borderRadius: 8,
   padding: "12px 24px", fontWeight: 700, fontSize: 15, cursor: "pointer",
 };
+
+const loadingBar: React.CSSProperties = { height: 58, borderRadius: 10, background: "linear-gradient(90deg,#f1f5f9 25%,#fff 50%,#f1f5f9 75%)", backgroundSize: "200% 100%", animation: "pulse 1.2s infinite" };
