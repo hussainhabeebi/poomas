@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { jwtVerify, type JWTPayload } from "jose";
 import type { Env, Variables } from "../types.js";
+import { verifyToken } from "../routes/checkout.js";
 
 const BEARER_PREFIX = "Bearer ";
 const API_KEY_PREFIX = "pmsk_";
@@ -19,6 +20,7 @@ interface PoomasJWTPayload extends JWTPayload {
 export const authMiddleware: MiddlewareHandler<{ Bindings: Env; Variables: Variables }> = async (c, next) => {
   const authHeader = c.req.header("Authorization") ?? "";
   const apiKeyHeader = c.req.header("X-API-Key") ?? "";
+  const checkoutToken = c.req.header("X-Checkout-Token") ?? "";
 
   if (apiKeyHeader.startsWith(API_KEY_PREFIX)) {
     return verifyApiKey(c, apiKeyHeader, next);
@@ -26,6 +28,20 @@ export const authMiddleware: MiddlewareHandler<{ Bindings: Env; Variables: Varia
 
   if (authHeader.startsWith(BEARER_PREFIX)) {
     return verifyJWT(c, authHeader.slice(BEARER_PREFIX.length), next);
+  }
+
+  if (checkoutToken) {
+    try {
+      const payload = await verifyToken(checkoutToken, c.env.JWT_SECRET);
+      if (payload.tenantId !== c.get("tenantId") || typeof payload.sub !== "string") {
+        throw new Error("Checkout token scope mismatch");
+      }
+      c.set("userRole", "CHECKOUT");
+      c.set("checkoutBookingId", payload.sub);
+      return next();
+    } catch {
+      throw new HTTPException(401, { message: "Invalid or expired checkout session" });
+    }
   }
 
   throw new HTTPException(401, { message: "Authentication required" });
