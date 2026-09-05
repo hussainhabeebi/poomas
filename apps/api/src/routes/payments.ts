@@ -22,6 +22,111 @@ function resolvePaymentKeys(env: Env, settings: Record<string, any> | null, gate
     return { keyId, keySecret };
   }
   if (gateway === "NOMOD") {
+    const apiKey    = settings?.nomod?.apiKey    || env.NOMOD_API_KEY;
+    const apiSecret = settings?.nomod?.apiSecret || env.NOMOD_API_SECRET;
+    return { apiKey, apiSecret };
+  }
+  return {};
+}
+
+async function getTenantPaymentSettings(env: Env, tenantId: string) {
+  const raw = await env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:payments`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+// ── GET /api/payments/config — safe checkout configuration ───────────────────
+
+paymentRoutes.get("/config", async (c) => {
+  const tenantId = c.get("tenantId");
+  const settings = await getTenantPaymentSettings(c.env, tenantId);
+  const razorpayConfigured = Boolean(settings?.razorpay?.enabled && (settings.razorpay.keyId || c.env.RAZORPAY_KEY_ID));
+  const nomodConfigured = Boolean(settings?.nomod?.enabled && (settings.nomod.apiKey || c.env.NOMOD_API_KEY));
+  const preferred = settings?.defaultGateway === "NOMOD" && nomodConfigured
+    ? "NOMOD"
+    : razorpayConfigured ? "RAZORPAY" : nomodConfigured ? "NOMOD" : null;
+  return c.json({ defaultGateway: preferred, gateways: { RAZORPAY: razorpayConfigured, NOMOD: nomodConfigured } });
+});
+
+// ── POST /api/payments/checkout ───────────────────────────────────────────────
+
+const checkoutSchema = z.object({
+  bookingId: z.string(),
+  gateway:   z.enum(["RAZORPAY", "NOMOD"]).default("RAZORPAY"),
+  currency:  z.enum(["INR", "AED", "USD"]).optional(),
+});
+
+paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) => {
+  const { bookingId, gateway, currency } = c.req.valid("json");
+  if (c.get("userRole") === "CHECKOUT" && c.get("checkoutBookingId") !== bookingId) {
+    throw new HTTPException(403, { message: "Checkout session does not match this booking" });
+  }
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+
+  const [booking] = await db
+    .select({
+      id:          bookings.id,
+      status:      bookings.status,
+      totalAmount: bookings.totalAmount,
+      currency:    bookings.currency,
+      contactEmail: bookings.contactEmail,
+      contactPhone: bookings.contactPhone,
+    })
+    .from(bookings)
+    .where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, tenantId)))
+    .limit(1);
+
+  if (!booking) throw new HTTPException(404, { message: "Booking not found" });
+  if (!["HELD", "PAYMENT_PENDING"].includes(booking.status)) {
+    throw new HTTPException(400, { message: `Booking is ${booking.status}` });
+  }
+
+  const settings   = await getTenantPaymentSettings(c.env, tenantId);
+  const amountFull = parseFloat(booking.totalAmount);
+  const cur        = currency ?? booking.currency;
+
+  if (gateway === "RAZORPAY") {
+    const { keyId, keySecret } = resolvePaymentKeys(c.env, settings, "RAZORPAY") as { keyId: string; keySecret: string };
+    if (!keyId || !keySecret) throw new HTTPException(503, { message: "Razorpay not configured" });
+
+    // Create Razorpay order (paise for INR, fils for AED)
+    const amountMinor = Math.round(amountFull * 100);
+    const orderRes = await fetch("https://api.razorpay.com/v1/orders", {
+      method:  "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Basic ${btoa(`${keyId}:${keySecret}`)}`,
+      },
+      body: JSON.stringify({
+        amount:          amountMinor,
+        currency:        cur,
+        receipt:         bookingId,
+        notes:           { tenantId, bookingId },
+        payment_capture: 1,
+      }),
+    });
+
+    if (!orderRes.ok) {
+      const e = await orderRes.json() as { error?: { description?: string } };
+      throw new HTTPException(502, { message: `Razorpay order failed: ${e.error?.description}` });
+    }
+
+    const order = await orderRes.json() as { id: string; amount: number; currency: string };
+
+    // Record pending payment in DB
+    await db.insert(payments).values({
+      bookingId,
+      gateway:        "RAZORPAY",
+      gatewayOrderId: order.id,
+      amount:         String(amountFull),
+      currency:       cur as "INR" | "AED" | "USD",
+      status:         "PENDING",
+    });
+
+    return c.json({ orderId: order.id, keyId, amount: order.amount, currency: order.currency });
+  }
+
+  if (gateway === "NOMOD") {
     const { apiKey } = resolvePaymentKeys(c.env, settings, "NOMOD") as { apiKey: string };
     if (!settings?.nomod?.enabled || !apiKey) {
       throw new HTTPException(503, { message: "Nomod is not enabled or its API key is missing" });
@@ -30,14 +135,9 @@ function resolvePaymentKeys(env: Env, settings: Record<string, any> | null, gate
     const checkoutToken = c.req.header("X-Checkout-Token") ?? "";
     const resultUrl = `https://flypoomas.com/checkout/payment-result?bookingId=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(checkoutToken)}`;
     const amount = amountFull.toFixed(2);
-
-    // Nomod Links API: https://nomod.com/docs/api-reference/generate-link
     const linkRes = await fetch("https://api.nomod.com/v1/links", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-KEY": apiKey,
-      },
+      headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
       body: JSON.stringify({
         currency: cur,
         items: [{ name: `POOMAS flight booking ${bookingId.slice(0, 8)}`, amount, quantity: 1 }],
@@ -65,20 +165,15 @@ function resolvePaymentKeys(env: Env, settings: Record<string, any> | null, gate
 
     await db.insert(payments).values({
       bookingId,
-      gateway:        "NOMOD",
+      gateway: "NOMOD",
       gatewayOrderId: link.id,
-      amount:         String(amountFull),
-      currency:       cur as "INR" | "AED" | "USD",
-      status:         "PENDING",
+      amount: String(amountFull),
+      currency: cur as "INR" | "AED" | "USD",
+      status: "PENDING",
       gatewayResponse: { linkId: link.id, linkUrl: link.url },
     });
 
-    return c.json({
-      paymentUrl: link.url,
-      orderId: link.id,
-      amount: Number(link.amount ?? amount),
-      currency: link.currency ?? cur,
-    });
+    return c.json({ paymentUrl: link.url, orderId: link.id, amount: Number(link.amount ?? amount), currency: link.currency ?? cur });
   }
 
   throw new HTTPException(400, { message: "Unsupported gateway" });
