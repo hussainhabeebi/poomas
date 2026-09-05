@@ -33,7 +33,7 @@ export async function signToken(payload: Record<string, unknown>, secret: string
   return `${data}.${sigB64}`;
 }
 
-async function verifyToken(token: string, secret: string): Promise<Record<string, unknown>> {
+export async function verifyToken(token: string, secret: string): Promise<Record<string, unknown>> {
   const parts = token.split(".");
   if (parts.length !== 3) throw new Error("Invalid token format");
   const [header, body, sig] = parts;
