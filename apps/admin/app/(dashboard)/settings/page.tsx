@@ -71,10 +71,11 @@ function PaymentSettings() {
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [error,   setError]   = useState("");
+  const [nomodStatus, setNomodStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
   const [s, setS] = useState({
-    defaultGateway: "RAZORPAY" as "RAZORPAY" | "NOMOD",
+    defaultGateway: "NOMOD" as "RAZORPAY" | "NOMOD",
     razorpay: { enabled: false, keyId: "", keySecret: "", webhookSecret: "" },
-    nomod:    { enabled: false, apiKey: "", apiSecret: "", webhookSecret: "", environment: "production" as "sandbox" | "production" },
+    nomod:    { enabled: false, apiKey: "", apiSecret: "", webhookSecret: "", environment: "production" as "sandbox" | "production", allowTabby: true, allowTamara: true, configured: false },
   });
 
   useEffect(() => {
@@ -97,6 +98,25 @@ function PaymentSettings() {
       setSaved(true);
     } catch (e: any) { setError(e.message); }
     finally { setSaving(false); }
+  }
+
+  async function testNomod() {
+    setNomodStatus("testing"); setError("");
+    try {
+      const saveRes = await fetch(`${API}/api/admin/settings/payments`, {
+        method: "PUT", headers: apiHeaders(), body: JSON.stringify(s),
+      });
+      if (!saveRes.ok) throw new Error("Save the Nomod settings first");
+      const res = await fetch(`${API}/api/admin/settings/payments/test-nomod`, {
+        method: "POST", headers: apiHeaders(),
+      });
+      const data = await res.json() as { ok?: boolean; message?: string; mode?: string };
+      if (!res.ok || !data.ok) throw new Error(data.message || "Nomod connection failed");
+      setNomodStatus("connected");
+      setS((p) => ({ ...p, nomod: { ...p.nomod, configured: true } }));
+    } catch (err: any) {
+      setNomodStatus("failed"); setError(err.message);
+    }
   }
 
   if (loading) return <div style={{ color: "#64748b", fontSize: 13 }}>Loading…</div>;
@@ -147,41 +167,55 @@ function PaymentSettings() {
         )}
       </div>
 
-      {/* NoMod */}
+      {/* Nomod */}
       <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
-        <Toggle label="Enable NoMod Pay" description="Alternative payment gateway — hosted redirect flow"
+        <Toggle label="Enable Nomod" description="Fast hosted checkout with cards, Apple Pay, Google Pay, Tabby and Tamara"
           checked={s.nomod.enabled} onChange={(v) => setS((p) => ({ ...p, nomod: { ...p.nomod, enabled: v } }))} color="#7c3aed" />
         {s.nomod.enabled && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <Label>API Key</Label>
-              <input type="password" placeholder="••••••••••••" value={s.nomod.apiKey}
-                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, apiKey: e.target.value } }))}
-                style={inputStyle} />
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ gridColumn: "span 2" }}>
+                <Label>Nomod API Key</Label>
+                <input type="password"
+                  placeholder={s.nomod.configured ? "Saved — enter only to replace" : "sk_test_… or live API key"}
+                  value={s.nomod.apiKey}
+                  onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, apiKey: e.target.value } }))}
+                  style={inputStyle} autoComplete="new-password" />
+                <Hint>Nomod Dashboard → Settings → Tools & customisations → Apps & APIs → Nomod API. The key stays on the server.</Hint>
+              </div>
+              <div>
+                <Label>Mode</Label>
+                <select value={s.nomod.environment}
+                  onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, environment: e.target.value as "sandbox" | "production" } }))}
+                  style={inputStyle}>
+                  <option value="sandbox">Test key</option>
+                  <option value="production">Live payments</option>
+                </select>
+              </div>
+              <div>
+                <Label>Payment methods</Label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <label style={checkStyle}><input type="checkbox" checked={s.nomod.allowTabby} onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, allowTabby: e.target.checked } }))} /> Tabby</label>
+                  <label style={checkStyle}><input type="checkbox" checked={s.nomod.allowTamara} onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, allowTamara: e.target.checked } }))} /> Tamara</label>
+                </div>
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <Label>Webhook Secret</Label>
+                <input type="password" placeholder="Optional until Nomod webhook is configured" value={s.nomod.webhookSecret}
+                  onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, webhookSecret: e.target.value } }))}
+                  style={inputStyle} autoComplete="new-password" />
+                <Hint>Webhook URL: <code style={codeStyle}>https://api.flypoomas.com/webhooks/nomod</code></Hint>
+              </div>
             </div>
-            <div>
-              <Label>API Secret</Label>
-              <input type="password" placeholder="••••••••••••" value={s.nomod.apiSecret}
-                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, apiSecret: e.target.value } }))}
-                style={inputStyle} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+              <button type="button" onClick={testNomod} disabled={nomodStatus === "testing"}
+                style={{ ...saveBtn(nomodStatus === "testing"), background: "#7c3aed" }}>
+                {nomodStatus === "testing" ? "Testing…" : "Save & Test Nomod"}
+              </button>
+              {nomodStatus === "connected" && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Connected</span>}
+              {nomodStatus === "failed" && <span style={{ color: "#f87171", fontSize: 13 }}>✗ Connection failed</span>}
             </div>
-            <div>
-              <Label>Environment</Label>
-              <select value={s.nomod.environment}
-                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, environment: e.target.value as "sandbox" | "production" } }))}
-                style={inputStyle}>
-                <option value="sandbox">Sandbox</option>
-                <option value="production">Production</option>
-              </select>
-            </div>
-            <div>
-              <Label>Webhook Secret</Label>
-              <input type="password" placeholder="••••••••••••" value={s.nomod.webhookSecret}
-                onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, webhookSecret: e.target.value } }))}
-                style={inputStyle} />
-              <Hint>Webhook: <code style={codeStyle}>https://api.flypoomas.com/webhooks/nomod</code></Hint>
-            </div>
-          </div>
+          </>
         )}
       </div>
 
@@ -519,3 +553,5 @@ const inputStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box"
   background: "#0f172a", border: "1.5px solid #334155", borderRadius: 8, color: "#e2e8f0", fontSize: 14 };
 const codeStyle: React.CSSProperties = { background: "#0f172a", padding: "1px 6px", borderRadius: 4,
   fontFamily: "monospace", fontSize: 12, color: "#94a3b8" };
+
+const checkStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, color: "#cbd5e1", fontSize: 12, fontWeight: 600, border: "1px solid #334155", borderRadius: 8, padding: "9px 11px" };
