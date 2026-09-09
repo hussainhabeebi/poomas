@@ -42,9 +42,11 @@ export default function LoginPage() {
         background: "white", borderRadius: 12, padding: "40px 48px",
         boxShadow: "0 4px 24px rgba(0,0,0,0.08)", width: "100%", maxWidth: 420,
       }}>
-        <h1 style={{ textAlign: "center", marginBottom: 32, fontSize: 24, fontWeight: 700 }}>
-          Agent Portal Login
-        </h1>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="POOMAS" height={40} style={{ display: "inline-block", marginBottom: 12 }} />
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Agent Portal Login</h1>
+        </div>
 
         {error && (
           <div style={{
