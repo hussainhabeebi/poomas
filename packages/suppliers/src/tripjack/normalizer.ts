@@ -2,7 +2,9 @@ import type { NormalizedFare } from "../base.js";
 
 export function normalizeTripjackFare(r: Record<string, unknown>): NormalizedFare {
   const fi = (r.sI as Record<string, unknown>[])?.[0] ?? {};
-  const totalPriceInfo = (r.totalPriceInfo as Record<string, Record<string, number>>) ?? {};
+  const totalPriceInfo = (r.totalPriceInfo as {
+    fd?: { fC?: { BF?: number; TAF?: number; TF?: number } };
+  }) ?? {};
   return {
     id:            r.id as string,
     supplier:      "TRIPJACK",

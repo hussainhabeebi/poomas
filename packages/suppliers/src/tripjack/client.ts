@@ -4,25 +4,40 @@ import { SupplierError } from "../riya/client.js";
 export class TripjackClient {
   private baseUrl: string;
   private apiKey:  string;
+  private proxyKey: string;
 
   constructor(creds: SupplierCredentials) {
-    this.baseUrl = (creds.baseUrl  as string) ?? process.env.TRIPJACK_API_BASE_URL ?? "";
+    this.baseUrl = ((creds.baseUrl as string) ?? process.env.TRIPJACK_API_BASE_URL ?? "").replace(/\/$/, "");
     this.apiKey  = (creds.apiKey   as string) ?? process.env.TRIPJACK_API_KEY      ?? "";
+    this.proxyKey = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
   }
 
   private async request<T>(path: string, body: unknown): Promise<T> {
+    if (!this.baseUrl || (!this.apiKey && !this.proxyKey)) {
+      throw new Error("TripJack is enabled but its gateway or API credentials are missing");
+    }
+
     const res = await fetch(`${this.baseUrl}${path}`, {
       method:  "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey":        this.apiKey,
+        ...(this.apiKey ? { "apikey": this.apiKey } : {}),
+        ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
       },
       body: JSON.stringify(body),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new SupplierError("TRIPJACK", res.status, text);
+      console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
+      const safeMessage = res.status === 401 || res.status === 403
+        ? "Authentication or proxy IP whitelist rejected"
+        : res.status === 404
+          ? "Proxy route or TripJack base URL was not found"
+          : res.status === 429
+            ? "Rate limit exceeded"
+            : "Upstream request failed";
+      throw new SupplierError("TRIPJACK", res.status, safeMessage);
     }
 
     return res.json() as Promise<T>;
@@ -71,3 +86,4 @@ export class TripjackClient {
     return this.request("/air-cancel/v2", { bookingId: bookingRef });
   }
 }
+
