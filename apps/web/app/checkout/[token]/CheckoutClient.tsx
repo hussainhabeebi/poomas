@@ -125,7 +125,7 @@ export default function CheckoutClient({
         currency:    cur,
         name:        "POOMAS Flights",
         description: `Booking ${bookingId}`,
-        image:       "/logo.svg",
+        image:       "/logo.png",
         prefill: {
           email: contactEmail,
           contact: contactPhone,
