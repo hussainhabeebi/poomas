@@ -39,12 +39,11 @@ async function tripjackAdminConfig(env: Env, tenantId: string): Promise<Tripjack
 
 function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   return {
-    ...(env.RIYA_API_KEY     ? { RIYA:        { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
+    ...(env.RIYA_API_KEY     ? { RIYA:     { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
     ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
       ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY } }
       : {}),
-    ...(env.SERP_API_KEY     ? { GOOGLE_SERP: { apiKey: env.SERP_API_KEY, baseUrl: "https://serpapi.com" } } : {}),
-    ...(env.DUFFEL_API_KEY   ? { DUFFEL:      { apiKey: env.DUFFEL_API_KEY } } : {}),
+    // DUFFEL and GOOGLE_SERP are temporarily disabled — credentials intentionally excluded
   };
 }
 
@@ -60,10 +59,9 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
 
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
-    { name: "RIYA",        priority: 10, timeoutMs: 15000 },
-    { name: "TRIPJACK",    priority: 20, timeoutMs: 15000 },
-    { name: "DUFFEL",      priority: 30, timeoutMs: 15000 },
-    { name: "GOOGLE_SERP", priority: 99, timeoutMs: 12000 },
+    { name: "RIYA",     priority: 10, timeoutMs: 15000 },
+    { name: "TRIPJACK", priority: 20, timeoutMs: 15000 },
+    // DUFFEL and GOOGLE_SERP temporarily disabled
   ];
 
   for (const def of defaults) {
@@ -160,8 +158,8 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const credentialAvailability = {
     RIYA:        Boolean(platformCredentials.RIYA || supplierConfigs.find((s) => s.name === "RIYA")?.credentials),
     TRIPJACK:    Boolean(platformCredentials.TRIPJACK || supplierConfigs.find((s) => s.name === "TRIPJACK")?.credentials),
-    DUFFEL:      Boolean(platformCredentials.DUFFEL || supplierConfigs.find((s) => s.name === "DUFFEL")?.credentials),
-    GOOGLE_SERP: Boolean(platformCredentials.GOOGLE_SERP || supplierConfigs.find((s) => s.name === "GOOGLE_SERP")?.credentials),
+    DUFFEL:      false,  // temporarily disabled
+    GOOGLE_SERP: false,  // temporarily disabled
   };
 
   const trialKey = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
@@ -251,8 +249,8 @@ searchRoutes.get("/status", async (c) => {
     platformSecrets: {
       RIYA:        Boolean(c.env.RIYA_API_KEY && c.env.RIYA_API_BASE_URL),
       TRIPJACK:    Boolean(c.env.TRIPJACK_API_BASE_URL && (c.env.TRIPJACK_API_KEY || c.env.TRIPJACK_PROXY_KEY)),
-      DUFFEL:      Boolean(c.env.DUFFEL_API_KEY),
-      GOOGLE_SERP: Boolean(c.env.SERP_API_KEY),
+      DUFFEL:      false,  // temporarily disabled
+      GOOGLE_SERP: false,  // temporarily disabled
     },
   });
 });
@@ -270,4 +268,3 @@ searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const rules = await adapter.getFareRules?.(fareId) ?? [];
   return c.json({ fareRules: rules });
 });
-

@@ -90,4 +90,3 @@ export class TripjackAdapter implements SupplierAdapter {
     };
   }
 }
-
