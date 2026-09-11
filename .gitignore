@@ -11,3 +11,4 @@ build/
 coverage/
 .nyc_output/
 prisma/generated/
+*.tsbuildinfo

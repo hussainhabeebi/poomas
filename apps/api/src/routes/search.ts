@@ -19,10 +19,30 @@ const searchSchema = z.object({
 
 const SERP_TRIAL_TTL = 60 * 60 * 24;
 
+interface TripjackAdminConfig {
+  enabled?: boolean;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+async function tripjackAdminConfig(env: Env, tenantId: string): Promise<TripjackAdminConfig | null> {
+  try {
+    return await env.TENANT_CACHE_KV.get(
+      `admin_settings:${tenantId}:integration:tripjack`,
+      "json",
+    ) as TripjackAdminConfig | null;
+  } catch (err) {
+    console.error("[search] TripJack admin configuration unavailable; using existing credentials", err);
+    return null;
+  }
+}
+
 function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   return {
     ...(env.RIYA_API_KEY     ? { RIYA:     { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
-    ...(env.TRIPJACK_API_KEY ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL } } : {}),
+    ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
+      ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY } }
+      : {}),
     // DUFFEL and GOOGLE_SERP are temporarily disabled — credentials intentionally excluded
   };
 }
@@ -69,7 +89,56 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const tenantId = c.get("tenantId");
 
   const platformCredentials = platformCredentialsFromEnv(c.env);
+  const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
+  const tripjackApiKey = savedTripjack?.apiKey || c.env.TRIPJACK_API_KEY;
+  const tripjackBaseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
+  if ((tripjackApiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+    platformCredentials.TRIPJACK = {
+      apiKey: tripjackApiKey,
+      baseUrl: tripjackBaseUrl,
+      proxyKey: c.env.TRIPJACK_PROXY_KEY,
+    };
+  }
   const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
+
+  // TripJack is the primary supplier for this deployment. A configured Worker
+  // secret activates an existing tenant row unless Admin explicitly saved the
+  // flight-search toggle as disabled.
+  if (!savedTripjack && platformCredentials.TRIPJACK) {
+    const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
+    if (tripjackConfig) tripjackConfig.isEnabled = true;
+  }
+
+  // The Admin flight-search toggle is authoritative when a TripJack integration
+  // has been saved. Its credentials override only TripJack, leaving every other
+  // supplier's existing DB/secret resolution unchanged.
+  if (savedTripjack) {
+    const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
+    if (tripjackConfig) {
+      tripjackConfig.isEnabled = savedTripjack.enabled === true;
+      if ((savedTripjack.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+        tripjackConfig.credentials = {
+          ...(tripjackConfig.credentials ?? {}),
+          ...(savedTripjack.apiKey ? { apiKey: savedTripjack.apiKey } : {}),
+          baseUrl: tripjackBaseUrl,
+          proxyKey: c.env.TRIPJACK_PROXY_KEY,
+        };
+      }
+    } else if (savedTripjack.enabled && (savedTripjack.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+      supplierConfigs.push({
+        name: "TRIPJACK",
+        isEnabled: true,
+        priority: 20,
+        credentials: {
+          ...(savedTripjack.apiKey ? { apiKey: savedTripjack.apiKey } : {}),
+          baseUrl: tripjackBaseUrl,
+          proxyKey: c.env.TRIPJACK_PROXY_KEY,
+        },
+        timeoutMs: 15000,
+        maxRetries: 0,
+      });
+    }
+  }
 
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
   let currency = params.currency as "INR" | "AED" | "USD" | undefined;
@@ -89,8 +158,8 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const credentialAvailability = {
     RIYA:        Boolean(platformCredentials.RIYA || supplierConfigs.find((s) => s.name === "RIYA")?.credentials),
     TRIPJACK:    Boolean(platformCredentials.TRIPJACK || supplierConfigs.find((s) => s.name === "TRIPJACK")?.credentials),
-    DUFFEL:      Boolean(platformCredentials.DUFFEL || supplierConfigs.find((s) => s.name === "DUFFEL")?.credentials),
-    GOOGLE_SERP: Boolean(platformCredentials.GOOGLE_SERP || supplierConfigs.find((s) => s.name === "GOOGLE_SERP")?.credentials),
+    DUFFEL:      false,  // temporarily disabled
+    GOOGLE_SERP: false,  // temporarily disabled
   };
 
   const trialKey = sessionId ? `serp_trials:${tenantId}:${sessionId}` : null;
@@ -179,7 +248,7 @@ searchRoutes.get("/status", async (c) => {
     enabledSuppliers: tenant.supplierConfigs.filter((s) => s.isEnabled).map((s) => s.supplier),
     platformSecrets: {
       RIYA:        Boolean(c.env.RIYA_API_KEY && c.env.RIYA_API_BASE_URL),
-      TRIPJACK:    Boolean(c.env.TRIPJACK_API_KEY && c.env.TRIPJACK_API_BASE_URL),
+      TRIPJACK:    Boolean(c.env.TRIPJACK_API_BASE_URL && (c.env.TRIPJACK_API_KEY || c.env.TRIPJACK_PROXY_KEY)),
       DUFFEL:      false,  // temporarily disabled
       GOOGLE_SERP: false,  // temporarily disabled
     },

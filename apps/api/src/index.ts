@@ -23,13 +23,14 @@ import { eticketRoutes }       from "./routes/eticket.js";
 import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
+import { partnerRoutes }       from "./routes/partner.js";
 
 export { TenantRateLimiter };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", logger());
 app.use("*", secureHeaders());
-app.use("*", cors({origin:(origin)=>origin,credentials:true,allowMethods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowHeaders:["Content-Type","Authorization","X-Tenant-ID","X-API-Key","x-tenant-slug","X-Session-ID","X-Channel","X-POOMAS-INTEGRATION-KEY"]}));
+app.use("*", cors({origin:(origin)=>origin,credentials:true,allowMethods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowHeaders:["Content-Type","Authorization","X-Tenant-ID","X-API-Key","x-tenant-slug","X-Session-ID","X-Channel","X-POOMAS-INTEGRATION-KEY","X-Checkout-Token"]}));
 app.get("/health",(c)=>c.json({status:"ok",env:c.env.ENVIRONMENT,worker:"poomas-api",timestamp:new Date().toISOString()}));
 app.use("*", resolveTenant);
 app.use("/api/*", rateLimitMiddleware);
@@ -41,6 +42,7 @@ app.route("/api/search",         searchRoutes);
 app.route("/api/hotels",         hotelRoutes);
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
 app.route("/api/integrations",   integrationRoutes);
+app.route("/api/partner/v1",    partnerRoutes);
 
 // Checkout token verification — validated by the signed JWT token itself
 app.route("/api/checkout",       checkoutRoutes);
