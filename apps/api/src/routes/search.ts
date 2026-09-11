@@ -47,15 +47,19 @@ function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   };
 }
 
+const TEMPORARILY_DISABLED_SUPPLIERS = new Set<string>(["DUFFEL", "GOOGLE_SERP"]);
+
 function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentials: PlatformCredentials): SupplierConfig[] {
-  const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
-    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
-    isEnabled:   sc.isEnabled,
-    priority:    sc.priority,
-    credentials: sc.credentials,
-    timeoutMs:   sc.timeoutMs,
-    maxRetries:  sc.maxRetries,
-  }));
+  const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs
+    .filter((sc) => !TEMPORARILY_DISABLED_SUPPLIERS.has(sc.supplier))
+    .map((sc) => ({
+      name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
+      isEnabled:   sc.isEnabled,
+      priority:    sc.priority,
+      credentials: sc.credentials,
+      timeoutMs:   sc.timeoutMs,
+      maxRetries:  sc.maxRetries,
+    }));
 
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
@@ -74,6 +78,15 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
         timeoutMs: def.timeoutMs,
         maxRetries: 0,
       });
+    }
+  }
+
+  // Suppress connection errors for suppliers enabled in the DB but with no credentials
+  // available — neither a platform secret nor tenant-DB credentials. Prevents noise from
+  // suppliers that are enabled in the tenant row but not actually deployed.
+  for (const config of supplierConfigs) {
+    if (config.isEnabled && !platformCredentials[config.name] && !config.credentials) {
+      config.isEnabled = false;
     }
   }
 
