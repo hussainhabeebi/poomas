@@ -7,6 +7,7 @@ import { resolveTenant } from "./middleware/tenant.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { rateLimitMiddleware } from "./middleware/ratelimit.js";
 import { searchRoutes }        from "./routes/search.js";
+import { hotelRoutes }         from "./routes/hotel.js";
 import { bookingRoutes }       from "./routes/booking.js";
 import { duffelSandboxRoutes } from "./routes/duffel-sandbox.js";
 import { integrationRoutes }   from "./routes/integrations.js";
@@ -37,6 +38,7 @@ app.use("/api/*", rateLimitMiddleware);
 app.route("/api/auth",           authRoutes);
 app.route("/webhooks",           webhookRoutes);
 app.route("/api/search",         searchRoutes);
+app.route("/api/hotels",         hotelRoutes);
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
 app.route("/api/integrations",   integrationRoutes);
 

@@ -21,10 +21,9 @@ const SERP_TRIAL_TTL = 60 * 60 * 24;
 
 function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   return {
-    ...(env.RIYA_API_KEY     ? { RIYA:        { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
-    ...(env.TRIPJACK_API_KEY ? { TRIPJACK:    { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL } } : {}),
-    ...(env.SERP_API_KEY     ? { GOOGLE_SERP: { apiKey: env.SERP_API_KEY, baseUrl: "https://serpapi.com" } } : {}),
-    ...(env.DUFFEL_API_KEY   ? { DUFFEL:      { apiKey: env.DUFFEL_API_KEY } } : {}),
+    ...(env.RIYA_API_KEY     ? { RIYA:     { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
+    ...(env.TRIPJACK_API_KEY ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL } } : {}),
+    // DUFFEL and GOOGLE_SERP are temporarily disabled — credentials intentionally excluded
   };
 }
 
@@ -40,10 +39,9 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
 
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
-    { name: "RIYA",        priority: 10, timeoutMs: 15000 },
-    { name: "TRIPJACK",    priority: 20, timeoutMs: 15000 },
-    { name: "DUFFEL",      priority: 30, timeoutMs: 15000 },
-    { name: "GOOGLE_SERP", priority: 99, timeoutMs: 12000 },
+    { name: "RIYA",     priority: 10, timeoutMs: 15000 },
+    { name: "TRIPJACK", priority: 20, timeoutMs: 15000 },
+    // DUFFEL and GOOGLE_SERP temporarily disabled
   ];
 
   for (const def of defaults) {
@@ -182,8 +180,8 @@ searchRoutes.get("/status", async (c) => {
     platformSecrets: {
       RIYA:        Boolean(c.env.RIYA_API_KEY && c.env.RIYA_API_BASE_URL),
       TRIPJACK:    Boolean(c.env.TRIPJACK_API_KEY && c.env.TRIPJACK_API_BASE_URL),
-      DUFFEL:      Boolean(c.env.DUFFEL_API_KEY),
-      GOOGLE_SERP: Boolean(c.env.SERP_API_KEY),
+      DUFFEL:      false,  // temporarily disabled
+      GOOGLE_SERP: false,  // temporarily disabled
     },
   });
 });

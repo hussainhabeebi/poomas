@@ -1,4 +1,5 @@
 import type { SearchParams, HoldParams, BookParams, SupplierCredentials } from "../base.js";
+import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
 
 export class TripjackClient {
@@ -28,6 +29,8 @@ export class TripjackClient {
     return res.json() as Promise<T>;
   }
 
+  // ── Flights ────────────────────────────────────────────────────
+
   async search(params: SearchParams) {
     return this.request("/air-search-all/v2", {
       searchQuery: {
@@ -49,7 +52,7 @@ export class TripjackClient {
     });
   }
 
-  async fareRules(fareId: string, sessionId?: string) {
+  async fareRules(fareId: string) {
     return this.request("/air-fare-detail/v2", { id: fareId, flowType: "SEARCH" });
   }
 
@@ -69,5 +72,61 @@ export class TripjackClient {
 
   async cancel(bookingRef: string) {
     return this.request("/air-cancel/v2", { bookingId: bookingRef });
+  }
+
+  // ── Hotels ─────────────────────────────────────────────────────
+
+  async hotelSearch(params: HotelSearchParams) {
+    return this.request("/hotel-search/v1", {
+      searchQuery: {
+        checkinDate:  params.checkIn,
+        checkoutDate: params.checkOut,
+        roomInfo:     params.rooms.map((r) => ({
+          numberOfAdults: r.adults,
+          numberOfChild:  r.children,
+          childAge:       r.childAges ?? [],
+        })),
+        searchCriteria: {
+          city:        params.cityCode,
+          nationality: params.nationality,
+          currency:    params.currency,
+        },
+        searchPreferences: {
+          ratings:       params.ratings ?? [],
+          freeBreakfast: params.freeBreakfast ?? false,
+          freeCancel:    params.freeCancel    ?? false,
+        },
+      },
+    });
+  }
+
+  async hotelPreBook(optionId: string) {
+    return this.request("/hotel-prebook/v1", { optionId, fieldType: "DETAIL" });
+  }
+
+  async hotelBook(params: HotelBookParams) {
+    return this.request("/hotel-book/v1", {
+      optionId: params.optionId,
+      travellerInfo: params.guests.map((g) => ({
+        ti:       g.title,
+        fN:       g.firstName,
+        lN:       g.lastName,
+        pt:       g.type,
+        age:      g.age,
+        roomIndex: g.roomIndex,
+      })),
+      deliveryInfo: {
+        emails:  [params.contactEmail],
+        mobiles: [{ countryCode: "+91", number: params.contactPhone }],
+      },
+    });
+  }
+
+  async hotelBookingDetail(bookingId: string) {
+    return this.request("/hotel-booking-detail/v1", { bookingId });
+  }
+
+  async hotelCancel(bookingId: string) {
+    return this.request("/hotel-cancel/v1", { bookingId });
   }
 }
