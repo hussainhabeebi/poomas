@@ -63,8 +63,8 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
 
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
-    { name: "RIYA",     priority: 10, timeoutMs: 15000 },
-    { name: "TRIPJACK", priority: 20, timeoutMs: 15000 },
+    { name: "RIYA",     priority: 10, timeoutMs: 25000 },
+    { name: "TRIPJACK", priority: 20, timeoutMs: 25000 },
     // DUFFEL and GOOGLE_SERP temporarily disabled
   ];
 
@@ -147,7 +147,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
           baseUrl: tripjackBaseUrl,
           proxyKey: c.env.TRIPJACK_PROXY_KEY,
         },
-        timeoutMs: 15000,
+        timeoutMs: 25000,
         maxRetries: 0,
       });
     }
