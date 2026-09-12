@@ -39,7 +39,9 @@ export const bookDirectRoutes = new Hono<{ Bindings: Env; Variables: Variables }
 function platformCredsFromEnv(env: Env): PlatformCredentials {
   return {
     ...(env.RIYA_API_KEY     ? { RIYA:     { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
-    ...(env.TRIPJACK_API_KEY ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL } } : {}),
+    ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
+      ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY } }
+      : {}),
   };
 }
 
