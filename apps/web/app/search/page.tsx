@@ -1,9 +1,12 @@
 import { cookies } from "next/headers";
+import SearchResultControls from "./SearchResultControls";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
   returnDate?: string; adults?: string; cabinClass?: string;
-  tripType?: string; currency?: "INR" | "AED" | "USD";
+  tripType?: string; currency?: "INR" | "AED" | "USD"; all?: string;
+  sort?: "price" | "duration" | "departure"; stops?: string;
+  refundable?: string; baggage?: string;
 };
 
 type SearchResult = {
@@ -46,6 +49,7 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
         ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(25_000),
     });
 
     const raw = await res.text();
@@ -73,6 +77,13 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   const failingSuppliers = Object.keys(result.supplierErrors ?? {});
   const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
     .filter(([, ok]) => !ok).map(([name]) => name);
+  const allFares = result.fares as any[];
+  const filteredFares = filterAndSortFares(allFares, params);
+  const displayFares = params.all === "1" || params.sort
+    ? filteredFares
+    : recommendedFares(filteredFares);
+  const allQuery = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
+  allQuery.set("all", "1");
 
   return (
     <main className="page-container" style={{ paddingTop: 16 }}>
@@ -83,9 +94,15 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         </p>
       </div>
 
+      <SearchResultControls
+        origin={params.origin ?? ""}
+        destination={params.destination ?? ""}
+        departureDate={params.departureDate ?? new Date().toISOString().slice(0, 10)}
+      />
+
       {result?.isIndicative && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13 }}>⚠️ {result.disclaimer}</div>}
 
-      {result.fares.length === 0 ? (
+      {filteredFares.length === 0 ? (
         <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
           <div style={{ fontSize: 44, marginBottom: 14 }}>✈️</div>
           <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{result.apiError || failingSuppliers.length > 0 ? "Live flight search unavailable" : "No flights found"}</p>
@@ -96,11 +113,60 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {(result.fares as any[]).map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} />)}
+          {params.all !== "1" && <div style={{ fontSize: 13, color: "#475569", fontWeight: 700, marginBottom: 2 }}>Recommended for you</div>}
+          {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} />)}
+          {params.all !== "1" && filteredFares.length > displayFares.length && (
+            <a href={`/search?${allQuery.toString()}`} style={{ textAlign: "center", padding: 14, border: "1px solid #cbd5e1", borderRadius: 12, color: "#0f172a", textDecoration: "none", fontWeight: 800 }}>
+              View all {filteredFares.length} flights
+            </a>
+          )}
         </div>
       )}
     </main>
   );
+}
+
+function filterAndSortFares(fares: any[], params: SearchParams): any[] {
+  const filtered = fares.filter((fare) => {
+    if (params.stops === "0" && Number(fare.stops ?? 0) !== 0) return false;
+    if (params.refundable === "1" && !fare.isRefundable) return false;
+    if (params.baggage === "1" && !fare.baggage?.checked) return false;
+    return true;
+  });
+
+  if (params.sort === "price") {
+    return [...filtered].sort((a, b) => Number(a.displayPrice ?? a.totalFare ?? Infinity) - Number(b.displayPrice ?? b.totalFare ?? Infinity));
+  }
+  if (params.sort === "duration") {
+    return [...filtered].sort((a, b) => Number(a.duration ?? Infinity) - Number(b.duration ?? Infinity));
+  }
+  if (params.sort === "departure") {
+    return [...filtered].sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime());
+  }
+  return filtered;
+}
+
+function recommendedFares(fares: any[]): any[] {
+  if (fares.length <= 3) return fares;
+  const bookable = fares.filter((f) => f.isBookable);
+  const pool = bookable.length >= 3 ? bookable : fares;
+  const prices = pool.map((f) => Number(f.displayPrice ?? f.totalFare ?? Infinity));
+  const durations = pool.map((f) => Number(f.duration ?? Infinity));
+  const minP = Math.min(...prices), maxP = Math.max(...prices);
+  const minD = Math.min(...durations), maxD = Math.max(...durations);
+  const best = [...pool].sort((a, b) => {
+    const score = (f: any) => ((Number(f.displayPrice ?? f.totalFare) - minP) / Math.max(1, maxP - minP)) * .62
+      + ((Number(f.duration) - minD) / Math.max(1, maxD - minD)) * .28 + Number(f.stops ?? 0) * .1;
+    return score(a) - score(b);
+  })[0];
+  const cheapest = [...pool].sort((a, b) => Number(a.displayPrice ?? a.totalFare) - Number(b.displayPrice ?? b.totalFare))[0];
+  const fastest = [...pool].sort((a, b) => Number(a.duration) - Number(b.duration))[0];
+  const picked: any[] = [];
+  for (const [fare, badge] of [[best, "Best overall"], [cheapest, "Lowest fare"], [fastest, "Fastest"]] as const) {
+    if (fare && !picked.some((x) => x.id === fare.id)) picked.push({ ...fare, __badge: badge });
+  }
+  for (const fare of pool) if (picked.length < 3 && !picked.some((x) => x.id === fare.id)) picked.push(fare);
+  return picked.slice(0, 3);
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -140,7 +206,8 @@ function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: s
   const isBookable = Boolean(fare.isBookable && fare.supplier !== "GOOGLE_SERP");
 
   return (
-    <div className="fare-card">
+    <div className="fare-card" style={{ position: "relative", borderColor: fare.__badge ? "#fecaca" : undefined }}>
+      {fare.__badge && <span style={{ position: "absolute", top: -9, left: 14, background: fare.__badge === "Best overall" ? "#E31E24" : "#0f172a", color: "white", borderRadius: 20, padding: "3px 9px", fontSize: 10, fontWeight: 800 }}>{fare.__badge}</span>}
       <div className="fare-card-airline-col">
         <div className="fare-card-airline">{fare.airlineName}</div>
         <div className="fare-card-flight">{fare.flightNumber}</div>
@@ -153,6 +220,7 @@ function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: s
         <div style={{ fontSize: 12, color: fare.isRefundable ? "#059669" : "#9ca3af" }}>{fare.isRefundable ? "✓ Refundable" : "Non-refundable"}</div>
         {fare.baggage?.cabin && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Cabin: {fare.baggage.cabin}</div>}
         {fare.baggage?.checked && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Check-in: {fare.baggage.checked}</div>}
+        {fare.layoverAirports?.length > 0 && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>Via {fare.layoverAirports.join(", ")}</div>}
       </div>
       <div className="fare-card-price-col">
         <div className="fare-card-price">{formatMoney(price, fareCurrency)}</div>

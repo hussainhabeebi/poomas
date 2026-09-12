@@ -44,17 +44,41 @@ const paymentsSchema = z.object({
     apiSecret:     z.string().optional(),
     webhookSecret: z.string().optional(),
     environment:   z.enum(["sandbox", "production"]).default("production"),
+    allowTabby:    z.boolean().default(true),
+    allowTamara:   z.boolean().default(true),
   }).optional(),
   defaultGateway: z.enum(["RAZORPAY", "NOMOD"]).default("RAZORPAY"),
 });
 
 settingsAdminRoutes.get("/payments", async (c) => {
   const tenantId = c.get("tenantId");
-  const saved    = await getSettings(c.env, tenantId, "payments");
-  return c.json(saved ?? {
-    razorpay: { enabled: false },
-    nomod:    { enabled: false, environment: "production" },
-    defaultGateway: "RAZORPAY",
+  const saved = await getSettings<any>(c.env, tenantId, "payments");
+  if (!saved) {
+    return c.json({
+      razorpay: { enabled: false, keyId: "", keySecret: "", webhookSecret: "", configured: false },
+      nomod: { enabled: false, apiKey: "", apiSecret: "", webhookSecret: "", environment: "production", allowTabby: true, allowTamara: true, configured: false },
+      defaultGateway: "NOMOD",
+    });
+  }
+
+  // Never send stored secret values back to the browser.
+  return c.json({
+    ...saved,
+    razorpay: {
+      ...saved.razorpay,
+      keySecret: "",
+      webhookSecret: "",
+      configured: Boolean(saved.razorpay?.keyId && saved.razorpay?.keySecret),
+    },
+    nomod: {
+      ...saved.nomod,
+      apiKey: "",
+      apiSecret: "",
+      webhookSecret: "",
+      allowTabby: saved.nomod?.allowTabby ?? true,
+      allowTamara: saved.nomod?.allowTamara ?? true,
+      configured: Boolean(saved.nomod?.apiKey),
+    },
   });
 });
 
@@ -81,11 +105,33 @@ settingsAdminRoutes.put("/payments", zValidator("json", paymentsSchema), async (
       apiSecret:     body.nomod.apiSecret     || (existing as any)?.nomod?.apiSecret,
       webhookSecret: body.nomod.webhookSecret || (existing as any)?.nomod?.webhookSecret,
       environment:   body.nomod.environment,
+      allowTabby:    body.nomod.allowTabby,
+      allowTamara:   body.nomod.allowTamara,
     } : (existing as any)?.nomod,
   };
 
   await saveSettings(c.env, tenantId, "payments", merged);
   return c.json({ ok: true });
+});
+
+// Validate the stored Nomod key without exposing it to the admin browser.
+settingsAdminRoutes.post("/payments/test-nomod", async (c) => {
+  const tenantId = c.get("tenantId");
+  const saved = await getSettings<any>(c.env, tenantId, "payments");
+  const apiKey = saved?.nomod?.apiKey || c.env.NOMOD_API_KEY;
+  if (!saved?.nomod?.enabled || !apiKey) {
+    return c.json({ ok: false, message: "Enable Nomod and save an API key first" }, 400);
+  }
+
+  const res = await fetch("https://api.nomod.com/v1/links", {
+    headers: { "X-API-KEY": apiKey },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) {
+    const raw = await res.text();
+    return c.json({ ok: false, message: raw.slice(0, 180) || `Nomod returned HTTP ${res.status}` }, 502);
+  }
+  return c.json({ ok: true, mode: apiKey.startsWith("sk_test_") ? "test" : "live" });
 });
 
 // ── WhatsApp / Leadvyne settings ──────────────────────────────────────────────

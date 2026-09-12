@@ -10,6 +10,7 @@ type Passenger = {
   passportNumber: string; passportExpiry: string;
 };
 
+<<<<<<< HEAD
 type FareInfo = {
   fareId: string; supplier: string;
   airlineName: string; flightNumber: string;

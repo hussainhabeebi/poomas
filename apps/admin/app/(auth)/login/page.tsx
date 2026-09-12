@@ -49,7 +49,7 @@ export default function AdminLoginPage() {
       }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.svg" alt="POOMAS Traveldays" height={36} style={{ display: "inline-block" }} />
+          <img src="/logo.png" alt="POOMAS Traveldays" height={36} style={{ display: "inline-block" }} />
           <div style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>Super Admin</div>
         </div>
 

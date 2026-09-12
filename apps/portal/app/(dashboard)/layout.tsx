@@ -90,7 +90,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav className="portal-sidebar">
           <div className="portal-sidebar-logo">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.svg" alt="POOMAS" />
+            <img src="/logo.png" alt="POOMAS" />
           </div>
           {NAV_ITEMS.map((item) => (
             <a key={item.href} href={item.href} className="sidebar-link">
