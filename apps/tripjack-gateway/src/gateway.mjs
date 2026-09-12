@@ -12,6 +12,12 @@ export const ROUTES = new Map([
   ["/air-book/v2", "/air-book/v2"],
   ["/air-booking-detail/v2", "/air-booking-detail/v2"],
   ["/air-cancel/v2", "/air-cancel/v2"],
+  // Hotel routes
+  ["/hotel-search/v1", "/hotel-search/v1"],
+  ["/hotel-prebook/v1", "/hotel-prebook/v1"],
+  ["/hotel-book/v1", "/hotel-book/v1"],
+  ["/hotel-booking-detail/v1", "/hotel-booking-detail/v1"],
+  ["/hotel-cancel/v1", "/hotel-cancel/v1"],
 ]);
 
 export function loadConfig(env = process.env) {
