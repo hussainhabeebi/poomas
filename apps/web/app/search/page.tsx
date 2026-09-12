@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import SearchResultControls from "./SearchResultControls";
+import TripjackBookButton from "./TripjackBookButton";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
@@ -213,7 +214,9 @@ function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: s
             <button type="submit" className="fare-card-book-btn" style={{ width: "100%", border: 0, cursor: "pointer", WebkitTapHighlightColor: "transparent", touchAction: "manipulation" }}>Book Now</button>
           </form>
         )}
-        {fare.isBookable && !isDuffel && <div style={{ marginTop: 8, fontSize: 12, color: "#9ca3af", fontWeight: 600 }}>Booking integration coming soon</div>}
+        {fare.isBookable && !isDuffel && (
+          <TripjackBookButton fareId={fare.id} supplier={fare.supplier} fareData={fare} />
+        )}
       </div>
     </div>
   );
