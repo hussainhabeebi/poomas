@@ -2,6 +2,7 @@ export * from "./base.js";
 export * from "./router.js";
 export { RiyaAdapter }          from "./riya/adapter.js";
 export { TripjackAdapter }      from "./tripjack/adapter.js";
+export { TripjackClient }       from "./tripjack/client.js";
 export { TripjackHotelAdapter } from "./tripjack/hotel-adapter.js";
 export type {
   HotelSearchParams, NormalizedHotel, HotelPreBookResult,

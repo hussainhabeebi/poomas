@@ -268,6 +268,36 @@ searchRoutes.get("/status", async (c) => {
   });
 });
 
+// Validate a fare for booking (extends TripJack session window)
+searchRoutes.post("/validate-fare", async (c) => {
+  const { fareId, supplier } = await c.req.json<{ fareId: string; supplier: string }>();
+  if (!fareId || !supplier) return c.json({ error: "fareId and supplier required" }, 400);
+
+  const platformCredentials = platformCredentialsFromEnv(c.env);
+
+  if (supplier === "TRIPJACK") {
+    const { TripjackClient } = await import("@poomas/suppliers");
+    const tjCreds = platformCredentials.TRIPJACK ?? {};
+    const tenant  = c.get("tenant");
+    const tenantTj = tenant.supplierConfigs.find((s: any) => s.supplier === "TRIPJACK");
+    const creds = { ...(tenantTj?.credentials ?? {}), ...tjCreds };
+    const client = new TripjackClient(creds);
+    try {
+      const result = await (client as any).validateFare(fareId);
+      return c.json({ valid: true, result });
+    } catch (err: any) {
+      const status = err?.statusCode ?? 0;
+      if (status === 404 || /expired|not found/i.test(err?.body ?? "")) {
+        return c.json({ valid: false, reason: "expired" }, 200);
+      }
+      return c.json({ valid: false, reason: "unavailable" }, 200);
+    }
+  }
+
+  // Other suppliers — treat as always valid (they don't expire the same way)
+  return c.json({ valid: true });
+});
+
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
   const supplier = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;

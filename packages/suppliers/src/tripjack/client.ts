@@ -71,6 +71,10 @@ export class TripjackClient {
     return this.request("/air-fare-detail/v2", { id: fareId, flowType: "SEARCH" });
   }
 
+  async validateFare(fareId: string) {
+    return this.request("/air-fare-detail/v2", { id: fareId, flowType: "BOOK" });
+  }
+
   async book(params: HoldParams & BookParams) {
     const travellerInfo = params.passengers.map((p) => ({
       ti:   p.gender === "F" ? "Ms" : "Mr",
