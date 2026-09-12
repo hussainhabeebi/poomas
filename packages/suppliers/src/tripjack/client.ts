@@ -34,7 +34,7 @@ export class TripjackClient {
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
         : res.status === 404
-          ? "Proxy route or TripJack base URL was not found"
+          ? (path.includes("book") ? "Fare has expired — please search again and book quickly" : "TripJack route not found")
           : res.status === 429
             ? "Rate limit exceeded"
             : "Upstream request failed";
