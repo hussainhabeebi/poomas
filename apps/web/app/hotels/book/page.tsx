@@ -13,6 +13,13 @@ type HotelInfo = {
 type Guest = { title: string; firstName: string; lastName: string };
 type SavedPassenger = { id: string; firstName: string; lastName: string; isDefault: boolean };
 
+function friendlyHotelError(msg: string, status: number): string {
+  if (/expired|no longer|not available|unavailable/i.test(msg)) return "This room is no longer available. Please search again.";
+  if (status === 422) return "We couldn't complete your booking. Please search again and try a different option.";
+  if (status >= 500) return "Something went wrong on our end. Please try again in a moment.";
+  return "Booking failed. Please check your details and try again.";
+}
+
 const emptyGuest = (): Guest => ({ title: "Mr", firstName: "", lastName: "" });
 
 function getToken(): string {
@@ -175,7 +182,10 @@ export default function HotelBookPage() {
         }),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((d as any).error ?? `Booking failed (${res.status})`);
+      if (!res.ok) {
+        const msg = (d as any).error ?? "";
+        throw new Error(friendlyHotelError(msg, res.status));
+      }
       setConfirmation(d);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (x: any) {

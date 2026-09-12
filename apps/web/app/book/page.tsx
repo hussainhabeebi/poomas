@@ -34,6 +34,15 @@ const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
   passportNumber: "", passportExpiry: "",
 });
 
+function friendlyError(msg: string, status: number): string {
+  if (/expired|no longer|not found/i.test(msg)) return "This fare is no longer available. Please search again.";
+  if (/passport|document/i.test(msg))           return "Please check your passport details and try again.";
+  if (/payment|wallet/i.test(msg))              return "Payment could not be processed. Please try again.";
+  if (status === 422)                            return "We couldn't complete your booking. Please search again and try a different fare.";
+  if (status >= 500)                            return "Something went wrong on our end. Please try again in a moment.";
+  return "Booking failed. Please check your details and try again.";
+}
+
 function getToken(): string {
   try {
     const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -49,6 +58,7 @@ export default function BookPage() {
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [fareExpired, setFareExpired] = useState(false);
   const [confirmation, setConfirmation] = useState<any>(null);
 
   // Auth state
@@ -187,7 +197,15 @@ export default function BookPage() {
         }),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((d as any).error ?? `Booking failed (${res.status})`);
+      if (!res.ok) {
+        if ((d as any).errorCode === "FARE_EXPIRED" || res.status === 404) {
+          setFareExpired(true);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          return;
+        }
+        const msg = (d as any).error ?? "";
+        throw new Error(friendlyError(msg, res.status));
+      }
 
       // Save traveller details if opted in
       if (saveDetails && token) {
@@ -219,11 +237,25 @@ export default function BookPage() {
       setConfirmation(d);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (x: any) {
-      setError(x?.message ?? "Booking failed");
+      setError(x?.message ?? "Booking failed. Please check your details and try again.");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (fareExpired) {
+    return (
+      <main className="ck success"><style>{css}</style>
+        <div className="ok" style={{ background: "#fef3c7", color: "#d97706" }}>⏱</div>
+        <h1>Fare No Longer Available</h1>
+        <p style={{ color: "#667085", maxWidth: 320, margin: "0 auto 24px" }}>
+          Flight prices change quickly. This fare expired before we could confirm it.
+          Please search again and book as soon as you find a price you like.
+        </p>
+        <a className="home" href="/">Search flights again</a>
+      </main>
+    );
   }
 
   if (confirmation) {
