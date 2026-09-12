@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig, secretsEqual, upstreamUrl } from "../src/gateway.mjs";
+import { ROUTES, loadConfig, secretsEqual, upstreamUrl } from "../src/gateway.mjs";
+
+test("review route is forwarded without removing search or hotel support", () => {
+  assert.equal(ROUTES.get("/fms/v1/review"), "/fms/v1/review");
+  assert.equal(ROUTES.get("/air-search-all/v2"), "/fms/v1/air-search-all");
+  assert.equal(ROUTES.get("/hotel-search/v1"), "/hotel-search/v1");
+});
 
 test("loads a secure UAT configuration", () => {
   const config = loadConfig({ POOMAS_GATEWAY_KEY: "internal" });

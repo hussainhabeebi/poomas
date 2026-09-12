@@ -6,6 +6,8 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { getBookableAdapter, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
+import { resolveFlightSuppliers, checkoutPrice } from "./search.js";
+import { TripjackClient } from "@poomas/suppliers";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import type { Env, Variables } from "../types.js";
 
@@ -51,39 +53,30 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema), async (c) => {
   const tenantId = c.get("tenantId");
   const tenant   = c.get("tenant");
 
-  const platformCreds = platformCredsFromEnv(c.env);
-
-  const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs.map((sc) => ({
-    name:        sc.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL",
-    isEnabled:   sc.isEnabled,
-    priority:    sc.priority,
-    credentials: sc.credentials,
-    timeoutMs:   sc.timeoutMs,
-    maxRetries:  sc.maxRetries,
-  }));
-
-  // Fall back to platform-level credentials if tenant hasn't configured the supplier
-  const configuredNames = new Set(supplierConfigs.map((s) => s.name));
-  if (!configuredNames.has(body.supplier) && platformCreds[body.supplier]) {
-    supplierConfigs.push({
-      name:        body.supplier,
-      isEnabled:   true,
-      priority:    10,
-      credentials: null,
-      timeoutMs:   20000,
-      maxRetries:  0,
-    });
-  }
-
+  const { platformCredentials: platformCreds, supplierConfigs } =
+    await resolveFlightSuppliers(c.env, tenant, tenantId);
   const adapter = getBookableAdapter(body.supplier, supplierConfigs, platformCreds);
   if (!adapter.book) {
     throw new HTTPException(400, { message: `${body.supplier} does not support direct booking` });
   }
 
-  // TripJack uses the fareId as the booking session reference — no separate hold needed
+  // Never accept a browser-supplied booking ID or purchase at an unaccepted price.
+  let bookingId = body.fareId;
+  if (body.supplier === "TRIPJACK") {
+    const config = supplierConfigs.find((s) => s.name === "TRIPJACK" && s.isEnabled)!;
+    const client = new TripjackClient({ ...platformCreds.TRIPJACK, ...config.credentials });
+    const review = await client.validateFare(body.fareId);
+    const totalFare = await checkoutPrice(db, tenantId, review.fare);
+    if (body.currency !== review.currency || Math.abs(body.totalFare - totalFare) > 0.01) {
+      return c.json({ error: "The airline fare has changed. Review the new price and confirm again.",
+        errorCode: "PRICE_CHANGED", totalFare, currency: review.currency }, 409);
+    }
+    bookingId = review.bookingId;
+  }
+
   const result = await adapter.book({
     fareId:       body.fareId,
-    holdId:       body.fareId,
+    holdId:       bookingId,
     passengers:   body.passengers,
     contactEmail: body.contactEmail,
     contactPhone: body.contactPhone,
@@ -91,7 +84,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema), async (c) => {
   });
 
   if (!result.success) {
-    throw new HTTPException(422, { message: "Supplier rejected the booking — fare may have expired" });
+    throw new HTTPException(422, { message: "Supplier did not confirm the booking. Contact support before retrying." });
   }
 
   // Persist booking record

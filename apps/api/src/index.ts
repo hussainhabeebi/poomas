@@ -79,7 +79,7 @@ app.onError((err, c) => {
   // Sanitize SupplierError: expose only the human-readable body, not the supplier name or HTTP code
   if ((err as any).name === "SupplierError") {
     const body: string = (err as any).body ?? "Something went wrong — please try again";
-    const isExpired = /expired|not found|no longer/i.test(body);
+    const isExpired = /fare.*expired|price.*expired|session.*expired/i.test(body);
     return c.json(
       { error: body, errorCode: isExpired ? "FARE_EXPIRED" : "SUPPLIER_ERROR" },
       (status >= 400 && status < 600 ? status : 502) as 400 | 422 | 500 | 502,
