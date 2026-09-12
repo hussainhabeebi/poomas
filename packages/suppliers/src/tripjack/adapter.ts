@@ -34,13 +34,14 @@ export class TripjackAdapter implements SupplierAdapter {
     return trips.flatMap((trip) => {
       const row = trip as Record<string, unknown>;
       const prices = Array.isArray(row.totalPriceList) ? row.totalPriceList as Record<string, unknown>[] : [];
-      if (!prices.length) return [normalizeTripjackFare(row)];
+      const counts = { ADULT: params.adults, CHILD: params.children, INFANT: params.infants };
+      if (!prices.length) return [];
       return prices.map((price) => normalizeTripjackFare({
         ...row,
         ...price,
         id: price.id,
         totalPriceInfo: price,
-      }));
+      }, counts)).filter((fare) => fare.isBookable);
     });
   }
 

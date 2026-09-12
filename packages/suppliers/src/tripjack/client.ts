@@ -1,6 +1,7 @@
 import type { SearchParams, HoldParams, BookParams, SupplierCredentials } from "../base.js";
 import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
+import { normalizeTripjackFare } from "./normalizer.js";
 
 export class TripjackClient {
   private baseUrl: string;
@@ -26,15 +27,16 @@ export class TripjackClient {
         ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
+      console.error(`[tripjack] ${path} failed with HTTP ${res.status}`);
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
         : res.status === 404
-          ? (path.includes("book") ? "Fare has expired — please search again and book quickly" : "TripJack route not found")
+          ? "TripJack route unavailable; the gateway configuration needs checking"
           : res.status === 429
             ? "Rate limit exceeded"
             : "Upstream request failed";
@@ -49,7 +51,7 @@ export class TripjackClient {
   async search(params: SearchParams) {
     return this.request("/air-search-all/v2", {
       searchQuery: {
-        cabinClass:    params.cabinClass.charAt(0),  // Tripjack uses E/B/F
+        cabinClass:    params.cabinClass,
         paxInfo: {
           ADULT:  params.adults,
           CHILD:  params.children,
@@ -72,7 +74,20 @@ export class TripjackClient {
   }
 
   async validateFare(fareId: string) {
-    return this.request("/air-fare-detail/v2", { id: fareId, flowType: "BOOK" });
+    const raw = await this.request<Record<string, any>>("/fms/v1/review", { priceIds: [fareId] });
+    const result = raw.data ?? raw.result ?? raw;
+    if (result.status?.success !== true || typeof result.bookingId !== "string" || !result.bookingId) {
+      throw new SupplierError("TRIPJACK", 502, "Unable to verify this fare with the airline. Please retry the fare check.");
+    }
+    const amount = Number(result.totalPriceInfo?.totalFareDetail?.fC?.TF);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new SupplierError("TRIPJACK", 502, "Airline review did not return a valid total price");
+    }
+    const trip = result.tripInfos?.[0];
+    if (!trip?.sI?.length) throw new SupplierError("TRIPJACK", 502, "Airline review did not return an itinerary");
+    const fare = normalizeTripjackFare({ ...trip, id: fareId,
+      totalPriceInfo: { fd: result.totalPriceInfo.totalFareDetail } });
+    return { bookingId: result.bookingId as string, totalFare: amount, currency: "INR" as const, fare };
   }
 
   async book(params: HoldParams & BookParams) {

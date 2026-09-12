@@ -35,7 +35,7 @@ const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
 });
 
 function friendlyError(msg: string, status: number): string {
-  if (/expired|no longer|not found/i.test(msg)) return "This fare is no longer available. Please search again.";
+  if (/fare.*expired|price.*expired|session.*expired/i.test(msg)) return "This fare is no longer available. Please search again.";
   if (/passport|document/i.test(msg))           return "Please check your passport details and try again.";
   if (/payment|wallet/i.test(msg))              return "Payment could not be processed. Please try again.";
   if (status === 422)                            return "We couldn't complete your booking. Please search again and try a different fare.";
@@ -60,6 +60,10 @@ export default function BookPage() {
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
   const [fareChecking, setFareChecking] = useState(false);
+  const [fareVerified, setFareVerified] = useState(false);
+  const [reviewAttempt, setReviewAttempt] = useState(0);
+  const [priceNotice, setPriceNotice] = useState("");
+  const [priceAccepted, setPriceAccepted] = useState(true);
   const [confirmation, setConfirmation] = useState<any>(null);
 
   // Auth state
@@ -95,20 +99,41 @@ export default function BookPage() {
       cabinChecked:  q.get("bag") ?? "15 KG",
     });
 
-    // Validate the fare is still live before the customer starts typing
-    if (supplier === "TRIPJACK") {
-      setFareChecking(true);
-      fetch(`${apiUrl}/api/search/validate-fare`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
-        body:    JSON.stringify({ fareId, supplier }),
-      })
-        .then((r) => r.json())
-        .then((d: any) => { if (!d.valid) setFareExpired(true); })
-        .catch(() => { /* network error — let them try anyway */ })
-        .finally(() => setFareChecking(false));
-    }
+    if (supplier !== "TRIPJACK") setFareVerified(true);
   }, []);
+
+  useEffect(() => {
+    if (!fare || fare.supplier !== "TRIPJACK") return;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 35000);
+    let active = true;
+    setFareChecking(true);
+    setFareVerified(false);
+    setError("");
+    fetch(`${apiUrl}/api/search/validate-fare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+      body: JSON.stringify({ fareId: fare.fareId, supplier: "TRIPJACK" }),
+      signal: controller.signal,
+    }).then(async (r) => {
+      const d = await r.json();
+      if (!r.ok || !d.valid) throw new Error("We couldn't verify this fare. Please retry the check; no booking has been made.");
+      if (!Number.isFinite(d.totalFare) || d.totalFare <= 0) throw new Error("The airline returned an invalid price.");
+      if (!active) return;
+      if (Math.abs(fare.totalFare - d.totalFare) > 0.01 || fare.currency !== d.currency) {
+        setPriceNotice(`Fare updated from ${fare.currency} ${fare.totalFare} to ${d.currency} ${d.totalFare}.`);
+        setPriceAccepted(false);
+      }
+      setFare((f) => f ? { ...f, totalFare: d.totalFare, currency: d.currency } : f);
+      setFareVerified(true);
+    }).catch((e) => {
+      if (active) setError(e.name === "AbortError" ? "The fare check timed out. Please retry." : e.message);
+    }).finally(() => {
+      clearTimeout(timeout);
+      if (active) setFareChecking(false);
+    });
+    return () => { active = false; clearTimeout(timeout); controller.abort(); };
+  }, [fare?.fareId, reviewAttempt]);
 
   useEffect(() => {
     const t = getToken();
@@ -184,7 +209,7 @@ export default function BookPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!fare || submitting) return;
+    if (!fare || submitting || fareChecking || !fareVerified || !priceAccepted) return;
     setError("");
     setSubmitting(true);
     try {
@@ -213,7 +238,13 @@ export default function BookPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if ((d as any).errorCode === "FARE_EXPIRED" || res.status === 404) {
+        if (d.errorCode === "PRICE_CHANGED" && Number.isFinite(d.totalFare) && d.totalFare > 0) {
+          setPriceNotice(`Fare updated from ${fare.currency} ${fare.totalFare} to ${d.currency} ${d.totalFare}. Please accept the new price before confirming.`);
+          setPriceAccepted(false);
+          setFare({ ...fare, totalFare: d.totalFare, currency: d.currency });
+          return;
+        }
+        if ((d as any).errorCode === "FARE_EXPIRED") {
           setFareExpired(true);
           window.scrollTo({ top: 0, behavior: "smooth" });
           return;
@@ -438,7 +469,7 @@ export default function BookPage() {
             <span>Total</span>
             <b>{fare ? money.format(fare.totalFare) : "—"}</b>
           </div>
-          <button disabled={!fare || submitting || fareChecking}>
+          <button disabled={!fare || submitting || fareChecking || !fareVerified || !priceAccepted}>
             {fareChecking ? "Checking fare…" : submitting ? "Booking…" : "Confirm Booking"}
           </button>
         </div>

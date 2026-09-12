@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
 export const ROUTES = new Map([
+  ["/fms/v1/review", "/fms/v1/review"],
   ["/v1/air/search", "/fms/v1/air-search-all"],
   ["/v1/air/fare-detail", "/air-fare-detail/v2"],
   ["/v1/air/book", "/air-book/v2"],

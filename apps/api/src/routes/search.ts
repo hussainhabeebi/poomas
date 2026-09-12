@@ -3,6 +3,15 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { searchFares, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
+import { applyMarkup } from "../lib/markup.js";
+import { markupRules } from "@poomas/db/schema";
+import { eq } from "drizzle-orm";
+import type { NormalizedFare } from "@poomas/suppliers";
+
+export async function checkoutPrice(db: Variables["db"], tenantId: string, fare: NormalizedFare) {
+  const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+  return Math.round(applyMarkup(fare, rules) * 100) / 100;
+}
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -93,23 +102,16 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
   return supplierConfigs;
 }
 
-export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
-
-searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
-  const params   = c.req.valid("json");
-  const tenant   = c.get("tenant");
-  const db       = c.get("db");
-  const tenantId = c.get("tenantId");
-
-  const platformCredentials = platformCredentialsFromEnv(c.env);
-  const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
-  const tripjackApiKey = savedTripjack?.apiKey || c.env.TRIPJACK_API_KEY;
-  const tripjackBaseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
-  if ((tripjackApiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+export async function resolveFlightSuppliers(env: Env, tenant: Variables["tenant"], tenantId: string) {
+  const platformCredentials = platformCredentialsFromEnv(env);
+  const savedTripjack = await tripjackAdminConfig(env, tenantId);
+  const tripjackApiKey = savedTripjack?.apiKey || env.TRIPJACK_API_KEY;
+  const tripjackBaseUrl = env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
+  if ((tripjackApiKey || env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
     platformCredentials.TRIPJACK = {
       apiKey: tripjackApiKey,
       baseUrl: tripjackBaseUrl,
-      proxyKey: c.env.TRIPJACK_PROXY_KEY,
+      proxyKey: env.TRIPJACK_PROXY_KEY,
     };
   }
   const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
@@ -129,15 +131,15 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
     if (tripjackConfig) {
       tripjackConfig.isEnabled = savedTripjack.enabled === true;
-      if ((savedTripjack.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+      if ((savedTripjack.apiKey || env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
         tripjackConfig.credentials = {
           ...(tripjackConfig.credentials ?? {}),
           ...(savedTripjack.apiKey ? { apiKey: savedTripjack.apiKey } : {}),
           baseUrl: tripjackBaseUrl,
-          proxyKey: c.env.TRIPJACK_PROXY_KEY,
+          proxyKey: env.TRIPJACK_PROXY_KEY,
         };
       }
-    } else if (savedTripjack.enabled && (savedTripjack.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+    } else if (savedTripjack.enabled && (savedTripjack.apiKey || env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
       supplierConfigs.push({
         name: "TRIPJACK",
         isEnabled: true,
@@ -145,12 +147,30 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
         credentials: {
           ...(savedTripjack.apiKey ? { apiKey: savedTripjack.apiKey } : {}),
           baseUrl: tripjackBaseUrl,
-          proxyKey: c.env.TRIPJACK_PROXY_KEY,
+          proxyKey: env.TRIPJACK_PROXY_KEY,
         },
         timeoutMs: 15000,
         maxRetries: 0,
       });
     }
+  }
+
+  return { platformCredentials, supplierConfigs };
+}
+
+export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
+  const params   = c.req.valid("json");
+  const tenant   = c.get("tenant");
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
+
+  // Leave room for the supplier HTTP timeout (25s) inside the frontend's 40s budget.
+  for (const config of supplierConfigs) {
+    if (config.name === "TRIPJACK") { config.timeoutMs = 28000; config.maxRetries = 0; }
   }
 
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
@@ -188,7 +208,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     })());
   }
 
-  const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency })}`;
+  const cacheKey = `fares:v2:${tenantId}:${JSON.stringify({ ...params, currency })}`;
   try {
     const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json") as {
       fares?: unknown[];
@@ -268,34 +288,20 @@ searchRoutes.get("/status", async (c) => {
   });
 });
 
-// Validate a fare for booking (extends TripJack session window)
-searchRoutes.post("/validate-fare", async (c) => {
-  const { fareId, supplier } = await c.req.json<{ fareId: string; supplier: string }>();
-  if (!fareId || !supplier) return c.json({ error: "fareId and supplier required" }, 400);
-
-  const platformCredentials = platformCredentialsFromEnv(c.env);
-
-  if (supplier === "TRIPJACK") {
-    const { TripjackClient } = await import("@poomas/suppliers");
-    const tjCreds = platformCredentials.TRIPJACK ?? {};
-    const tenant  = c.get("tenant");
-    const tenantTj = tenant.supplierConfigs.find((s: any) => s.supplier === "TRIPJACK");
-    const creds = { ...(tenantTj?.credentials ?? {}), ...tjCreds };
-    const client = new TripjackClient(creds);
-    try {
-      const result = await (client as any).validateFare(fareId);
-      return c.json({ valid: true, result });
-    } catch (err: any) {
-      const status = err?.statusCode ?? 0;
-      if (status === 404 || /expired|not found/i.test(err?.body ?? "")) {
-        return c.json({ valid: false, reason: "expired" }, 200);
-      }
-      return c.json({ valid: false, reason: "unavailable" }, 200);
-    }
-  }
-
-  // Other suppliers — treat as always valid (they don't expire the same way)
-  return c.json({ valid: true });
+// Review is a price/availability check, not a booking or payment.
+searchRoutes.post("/validate-fare", zValidator("json", z.object({
+  fareId: z.string().min(1).max(1000),
+  supplier: z.literal("TRIPJACK"),
+})), async (c) => {
+  const { fareId } = c.req.valid("json");
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), c.get("tenantId"));
+  const config = supplierConfigs.find((s) => s.name === "TRIPJACK" && s.isEnabled);
+  if (!config) return c.json({ valid: false, error: "Flight verification is currently unavailable.", errorCode: "SUPPLIER_DISABLED" }, 503);
+  const { TripjackClient } = await import("@poomas/suppliers");
+  const client = new TripjackClient({ ...platformCredentials.TRIPJACK, ...config.credentials });
+  const result = await client.validateFare(fareId);
+  const totalFare = await checkoutPrice(c.get("db"), c.get("tenantId"), result.fare);
+  return c.json({ valid: true, totalFare, currency: result.currency }, 200, { "Cache-Control": "no-store" });
 });
 
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
