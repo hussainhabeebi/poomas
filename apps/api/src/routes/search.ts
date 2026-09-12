@@ -17,6 +17,11 @@ const searchSchema = z.object({
   currency:      z.enum(["INR", "AED", "USD"]).optional(),
 });
 
+const revalidateSchema = z.object({
+  fareId: z.string().min(1),
+  supplier: z.literal("TRIPJACK"),
+});
+
 const SERP_TRIAL_TTL = 60 * 60 * 24;
 
 interface TripjackAdminConfig {
@@ -251,6 +256,57 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   })());
 
   return c.json(response);
+});
+
+// Revalidate a TripJack search price and obtain the booking ID required by air-book.
+searchRoutes.post("/revalidate", zValidator("json", revalidateSchema), async (c) => {
+  const { fareId, supplier } = c.req.valid("json");
+  const tenant = c.get("tenant");
+  const tenantId = c.get("tenantId");
+  const platformCredentials = platformCredentialsFromEnv(c.env);
+  const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
+  const apiKey = savedTripjack?.apiKey || c.env.TRIPJACK_API_KEY;
+  const baseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
+
+  if ((apiKey || c.env.TRIPJACK_PROXY_KEY) && baseUrl) {
+    platformCredentials.TRIPJACK = {
+      apiKey,
+      baseUrl,
+      proxyKey: c.env.TRIPJACK_PROXY_KEY,
+    };
+  }
+
+  const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
+  let config = supplierConfigs.find((item) => item.name === "TRIPJACK");
+  if (!config && platformCredentials.TRIPJACK) {
+    config = {
+      name: "TRIPJACK",
+      isEnabled: true,
+      priority: 20,
+      credentials: platformCredentials.TRIPJACK,
+      timeoutMs: 25000,
+      maxRetries: 0,
+    };
+    supplierConfigs.push(config);
+  }
+  if (config) {
+    config.isEnabled = savedTripjack ? savedTripjack.enabled === true : true;
+    config.credentials = { ...(config.credentials ?? {}), ...(platformCredentials.TRIPJACK ?? {}) };
+  }
+
+  try {
+    const { getBookableAdapter } = await import("@poomas/suppliers");
+    const adapter = getBookableAdapter(supplier, supplierConfigs, platformCredentials);
+    if (!adapter.revalidate) return c.json({ error: "Fare revalidation is unavailable" }, 501);
+    const reviewed = await adapter.revalidate(fareId);
+    return c.json(reviewed, 200, { "Cache-Control": "no-store" });
+  } catch (err) {
+    console.error("[search] TripJack fare review failed", err);
+    return c.json({
+      error: err instanceof Error ? err.message : "This fare is no longer available",
+      code: "FARE_REVALIDATION_FAILED",
+    }, 410);
+  }
 });
 
 // Safe operational status: exposes only booleans/names, never secret values.

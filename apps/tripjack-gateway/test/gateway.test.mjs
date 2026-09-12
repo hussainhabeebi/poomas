@@ -1,12 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig, secretsEqual, upstreamUrl } from "../src/gateway.mjs";
+import { ROUTES, loadConfig, secretsEqual, upstreamUrl } from "../src/gateway.mjs";
 
 test("loads a secure UAT configuration", () => {
   const config = loadConfig({ POOMAS_GATEWAY_KEY: "internal" });
   assert.equal(config.upstream.origin, "https://apitest.tripjack.com");
   assert.equal(config.port, 3000);
   assert.equal(config.tripjackApiKey, "");
+});
+
+test("proxies the TripJack review step", () => {
+  assert.equal(ROUTES.get("/fms/v1/review"), "/fms/v1/review");
 });
 
 test("rejects missing secrets and insecure upstreams", () => {

@@ -9,7 +9,7 @@ const emptyPassenger=(type:Passenger["type"]="ADULT"):Passenger=>({type,firstNam
 
 export default function BookPage(){
  const apiUrl=process.env.NEXT_PUBLIC_API_URL??"https://api.flypoomas.com";
- const [fareId,setFareId]=useState(""); const [supplier,setSupplier]=useState(""); const [duffelOffer,setDuffelOffer]=useState<DuffelOffer|null>(null); const [tripjackFare,setTripjackFare]=useState<TripjackFare|null>(null); const [expiresAt,setExpiresAt]=useState("");
+ const [fareId,setFareId]=useState(""); const [supplier,setSupplier]=useState(""); const [duffelOffer,setDuffelOffer]=useState<DuffelOffer|null>(null); const [tripjackFare,setTripjackFare]=useState<TripjackFare|null>(null); const [tripjackBookingId,setTripjackBookingId]=useState(""); const [priceChanged,setPriceChanged]=useState<{from:number;to:number}|null>(null); const [expiresAt,setExpiresAt]=useState("");
  const [passengers,setPassengers]=useState<Passenger[]>([emptyPassenger()]); const [email,setEmail]=useState(""); const [phone,setPhone]=useState(""); const [loading,setLoading]=useState(true); const [submitting,setSubmitting]=useState(false); const [error,setError]=useState(""); const [confirmation,setConfirmation]=useState<any>(null);
 
  // Load checkout session (WhatsApp flow)
@@ -29,12 +29,37 @@ export default function BookPage(){
    return()=>c.abort();
   }
 
-  if(supplier==="TRIPJACK"||supplier==="RIYA"){
-   // TripJack/RIYA: fare data is in sessionStorage (stored when clicking Book Now)
+  if(supplier==="TRIPJACK"){
+   const c=new AbortController();setLoading(true);setError("");setTripjackBookingId("");setPriceChanged(null);
+   let original:TripjackFare;
    try{
     const stored=sessionStorage.getItem(`fare:${fareId}`);
-    if(stored){const f=JSON.parse(stored) as TripjackFare;setTripjackFare(f);}
-    else{setError("Fare data not found. Please go back and click Book Now again.");}
+    if(!stored)throw new Error("Fare data not found. Please search again.");
+    original=JSON.parse(stored) as TripjackFare;
+   }catch(e:any){setError(e?.message??"Could not load fare data. Please try again.");setLoading(false);return;}
+
+   fetch(`${apiUrl}/api/search/revalidate`,{method:"POST",headers:{"Content-Type":"application/json","x-tenant-slug":"poomas"},body:JSON.stringify({fareId,supplier:"TRIPJACK"}),signal:c.signal,cache:"no-store"})
+    .then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??"This fare is no longer available. Please search again.");return d})
+    .then(d=>{
+      const updated={...original,
+        baseFare:Number.isFinite(Number(d.baseFare))?Number(d.baseFare):original.baseFare,
+        taxes:Number.isFinite(Number(d.taxes))?Number(d.taxes):original.taxes,
+        totalFare:Number.isFinite(Number(d.totalFare))?Number(d.totalFare):original.totalFare,
+        currency:d.currency||original.currency};
+      if(updated.totalFare!==original.totalFare)setPriceChanged({from:original.totalFare,to:updated.totalFare});
+      setTripjackFare(updated);setTripjackBookingId(String(d.bookingId??""));
+      sessionStorage.setItem(`fare:${fareId}`,JSON.stringify(updated));
+    })
+    .catch(e=>{if(e.name!=="AbortError")setError(e.message)})
+    .finally(()=>setLoading(false));
+   return()=>c.abort();
+  }
+
+  if(supplier==="RIYA"){
+   try{
+    const stored=sessionStorage.getItem(`fare:${fareId}`);
+    if(stored)setTripjackFare(JSON.parse(stored) as TripjackFare);
+    else setError("Fare data not found. Please go back and click Book Now again.");
    }catch{setError("Could not load fare data. Please try again.");}
    setLoading(false);
    return;
@@ -60,7 +85,7 @@ export default function BookPage(){
    }else{
     // TripJack / RIYA: submit to main bookings API
     const f=tripjackFare!;
-    const r=await fetch(`${apiUrl}/api/bookings`,{method:"POST",headers:{"Content-Type":"application/json","x-tenant-slug":"poomas"},body:JSON.stringify({fareId,supplier,passengers:passengers.map(p=>({...p,firstName:p.firstName.trim(),lastName:p.lastName.trim(),nationality:p.nationality.trim().toUpperCase()||undefined,passportNumber:p.passportNumber.trim()||undefined,passportExpiry:p.passportExpiry||undefined,dob:p.dob||undefined,gender:p.gender||undefined})),contactEmail:email.trim(),contactPhone:phone.trim().replace(/\D/g,""),fareSnapshot:{origin:f.origin,destination:f.destination,departureTime:f.departureTime,baseFare:Number(f.baseFare??0),taxes:Number(f.taxes??0),totalFare:Number(f.totalFare??0),currency:f.currency,airlineName:f.airlineName,flightNumber:f.flightNumber}})});
+    const r=await fetch(`${apiUrl}/api/bookings`,{method:"POST",headers:{"Content-Type":"application/json","x-tenant-slug":"poomas"},body:JSON.stringify({fareId,supplier,sessionId:supplier==="TRIPJACK"?tripjackBookingId:undefined,passengers:passengers.map(p=>({...p,firstName:p.firstName.trim(),lastName:p.lastName.trim(),nationality:p.nationality.trim().toUpperCase()||undefined,passportNumber:p.passportNumber.trim()||undefined,passportExpiry:p.passportExpiry||undefined,dob:p.dob||undefined,gender:p.gender||undefined})),contactEmail:email.trim(),contactPhone:phone.trim().replace(/\D/g,""),fareSnapshot:{origin:f.origin,destination:f.destination,departureTime:f.departureTime,baseFare:Number(f.baseFare??0),taxes:Number(f.taxes??0),totalFare:Number(f.totalFare??0),currency:f.currency,airlineName:f.airlineName,flightNumber:f.flightNumber}})});
     const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??(d.message??`Booking failed (${r.status})`));
     setConfirmation(d);window.scrollTo({top:0,behavior:"smooth"});
    }
@@ -84,6 +109,7 @@ export default function BookPage(){
    <div className="meta"><span>{(offer as any).baggage?.checked||(offer as DuffelOffer).baggage?.checked||"Baggage per fare"}</span><span>{offer.currency}</span></div>
    {expiresAt&&<small>Offer expires {new Date(expiresAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</small>}
   </section>}
+  {priceChanged&&<div className="note">⚠️ <div><b>Fare updated after airline check</b><p>{money.format(priceChanged.from)} → {money.format(priceChanged.to)}. The latest amount is shown below.</p></div></div>}
   <form onSubmit={submit}>
    <section className="card">
     <div className="title"><span>👤</span><div><h2>Traveller details</h2><p>Enter details exactly as on the travel document.</p></div></div>
@@ -97,7 +123,7 @@ export default function BookPage(){
    <div className="spacer"/>
    <div className="pay">
     <div><span>Total</span><b>{offer?money.format(offer.totalFare):"—"}</b></div>
-    <button disabled={!offer||submitting}>{submitting?"Booking…":"Confirm booking"}</button>
+    <button disabled={!offer||submitting||(supplier==="TRIPJACK"&&!tripjackBookingId)}>{submitting?"Booking…":"Confirm booking"}</button>
    </div>
   </form>
  </main>;

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { getBookableAdapter, type SupplierConfig } from "@poomas/suppliers";
+import { getBookableAdapter, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
 import { bookings, bookingPassengers, payments, walletAccounts, walletTransactions } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
@@ -64,19 +64,49 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     maxRetries:  sc.maxRetries,
   }));
 
-  const adapter = getBookableAdapter(body.supplier, supplierConfigs);
+  const platformCredentials: PlatformCredentials = {
+    ...(c.env.RIYA_API_KEY ? {
+      RIYA: { apiKey: c.env.RIYA_API_KEY, secretKey: c.env.RIYA_API_SECRET, baseUrl: c.env.RIYA_API_BASE_URL },
+    } : {}),
+  };
 
-  // TripJack uses session-based booking — skip hold and book directly
+  if (body.supplier === "TRIPJACK") {
+    const saved = await c.env.TENANT_CACHE_KV.get(
+      `admin_settings:${tenantId}:integration:tripjack`,
+      "json",
+    ) as { enabled?: boolean; apiKey?: string; baseUrl?: string } | null;
+    const apiKey = saved?.apiKey || c.env.TRIPJACK_API_KEY;
+    const baseUrl = c.env.TRIPJACK_API_BASE_URL || saved?.baseUrl;
+    if ((apiKey || c.env.TRIPJACK_PROXY_KEY) && baseUrl) {
+      platformCredentials.TRIPJACK = { apiKey, baseUrl, proxyKey: c.env.TRIPJACK_PROXY_KEY };
+      let config = supplierConfigs.find((item) => item.name === "TRIPJACK");
+      if (!config) {
+        config = {
+          name: "TRIPJACK", isEnabled: saved ? saved.enabled === true : true,
+          priority: 20, credentials: platformCredentials.TRIPJACK, timeoutMs: 25000, maxRetries: 0,
+        };
+        supplierConfigs.push(config);
+      } else {
+        config.isEnabled = saved ? saved.enabled === true : true;
+        config.credentials = { ...(config.credentials ?? {}), ...platformCredentials.TRIPJACK };
+      }
+    }
+  }
+
+  const adapter = getBookableAdapter(body.supplier, supplierConfigs, platformCredentials);
+
+  // TripJack review already holds the current price and returns its booking ID.
   if (body.supplier === "TRIPJACK") {
     const snap = body.fareSnapshot;
     if (!snap) throw new HTTPException(400, { message: "fareSnapshot is required for TripJack bookings" });
+    if (!body.sessionId) throw new HTTPException(400, { message: "TripJack fare must be reviewed before booking" });
     if (!adapter.book) throw new HTTPException(500, { message: "TripJack book method not available" });
 
     let bookResult;
     try {
       bookResult = await adapter.book({
         fareId:       body.fareId,
-        holdId:       body.fareId,  // TripJack uses the fare/session ID directly as booking ID
+        holdId:       body.sessionId,  // Booking ID returned by TripJack /fms/v1/review
         sessionId:    body.sessionId,
         passengers:   body.passengers,
         contactEmail: body.contactEmail,

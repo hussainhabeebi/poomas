@@ -1,6 +1,6 @@
 import type {
   SupplierAdapter, SearchParams, NormalizedFare, HoldParams, HoldResult,
-  BookParams, BookResult, PNRStatusResult, CancelResult, SupplierCredentials, FareRule,
+  BookParams, BookResult, PNRStatusResult, CancelResult, SupplierCredentials, FareRule, RevalidateResult,
 } from "../base.js";
 import { TripjackClient } from "./client.js";
 import { normalizeTripjackFare } from "./normalizer.js";
@@ -53,6 +53,34 @@ export class TripjackAdapter implements SupplierAdapter {
     }));
   }
 
+  async revalidate(fareId: string): Promise<RevalidateResult> {
+    const raw = await this.client.review(fareId) as Record<string, unknown>;
+    const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
+    const status = response.status as { success?: boolean; statusMessage?: string } | undefined;
+    if (status?.success === false) {
+      throw new Error(status.statusMessage || "TripJack could not revalidate this fare");
+    }
+
+    const bookingId = String(response.bookingId ?? "");
+    if (!bookingId) throw new Error("TripJack review did not return a booking ID");
+
+    const price = response.totalPriceInfo as {
+      fd?: { fC?: { BF?: number; TAF?: number; TF?: number } };
+    } | undefined;
+    const components = price?.fd?.fC;
+
+    return {
+      success: true,
+      fareId,
+      bookingId,
+      baseFare: components?.BF,
+      taxes: components?.TAF,
+      totalFare: components?.TF,
+      currency: String(response.currency ?? "INR"),
+      raw: response,
+    };
+  }
+
   async hold(_params: HoldParams): Promise<HoldResult> {
     // Tripjack uses session-based booking — hold is implicit in the session
     throw new Error("Tripjack does not support explicit hold — proceed directly to book");
@@ -60,13 +88,14 @@ export class TripjackAdapter implements SupplierAdapter {
 
   async book(params: BookParams): Promise<BookResult> {
     const raw = await this.client.book(params as HoldParams & BookParams) as Record<string, unknown>;
+    const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
     return {
-      success:       (raw.status as { success?: boolean })?.success ?? false,
-      bookingRef:    raw.bookingId as string,
-      pnr:           raw.pnrDetails as string,
+      success:       (response.status as { success?: boolean })?.success ?? false,
+      bookingRef:    String(response.bookingId ?? params.holdId),
+      pnr:           String(response.pnrDetails ?? response.pnr ?? ""),
       status:        "CONFIRMED",
       ticketNumbers: [],
-      raw,
+      raw: response,
     };
   }
 

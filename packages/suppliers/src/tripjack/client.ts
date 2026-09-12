@@ -71,12 +71,30 @@ export class TripjackClient {
     return this.request("/air-fare-detail/v2", { id: fareId, flowType: "SEARCH" });
   }
 
+  async review(fareId: string) {
+    return this.request("/fms/v1/review", { priceIds: [fareId] });
+  }
+
   async book(params: HoldParams & BookParams) {
+    const phone = params.contactPhone.replace(/\D/g, "");
     return this.request("/air-book/v2", {
-      bookingId:  params.holdId,
+      bookingId: params.holdId,
+      travellerInfo: params.passengers.map((passenger) => ({
+        ti: passenger.gender === "F" ? "Ms" : "Mr",
+        fN: passenger.firstName,
+        lN: passenger.lastName,
+        pt: passenger.type,
+        ...(passenger.dob ? { dob: passenger.dob } : {}),
+        ...(passenger.nationality ? { pNat: passenger.nationality } : {}),
+        ...(passenger.passportNumber ? { pNum: passenger.passportNumber } : {}),
+        ...(passenger.passportExpiry ? { eD: passenger.passportExpiry } : {}),
+      })),
       deliveryInfo: {
-        emails:  [params.contactEmail],
-        mobiles: [{ countryCode: "+91", number: params.contactPhone }],
+        emails: [params.contactEmail],
+        mobiles: [{
+          countryCode: phone.length > 10 ? `+${phone.slice(0, phone.length - 10)}` : "+91",
+          number: phone.slice(-10),
+        }],
       },
     });
   }
