@@ -105,10 +105,8 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
       {filteredFares.length === 0 ? (
         <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
           <div style={{ fontSize: 44, marginBottom: 14 }}>✈️</div>
-          <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{result.apiError || failingSuppliers.length > 0 ? "Live flight search unavailable" : "No flights found"}</p>
-          <p style={{ margin: "0 0 12px" }}>{result.apiError ? "The flight API could not complete this search." : failingSuppliers.length > 0 ? `Supplier connection issue: ${failingSuppliers.join(", ")}` : "Try different dates or destinations."}</p>
-          {result.apiError && <p style={{ margin: "0 auto 16px", maxWidth: 760, fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 12px", wordBreak: "break-word" }}>{result.apiError}</p>}
-          {missingCredentialSuppliers.length > 0 && <p style={{ margin: "0 0 24px", fontSize: 12, color: "#9ca3af" }}>Not configured: {missingCredentialSuppliers.join(", ")}</p>}
+          <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{filteredFares.length === 0 && (result.apiError || failingSuppliers.length > 0) ? "No flights available right now" : "No flights found"}</p>
+          <p style={{ margin: "0 0 24px" }}>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
           <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search Again</a>
         </div>
       ) : (
