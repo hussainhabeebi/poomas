@@ -11,8 +11,16 @@ type HotelInfo = {
 };
 
 type Guest = { title: string; firstName: string; lastName: string };
+type SavedPassenger = { id: string; firstName: string; lastName: string; isDefault: boolean };
 
 const emptyGuest = (): Guest => ({ title: "Mr", firstName: "", lastName: "" });
+
+function getToken(): string {
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  } catch { return ""; }
+}
 
 export default function HotelBookPage() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
@@ -31,6 +39,63 @@ export default function HotelBookPage() {
   const [submitting,   setSubmitting]   = useState(false);
   const [error,        setError]        = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
+
+  // Auth state
+  const [token,           setToken]           = useState("");
+  const [savedPassengers, setSavedPassengers] = useState<SavedPassenger[]>([]);
+
+  // Inline login state
+  const [showLogin,      setShowLogin]      = useState(false);
+  const [loginEmail,     setLoginEmail]     = useState("");
+  const [loginPassword,  setLoginPassword]  = useState("");
+  const [loginError,     setLoginError]     = useState("");
+  const [loggingIn,      setLoggingIn]      = useState(false);
+
+  useEffect(() => {
+    const t = getToken();
+    if (t) { setToken(t); fetchSavedPassengers(t); }
+  }, []);
+
+  async function fetchSavedPassengers(t: string) {
+    try {
+      const res = await fetch(`${apiUrl}/api/profile/passengers`, {
+        headers: { "Authorization": `Bearer ${t}`, "x-tenant-slug": "poomas" },
+      });
+      if (res.ok) {
+        const d = await res.json() as { passengers: SavedPassenger[] };
+        setSavedPassengers(d.passengers ?? []);
+        const def = d.passengers.find((p) => p.isDefault);
+        if (def) {
+          setGuests((gs) => gs.map((g, i) => i !== 0 ? g : {
+            ...g, firstName: def.firstName, lastName: def.lastName,
+          }));
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  async function handleLogin(e: FormEvent) {
+    e.preventDefault();
+    setLoginError("");
+    setLoggingIn(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
+      });
+      const d = await res.json() as any;
+      if (!res.ok) throw new Error(d.error ?? "Login failed");
+      document.cookie = `poomas_token=${d.token}; Path=/; SameSite=Lax; Secure`;
+      setToken(d.token);
+      setShowLogin(false);
+      await fetchSavedPassengers(d.token);
+    } catch (x: any) {
+      setLoginError(x?.message ?? "Login failed");
+    } finally {
+      setLoggingIn(false);
+    }
+  }
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -161,6 +226,34 @@ export default function HotelBookPage() {
 
       {error && <div className="err"><b>Couldn't continue</b><span>{error}</span></div>}
 
+      {/* Login banner */}
+      {!token && !showLogin && (
+        <div className="loginBanner">
+          <span>Save time — <button type="button" className="linkBtn" onClick={() => setShowLogin(true)}>sign in</button> to auto-fill your details</span>
+        </div>
+      )}
+      {showLogin && (
+        <section className="card loginCard">
+          <div className="title">
+            <span>👤</span>
+            <div><h2>Sign in</h2><p>Auto-fill your saved guest details.</p></div>
+          </div>
+          {loginError && <div className="err"><span>{loginError}</span></div>}
+          <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="grid">
+              <Input l="Email" t="email" v={loginEmail} c={setLoginEmail} r />
+              <Input l="Password" t="password" v={loginPassword} c={setLoginPassword} r />
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button type="submit" className="loginBtn" disabled={loggingIn}>
+                {loggingIn ? "Signing in…" : "Sign in"}
+              </button>
+              <button type="button" className="cancelBtn" onClick={() => setShowLogin(false)}>Cancel</button>
+            </div>
+          </form>
+        </section>
+      )}
+
       {/* Price verification banner */}
       {prebooking && (
         <div className="prebook-banner prebook-checking">
@@ -230,7 +323,24 @@ export default function HotelBookPage() {
           </div>
           {guests.map((g, i) => (
             <div className="pax" key={i}>
-              <div className="chip">Room {i + 1} — Lead guest</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <div className="chip">Room {i + 1} — Lead guest</div>
+                {savedPassengers.length > 0 && (
+                  <select
+                    className="profileSelect"
+                    value=""
+                    onChange={(e) => {
+                      const sp = savedPassengers.find((s) => s.id === e.target.value);
+                      if (sp) setGuests((gs) => gs.map((x, n) => n === i ? { ...x, firstName: sp.firstName, lastName: sp.lastName } : x));
+                    }}
+                  >
+                    <option value="">Use saved profile…</option>
+                    {savedPassengers.map((s) => (
+                      <option key={s.id} value={s.id}>{s.firstName} {s.lastName}{s.isDefault ? " ★" : ""}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <div className="grid">
                 <label>Title
                   <select value={g.title} onChange={(e) => updGuest(i, "title", e.target.value)}>
@@ -277,4 +387,4 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const css = `body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin:14px 0}.prebook-banner{padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin:14px 0;display:flex;align-items:center;gap:8px}.prebook-checking{background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1}.prebook-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}.prebook-warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.hh{display:flex;justify-content:space-between;gap:8px}.hh>div{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}.hh small{font-size:11px;color:#667085}.hh strong{font-size:20px;color:#ed1c24;flex-shrink:0}.hd{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:16px 0 10px}.hd>div{display:flex;flex-direction:column}.hd>div b{font-size:15px}.hd>div span{font-size:11px;color:#667085}.hd-nights{text-align:center;background:#f0f9ff;border-radius:99px;height:28px;display:grid;place-items:center;font-size:12px;font-weight:800;color:#0369a1;border:1px solid #bae6fd}.hd-end{text-align:right;align-items:flex-end}.hmeta{display:flex;flex-wrap:wrap;gap:8px;border-top:1px dashed #eaecf0;padding-top:10px;font-size:12px;color:#667085}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#eff6ff;color:#1d4ed8;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800;margin-bottom:12px}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
+const css = `.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin:14px 0}.prebook-banner{padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin:14px 0;display:flex;align-items:center;gap:8px}.prebook-checking{background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1}.prebook-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}.prebook-warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.hh{display:flex;justify-content:space-between;gap:8px}.hh>div{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}.hh small{font-size:11px;color:#667085}.hh strong{font-size:20px;color:#ed1c24;flex-shrink:0}.hd{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:16px 0 10px}.hd>div{display:flex;flex-direction:column}.hd>div b{font-size:15px}.hd>div span{font-size:11px;color:#667085}.hd-nights{text-align:center;background:#f0f9ff;border-radius:99px;height:28px;display:grid;place-items:center;font-size:12px;font-weight:800;color:#0369a1;border:1px solid #bae6fd}.hd-end{text-align:right;align-items:flex-end}.hmeta{display:flex;flex-wrap:wrap;gap:8px;border-top:1px dashed #eaecf0;padding-top:10px;font-size:12px;color:#667085}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#eff6ff;color:#1d4ed8;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800;margin-bottom:12px}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;

@@ -25,6 +25,7 @@ import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
 import { partnerRoutes }       from "./routes/partner.js";
+import { profileRoutes }       from "./routes/profile.js";
 
 export { TenantRateLimiter };
 
@@ -57,6 +58,7 @@ app.use("/api/agents/*",   authMiddleware);
 app.use("/api/wallet/*",   authMiddleware);
 app.use("/api/session/*",  authMiddleware);
 app.use("/api/admin/*",    authMiddleware);
+app.use("/api/profile/*", authMiddleware);
 app.use("/api/whatsapp/*", authMiddleware);
 
 app.route("/api/session",  sessionRoutes);
@@ -67,6 +69,7 @@ app.route("/api/agents",   agentRoutes);
 app.route("/api/wallet",   walletRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/admin",    adminRoutes);
+app.route("/api/profile",  profileRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {

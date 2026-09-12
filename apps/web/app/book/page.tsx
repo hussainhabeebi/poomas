@@ -20,10 +20,26 @@ type FareInfo = {
   isRefundable: boolean; cabinChecked: string;
 };
 
+type SavedPassenger = {
+  id: string;
+  firstName: string; lastName: string;
+  dob: string | null; gender: string | null;
+  nationality: string | null;
+  passportNumber: string | null; passportExpiry: string | null;
+  isDefault: boolean;
+};
+
 const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
   type, firstName: "", lastName: "", dob: "", gender: "M", nationality: "IN",
   passportNumber: "", passportExpiry: "",
 });
+
+function getToken(): string {
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  } catch { return ""; }
+}
 
 export default function BookPage() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
@@ -34,6 +50,18 @@ export default function BookPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
+
+  // Auth state
+  const [token, setToken] = useState("");
+  const [savedPassengers, setSavedPassengers] = useState<SavedPassenger[]>([]);
+  const [saveDetails, setSaveDetails] = useState(false);
+
+  // Inline login state
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -56,6 +84,64 @@ export default function BookPage() {
       cabinChecked:  q.get("bag") ?? "15 KG",
     });
   }, []);
+
+  useEffect(() => {
+    const t = getToken();
+    if (t) {
+      setToken(t);
+      fetchSavedPassengers(t);
+    }
+  }, []);
+
+  async function fetchSavedPassengers(t: string) {
+    try {
+      const res = await fetch(`${apiUrl}/api/profile/passengers`, {
+        headers: { "Authorization": `Bearer ${t}`, "x-tenant-slug": "poomas" },
+      });
+      if (res.ok) {
+        const d = await res.json() as { passengers: SavedPassenger[] };
+        setSavedPassengers(d.passengers ?? []);
+        const def = d.passengers.find((p) => p.isDefault);
+        if (def) applyProfile(def, 0);
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  function applyProfile(p: SavedPassenger, idx: number) {
+    setPassengers((prev) => prev.map((x, i) => i !== idx ? x : {
+      ...x,
+      firstName:      p.firstName,
+      lastName:       p.lastName,
+      dob:            p.dob ? p.dob.slice(0, 10) : x.dob,
+      gender:         (p.gender as "M" | "F") ?? x.gender,
+      nationality:    p.nationality ?? x.nationality,
+      passportNumber: p.passportNumber ?? x.passportNumber,
+      passportExpiry: p.passportExpiry ? p.passportExpiry.slice(0, 10) : x.passportExpiry,
+    }));
+  }
+
+  async function handleLogin(e: FormEvent) {
+    e.preventDefault();
+    setLoginError("");
+    setLoggingIn(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
+      });
+      const d = await res.json() as any;
+      if (!res.ok) throw new Error(d.error ?? "Login failed");
+      document.cookie = `poomas_token=${d.token}; Path=/; SameSite=Lax; Secure`;
+      setToken(d.token);
+      setShowLogin(false);
+      await fetchSavedPassengers(d.token);
+    } catch (x: any) {
+      setLoginError(x?.message ?? "Login failed");
+    } finally {
+      setLoggingIn(false);
+    }
+  }
 
   const money = useMemo(() => {
     try {
@@ -102,6 +188,34 @@ export default function BookPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((d as any).error ?? `Booking failed (${res.status})`);
+
+      // Save traveller details if opted in
+      if (saveDetails && token) {
+        for (const p of passengers) {
+          if (!p.firstName || !p.lastName) continue;
+          const existing = savedPassengers.find(
+            (s) => s.firstName.toLowerCase() === p.firstName.trim().toLowerCase() &&
+                   s.lastName.toLowerCase()  === p.lastName.trim().toLowerCase(),
+          );
+          if (!existing) {
+            fetch(`${apiUrl}/api/profile/passengers`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-tenant-slug": "poomas" },
+              body: JSON.stringify({
+                firstName:      p.firstName.trim(),
+                lastName:       p.lastName.trim(),
+                dob:            p.dob || undefined,
+                gender:         p.gender,
+                nationality:    p.nationality.toUpperCase().slice(0, 2) || undefined,
+                passportNumber: p.passportNumber.trim() || undefined,
+                passportExpiry: p.passportExpiry || undefined,
+                isDefault:      savedPassengers.length === 0,
+              }),
+            }).catch(() => {});
+          }
+        }
+      }
+
       setConfirmation(d);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (x: any) {
@@ -151,6 +265,36 @@ export default function BookPage() {
 
       {error && <div className="err"><b>Couldn't continue</b><span>{error}</span></div>}
 
+      {/* Login banner — shown when not logged in */}
+      {!token && !showLogin && (
+        <div className="loginBanner">
+          <span>Save time — <button type="button" className="linkBtn" onClick={() => setShowLogin(true)}>sign in</button> to auto-fill your details</span>
+        </div>
+      )}
+
+      {/* Inline login form */}
+      {showLogin && (
+        <section className="card loginCard">
+          <div className="title">
+            <span>👤</span>
+            <div><h2>Sign in</h2><p>Auto-fill your saved traveller details.</p></div>
+          </div>
+          {loginError && <div className="err"><span>{loginError}</span></div>}
+          <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="grid">
+              <Input l="Email" t="email" v={loginEmail} c={setLoginEmail} r />
+              <Input l="Password" t="password" v={loginPassword} c={setLoginPassword} r />
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button type="submit" className="loginBtn" disabled={loggingIn}>
+                {loggingIn ? "Signing in…" : "Sign in"}
+              </button>
+              <button type="button" className="cancelBtn" onClick={() => setShowLogin(false)}>Cancel</button>
+            </div>
+          </form>
+        </section>
+      )}
+
       {fare && (
         <section className="card flight">
           <div className="fh">
@@ -178,7 +322,26 @@ export default function BookPage() {
           </div>
           {passengers.map((p, i) => (
             <div className="pax" key={i}>
-              <div className="chip">Passenger {i + 1} · {p.type}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <div className="chip">Passenger {i + 1} · {p.type}</div>
+                {savedPassengers.length > 0 && (
+                  <select
+                    className="profileSelect"
+                    value=""
+                    onChange={(e) => {
+                      const sp = savedPassengers.find((s) => s.id === e.target.value);
+                      if (sp) applyProfile(sp, i);
+                    }}
+                  >
+                    <option value="">Use saved profile…</option>
+                    {savedPassengers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.firstName} {s.lastName}{s.isDefault ? " ★" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <div className="grid">
                 <Input l="First name"             v={p.firstName}      c={(v) => upd(i, "firstName",      v)} r />
                 <Input l="Last name"              v={p.lastName}       c={(v) => upd(i, "lastName",       v)} r />
@@ -195,6 +358,14 @@ export default function BookPage() {
               </div>
             </div>
           ))}
+
+          {/* Save details option — only when logged in */}
+          {token && (
+            <label className="saveCheck">
+              <input type="checkbox" checked={saveDetails} onChange={(e) => setSaveDetails(e.target.checked)} />
+              Save traveller details for next time
+            </label>
+          )}
         </section>
 
         <section className="card">
@@ -238,4 +409,4 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const css = `body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800;margin-bottom:12px}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
+const css = `body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
