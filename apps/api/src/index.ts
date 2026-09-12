@@ -9,6 +9,7 @@ import { rateLimitMiddleware } from "./middleware/ratelimit.js";
 import { searchRoutes }        from "./routes/search.js";
 import { bookingRoutes }       from "./routes/booking.js";
 import { duffelSandboxRoutes } from "./routes/duffel-sandbox.js";
+import { bookDirectRoutes }    from "./routes/book.js";
 import { integrationRoutes }   from "./routes/integrations.js";
 import { agentRoutes }         from "./routes/agents.js";
 import { walletRoutes }        from "./routes/wallet.js";
@@ -38,6 +39,7 @@ app.route("/api/auth",           authRoutes);
 app.route("/webhooks",           webhookRoutes);
 app.route("/api/search",         searchRoutes);
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
+app.route("/api/book",           bookDirectRoutes);
 app.route("/api/integrations",   integrationRoutes);
 
 // Checkout token verification — validated by the signed JWT token itself

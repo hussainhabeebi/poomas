@@ -110,14 +110,34 @@ function formatMoney(amount: number, currency: string): string {
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
 }
 
+function buildBookUrl(fare: any, fareCurrency: string, price: number): string {
+  const p = new URLSearchParams({
+    fareId:   fare.id ?? "",
+    supplier: fare.supplier ?? "",
+    airline:  fare.airlineName ?? "",
+    fn:       fare.flightNumber ?? "",
+    from:     fare.origin ?? "",
+    to:       fare.destination ?? "",
+    dep:      fare.departureTime ?? "",
+    arr:      fare.arrivalTime ?? "",
+    dur:      String(fare.duration ?? 0),
+    stops:    String(fare.stops ?? 0),
+    price:    String(price),
+    cur:      fareCurrency,
+    ref:      fare.isRefundable ? "1" : "0",
+    bag:      fare.baggage?.checked ?? "15 KG",
+  });
+  return `/book?${p.toString()}`;
+}
+
 function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: string | null }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const fareCurrency = String(fare.currency || requestedCurrency || "USD").toUpperCase();
+  const fareCurrency = String(fare.currency || requestedCurrency || "INR").toUpperCase();
   const price = Number(fare.displayPrice ?? fare.totalFare ?? 0);
   const currencyDiffers = Boolean(requestedCurrency && fareCurrency !== requestedCurrency);
-  const isDuffel = fare.supplier === "DUFFEL";
+  const isBookable = Boolean(fare.isBookable && fare.supplier !== "GOOGLE_SERP");
 
   return (
     <div className="fare-card">
@@ -131,20 +151,22 @@ function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: s
       </div>
       <div className="fare-card-info-col">
         <div style={{ fontSize: 12, color: fare.isRefundable ? "#059669" : "#9ca3af" }}>{fare.isRefundable ? "✓ Refundable" : "Non-refundable"}</div>
-        {fare.baggage?.checked && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{fare.baggage.checked}</div>}
+        {fare.baggage?.cabin && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Cabin: {fare.baggage.cabin}</div>}
+        {fare.baggage?.checked && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Check-in: {fare.baggage.checked}</div>}
       </div>
       <div className="fare-card-price-col">
         <div className="fare-card-price">{formatMoney(price, fareCurrency)}</div>
         <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{fareCurrency}{currencyDiffers ? " · supplier currency" : ""}</div>
         {!fare.isBookable && <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>}
-        {fare.isBookable && isDuffel && (
-          <form action="/book" method="GET" style={{ marginTop: 8 }}>
-            <input type="hidden" name="fareId" value={fare.id} />
-            <input type="hidden" name="supplier" value={fare.supplier} />
-            <button type="submit" className="fare-card-book-btn" style={{ width: "100%", border: 0, cursor: "pointer", WebkitTapHighlightColor: "transparent", touchAction: "manipulation" }}>Book Now</button>
-          </form>
+        {isBookable && (
+          <a
+            href={buildBookUrl(fare, fareCurrency, price)}
+            className="fare-card-book-btn"
+            style={{ display: "block", marginTop: 8, textAlign: "center", textDecoration: "none", WebkitTapHighlightColor: "transparent" as any }}
+          >
+            Book Now
+          </a>
         )}
-        {fare.isBookable && !isDuffel && <div style={{ marginTop: 8, fontSize: 12, color: "#9ca3af", fontWeight: 600 }}>Booking integration coming soon</div>}
       </div>
     </div>
   );

@@ -54,12 +54,24 @@ export class TripjackClient {
   }
 
   async book(params: HoldParams & BookParams) {
+    const travellerInfo = params.passengers.map((p) => ({
+      ti:   p.gender === "F" ? "Ms" : "Mr",
+      fN:   p.firstName,
+      lN:   p.lastName,
+      pt:   p.type,
+      dob:  p.dob,
+      pNum: p.passportNumber,
+      eD:   p.passportExpiry,
+      pid:  p.nationality ?? "IN",
+    }));
+
     return this.request("/air-book/v2", {
       bookingId:  params.holdId,
       deliveryInfo: {
         emails:  [params.contactEmail],
         mobiles: [{ countryCode: "+91", number: params.contactPhone }],
       },
+      travellerInfo,
     });
   }
 
