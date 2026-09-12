@@ -34,6 +34,19 @@ async function getTenantPaymentSettings(env: Env, tenantId: string) {
   return raw ? JSON.parse(raw) : null;
 }
 
+// ── GET /api/payments/config — safe checkout configuration ───────────────────
+
+paymentRoutes.get("/config", async (c) => {
+  const tenantId = c.get("tenantId");
+  const settings = await getTenantPaymentSettings(c.env, tenantId);
+  const razorpayConfigured = Boolean(settings?.razorpay?.enabled && (settings.razorpay.keyId || c.env.RAZORPAY_KEY_ID));
+  const nomodConfigured = Boolean(settings?.nomod?.enabled && (settings.nomod.apiKey || c.env.NOMOD_API_KEY));
+  const preferred = settings?.defaultGateway === "NOMOD" && nomodConfigured
+    ? "NOMOD"
+    : razorpayConfigured ? "RAZORPAY" : nomodConfigured ? "NOMOD" : null;
+  return c.json({ defaultGateway: preferred, gateways: { RAZORPAY: razorpayConfigured, NOMOD: nomodConfigured } });
+});
+
 // ── POST /api/payments/checkout ───────────────────────────────────────────────
 
 const checkoutSchema = z.object({
@@ -44,6 +57,9 @@ const checkoutSchema = z.object({
 
 paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) => {
   const { bookingId, gateway, currency } = c.req.valid("json");
+  if (c.get("userRole") === "CHECKOUT" && c.get("checkoutBookingId") !== bookingId) {
+    throw new HTTPException(403, { message: "Checkout session does not match this booking" });
+  }
   const db       = c.get("db");
   const tenantId = c.get("tenantId");
 
@@ -111,48 +127,53 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
   }
 
   if (gateway === "NOMOD") {
-    const { apiKey, apiSecret } = resolvePaymentKeys(c.env, settings, "NOMOD") as { apiKey: string; apiSecret: string };
-    if (!apiKey) throw new HTTPException(503, { message: "NoMod not configured" });
-
-    const isProduction = settings?.nomod?.environment === "production";
-    const nomodBase    = isProduction ? "https://api.nomod.com" : "https://sandbox.nomod.com";
-
-    const linkRes = await fetch(`${nomodBase}/v1/payment-links`, {
-      method:  "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        amount:      amountFull,
-        currency:    cur,
-        reference:   bookingId,
-        description: `POOMAS booking ${bookingId}`,
-        customer: {
-          email: booking.contactEmail,
-          phone: booking.contactPhone,
-        },
-        redirect_url: `https://flypoomas.com/checkout/complete?bookingId=${bookingId}`,
-      }),
-    });
-
-    if (!linkRes.ok) {
-      const e = await linkRes.json() as { message?: string };
-      throw new HTTPException(502, { message: `NoMod link failed: ${e.message}` });
+    const { apiKey } = resolvePaymentKeys(c.env, settings, "NOMOD") as { apiKey: string };
+    if (!settings?.nomod?.enabled || !apiKey) {
+      throw new HTTPException(503, { message: "Nomod is not enabled or its API key is missing" });
     }
 
-    const link = await linkRes.json() as { id: string; payment_url: string };
+    const checkoutToken = c.req.header("X-Checkout-Token") ?? "";
+    const resultUrl = `https://flypoomas.com/checkout/payment-result?bookingId=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(checkoutToken)}`;
+    const amount = amountFull.toFixed(2);
+    const linkRes = await fetch("https://api.nomod.com/v1/links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
+      body: JSON.stringify({
+        currency: cur,
+        items: [{ name: `POOMAS flight booking ${bookingId.slice(0, 8)}`, amount, quantity: 1 }],
+        title: "POOMAS flight booking",
+        note: `Payment for booking ${bookingId}`,
+        shipping_address_required: false,
+        allow_tip: false,
+        allow_tabby: settings.nomod.allowTabby ?? true,
+        allow_tamara: settings.nomod.allowTamara ?? true,
+        allow_service_fee: false,
+        payment_expiry_limit: 1,
+        success_url: `${resultUrl}&result=success`,
+        failure_url: `${resultUrl}&result=failed`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const raw = await linkRes.text();
+    let link: { id?: string; url?: string; amount?: string; currency?: string; error?: { message?: string } } = {};
+    try { link = raw ? JSON.parse(raw) : {}; } catch {}
+    if (!linkRes.ok || !link.id || !link.url) {
+      const message = link.error?.message || raw.slice(0, 240) || `HTTP ${linkRes.status}`;
+      throw new HTTPException(502, { message: `Nomod link failed: ${message}` });
+    }
 
     await db.insert(payments).values({
       bookingId,
-      gateway:        "NOMOD",
+      gateway: "NOMOD",
       gatewayOrderId: link.id,
-      amount:         String(amountFull),
-      currency:       cur as "INR" | "AED" | "USD",
-      status:         "PENDING",
+      amount: String(amountFull),
+      currency: cur as "INR" | "AED" | "USD",
+      status: "PENDING",
+      gatewayResponse: { linkId: link.id, linkUrl: link.url },
     });
 
-    return c.json({ paymentUrl: link.payment_url, orderId: link.id, amount: amountFull, currency: cur });
+    return c.json({ paymentUrl: link.url, orderId: link.id, amount: Number(link.amount ?? amount), currency: link.currency ?? cur });
   }
 
   throw new HTTPException(400, { message: "Unsupported gateway" });

@@ -192,7 +192,7 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
         <nav className="admin-sidebar">
           <div className="admin-sidebar-header">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.svg" alt="POOMAS Admin" />
+            <img src="/logo.png" alt="POOMAS Admin" />
             <div className="role-badge">Super Admin</div>
           </div>
 

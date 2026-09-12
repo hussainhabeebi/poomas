@@ -20,6 +20,7 @@ export interface Env {
   RIYA_API_BASE_URL:      string;
   TRIPJACK_API_KEY:       string;
   TRIPJACK_API_BASE_URL:  string;
+  TRIPJACK_PROXY_KEY:     string;
   SERP_API_KEY:           string;
   DUFFEL_API_KEY:         string;
   POOMAS_INTEGRATION_KEY: string;
@@ -30,6 +31,7 @@ export interface Env {
   NOMOD_API_SECRET:       string;
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
+  GEMINI_API_KEY:         string;
 
   // One-time admin bootstrap (set in Cloudflare dashboard, unset after first use)
   PLATFORM_ADMIN_EMAIL?:    string;
@@ -50,6 +52,9 @@ export interface Variables {
   userId?:  string;
   userRole?: string;
   agentId?: string;
+  partnerApiKeyId?: string;
+  partnerName?: string;
+  checkoutBookingId?: string;
 }
 
 export interface TenantContext {
@@ -78,3 +83,4 @@ export interface PaymentConfig {
   razorpay?: { keyId: string; keySecret: string };
   nomod?:    { apiKey: string; apiSecret: string };
 }
+

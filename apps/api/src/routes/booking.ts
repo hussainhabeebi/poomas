@@ -19,6 +19,18 @@ const passengerSchema = z.object({
   passportCountry: z.string().length(2).optional(),
 });
 
+const fareSnapshotSchema = z.object({
+  origin:        z.string(),
+  destination:   z.string(),
+  departureTime: z.string(),
+  baseFare:      z.number(),
+  taxes:         z.number(),
+  totalFare:     z.number(),
+  currency:      z.string(),
+  airlineName:   z.string().optional(),
+  flightNumber:  z.string().optional(),
+}).optional();
+
 const bookingCreateSchema = z.object({
   fareId:       z.string(),
   supplier:     z.enum(["RIYA", "TRIPJACK"]),
@@ -29,6 +41,7 @@ const bookingCreateSchema = z.object({
   gstNumber:    z.string().optional(),
   promoCode:    z.string().optional(),
   paymentMethod: z.enum(["GATEWAY", "WALLET"]).default("GATEWAY"),
+  fareSnapshot: fareSnapshotSchema,
 });
 
 export const bookingRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -51,9 +64,83 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     maxRetries:  sc.maxRetries,
   }));
 
-  // Hold seat with supplier before taking payment
   const adapter = getBookableAdapter(body.supplier, supplierConfigs);
 
+  // TripJack uses session-based booking — skip hold and book directly
+  if (body.supplier === "TRIPJACK") {
+    const snap = body.fareSnapshot;
+    if (!snap) throw new HTTPException(400, { message: "fareSnapshot is required for TripJack bookings" });
+    if (!adapter.book) throw new HTTPException(500, { message: "TripJack book method not available" });
+
+    let bookResult;
+    try {
+      bookResult = await adapter.book({
+        fareId:       body.fareId,
+        holdId:       body.fareId,  // TripJack uses the fare/session ID directly as booking ID
+        sessionId:    body.sessionId,
+        passengers:   body.passengers,
+        contactEmail: body.contactEmail,
+        contactPhone: body.contactPhone,
+        paymentRef:   "TRIPJACK_DIRECT",
+      });
+    } catch (err) {
+      throw new HTTPException(422, {
+        message: err instanceof Error ? err.message : "TripJack booking failed",
+      });
+    }
+
+    if (!bookResult.success) {
+      throw new HTTPException(422, { message: "TripJack booking was not confirmed" });
+    }
+
+    const paxValues = body.passengers.map((p) => ({
+      passengerType: p.type,
+      firstName:     p.firstName,
+      lastName:      p.lastName,
+      dob:           p.dob ? new Date(p.dob) : null,
+      gender:        p.gender ?? null,
+      nationality:   p.nationality ?? null,
+      passportNumber:  p.passportNumber  ?? null,
+      passportExpiry:  p.passportExpiry  ? new Date(p.passportExpiry) : null,
+      passportCountry: p.passportCountry ?? null,
+    }));
+
+    const [booking] = await db.insert(bookings).values({
+      tenantId,
+      userId:             userId ?? null,
+      agentId:            agentId ?? null,
+      channel:            agentId ? "B2B_PORTAL" : "B2C_WEB",
+      status:             "CONFIRMED",
+      tripType:           "ONEWAY",
+      cabinClass:         "ECONOMY",
+      origin:             snap.origin,
+      destination:        snap.destination,
+      departureDate:      new Date(snap.departureTime),
+      flightData:         snap as unknown as Record<string, unknown>,
+      adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
+      childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
+      infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
+      baseFare:           String(snap.baseFare),
+      taxes:              String(snap.taxes),
+      totalAmount:        String(snap.totalFare),
+      currency:           snap.currency.toUpperCase() as "INR" | "AED" | "USD",
+      supplier:           body.supplier,
+      supplierBookingRef: bookResult.bookingRef ?? null,
+      pnr:                bookResult.pnr ?? null,
+      gstNumber:          body.gstNumber ?? null,
+      heldUntil:          null,
+      contactEmail:       body.contactEmail,
+      contactPhone:       body.contactPhone,
+    }).returning();
+
+    await db.insert(bookingPassengers).values(
+      paxValues.map((p) => ({ ...p, bookingId: booking.id })),
+    );
+
+    return c.json({ bookingId: booking.id, pnr: bookResult.pnr, status: "CONFIRMED" }, 201);
+  }
+
+  // RIYA (and future suppliers): hold seat before taking payment
   if (!adapter.hold) {
     throw new HTTPException(400, { message: `${body.supplier} does not support hold — use book directly` });
   }
@@ -75,7 +162,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     agentId:          agentId ?? null,
     channel:          agentId ? "B2B_PORTAL" : "B2C_WEB",
     status:           "HELD",
-    tripType:         "ONEWAY",    // TODO: derive from fare data
+    tripType:         "ONEWAY",
     cabinClass:       "ECONOMY",
     origin:           holdResult.fareSnapshot.origin,
     destination:      holdResult.fareSnapshot.destination,

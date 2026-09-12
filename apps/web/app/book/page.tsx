@@ -3,23 +3,104 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Passenger={type:"ADULT"|"CHILD"|"INFANT";firstName:string;lastName:string;dob:string;gender:"M"|"F";nationality:string;passportNumber:string;passportExpiry:string};
-type Offer={id:string;airlineName:string;flightNumber:string;origin:string;destination:string;departureTime:string;arrivalTime:string;totalFare:number;currency:string;baggage?:{checked?:string};raw?:{passengers?:{type?:string}[];passenger_identity_documents_required?:boolean}};
+type DuffelOffer={id:string;airlineName:string;flightNumber:string;origin:string;destination:string;departureTime:string;arrivalTime:string;totalFare:number;currency:string;baggage?:{checked?:string};raw?:{passengers?:{type?:string}[];passenger_identity_documents_required?:boolean}};
+type TripjackFare={id:string;supplier:string;airlineName:string;flightNumber:string;origin:string;destination:string;departureTime:string;arrivalTime:string;totalFare:number;baseFare:number;taxes:number;currency:string;baggage?:{cabin?:string;checked?:string};isRefundable?:boolean};
 const emptyPassenger=(type:Passenger["type"]="ADULT"):Passenger=>({type,firstName:"",lastName:"",dob:"",gender:"M",nationality:"IN",passportNumber:"",passportExpiry:""});
 
 export default function BookPage(){
  const apiUrl=process.env.NEXT_PUBLIC_API_URL??"https://api.flypoomas.com";
- const [fareId,setFareId]=useState(""); const [supplier,setSupplier]=useState(""); const [offer,setOffer]=useState<Offer|null>(null); const [expiresAt,setExpiresAt]=useState("");
+ const [fareId,setFareId]=useState(""); const [supplier,setSupplier]=useState(""); const [duffelOffer,setDuffelOffer]=useState<DuffelOffer|null>(null); const [tripjackFare,setTripjackFare]=useState<TripjackFare|null>(null); const [expiresAt,setExpiresAt]=useState("");
  const [passengers,setPassengers]=useState<Passenger[]>([emptyPassenger()]); const [email,setEmail]=useState(""); const [phone,setPhone]=useState(""); const [loading,setLoading]=useState(true); const [submitting,setSubmitting]=useState(false); const [error,setError]=useState(""); const [confirmation,setConfirmation]=useState<any>(null);
- useEffect(()=>{const q=new URLSearchParams(window.location.search);const directFare=q.get("fareId")??"";const directSupplier=q.get("supplier")??"";const session=q.get("session")??"";if(directFare||directSupplier){setFareId(directFare);setSupplier(directSupplier)}if(!session)return;const c=new AbortController();setLoading(true);fetch(`${apiUrl}/api/integrations/checkout-sessions/${encodeURIComponent(session)}`,{headers:{"x-tenant-slug":"poomas"},signal:c.signal,cache:"no-store"}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??"This secure booking link has expired.");return d}).then(data=>{setFareId(String(data.fareId??""));setSupplier(String(data.supplier??"").toUpperCase());if(Array.isArray(data.passengers)&&data.passengers.length)setPassengers(data.passengers.map((x:any)=>({...emptyPassenger(x.type==="CHILD"?"CHILD":x.type==="INFANT"?"INFANT":"ADULT"),firstName:String(x.firstName??""),lastName:String(x.lastName??""),dob:String(x.dob??""),gender:x.gender==="F"?"F":"M",nationality:String(x.nationality??"IN").toUpperCase().slice(0,2),passportNumber:String(x.passportNumber??""),passportExpiry:String(x.passportExpiry??"")})));setEmail(String(data.email??""));setPhone(String(data.mobile??""));history.replaceState(null,"",window.location.pathname+"?session="+encodeURIComponent(session))}).catch(e=>{if(e.name!=="AbortError"){setError(e.message);setLoading(false)}});return()=>c.abort()},[apiUrl]);
 
- useEffect(()=>{if(!fareId&&!supplier)return;if(!fareId||supplier!=="DUFFEL"){setError("This checkout currently supports Duffel sandbox fares only.");setLoading(false);return}const c=new AbortController();setLoading(true);fetch(`${apiUrl}/api/duffel-sandbox/offer/${encodeURIComponent(fareId)}`,{signal:c.signal,cache:"no-store"}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??`Unable to load fare (${r.status})`);return d}).then(d=>{const o=d.offer as Offer;setOffer(o);setExpiresAt(d.expiresAt??"");const p=o.raw?.passengers??[];if(p.length)setPassengers(current=>current.some(x=>x.firstName||x.lastName||x.passportNumber)?current:p.map(x=>emptyPassenger(x.type==="child"?"CHILD":x.type==="infant_without_seat"?"INFANT":"ADULT")))}).catch(e=>{if(e.name!=="AbortError")setError(e.message)}).finally(()=>setLoading(false));return()=>c.abort()},[fareId,supplier,apiUrl]);
- const money=useMemo(()=>{try{return new Intl.NumberFormat("en",{style:"currency",currency:offer?.currency??"USD",maximumFractionDigits:2})}catch{return new Intl.NumberFormat("en")}},[offer?.currency]);
+ // Load checkout session (WhatsApp flow)
+ useEffect(()=>{const q=new URLSearchParams(window.location.search);const directFare=q.get("fareId")??"";const directSupplier=q.get("supplier")??"";const session=q.get("session")??"";if(directFare||directSupplier){setFareId(directFare);setSupplier(directSupplier.toUpperCase())}if(!session)return;const c=new AbortController();setLoading(true);fetch(`${apiUrl}/api/integrations/checkout-sessions/${encodeURIComponent(session)}`,{headers:{"x-tenant-slug":"poomas"},signal:c.signal,cache:"no-store"}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??"This secure booking link has expired.");return d}).then(data=>{setFareId(String(data.fareId??""));setSupplier(String(data.supplier??"").toUpperCase());if(Array.isArray(data.passengers)&&data.passengers.length)setPassengers(data.passengers.map((x:any)=>({...emptyPassenger(x.type==="CHILD"?"CHILD":x.type==="INFANT"?"INFANT":"ADULT"),firstName:String(x.firstName??""),lastName:String(x.lastName??""),dob:String(x.dob??""),gender:x.gender==="F"?"F":"M",nationality:String(x.nationality??"IN").toUpperCase().slice(0,2),passportNumber:String(x.passportNumber??""),passportExpiry:String(x.passportExpiry??"")})));setEmail(String(data.email??""));setPhone(String(data.mobile??""));history.replaceState(null,"",window.location.pathname+"?session="+encodeURIComponent(session))}).catch(e=>{if(e.name!=="AbortError"){setError(e.message);setLoading(false)}});return()=>c.abort()},[apiUrl]);
+
+ // Load fare details based on supplier
+ useEffect(()=>{
+  if(!fareId||!supplier)return;
+
+  if(supplier==="DUFFEL"){
+   // Duffel: fetch from API to hold the fare
+   const c=new AbortController();setLoading(true);
+   fetch(`${apiUrl}/api/duffel-sandbox/offer/${encodeURIComponent(fareId)}`,{signal:c.signal,cache:"no-store"})
+    .then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??`Unable to load fare (${r.status})`);return d})
+    .then(d=>{const o=d.offer as DuffelOffer;setDuffelOffer(o);setExpiresAt(d.expiresAt??"");const p=o.raw?.passengers??[];if(p.length)setPassengers(cur=>cur.some(x=>x.firstName||x.lastName||x.passportNumber)?cur:p.map(x=>emptyPassenger(x.type==="child"?"CHILD":x.type==="infant_without_seat"?"INFANT":"ADULT")))})
+    .catch(e=>{if(e.name!=="AbortError")setError(e.message)}).finally(()=>setLoading(false));
+   return()=>c.abort();
+  }
+
+  if(supplier==="TRIPJACK"||supplier==="RIYA"){
+   // TripJack/RIYA: fare data is in sessionStorage (stored when clicking Book Now)
+   try{
+    const stored=sessionStorage.getItem(`fare:${fareId}`);
+    if(stored){const f=JSON.parse(stored) as TripjackFare;setTripjackFare(f);}
+    else{setError("Fare data not found. Please go back and click Book Now again.");}
+   }catch{setError("Could not load fare data. Please try again.");}
+   setLoading(false);
+   return;
+  }
+
+  setError("Unsupported supplier: "+supplier);setLoading(false);
+ },[fareId,supplier,apiUrl]);
+
+ const offer=duffelOffer??tripjackFare;
+ const money=useMemo(()=>{try{return new Intl.NumberFormat("en",{style:"currency",currency:offer?.currency??"INR",maximumFractionDigits:0})}catch{return new Intl.NumberFormat("en")}},[offer?.currency]);
  const upd=(i:number,k:keyof Passenger,v:string)=>setPassengers(p=>p.map((x,n)=>n===i?{...x,[k]:v}:x));
- async function submit(e:FormEvent){e.preventDefault();if(!offer||submitting)return;setError("");setSubmitting(true);try{if(offer.raw?.passenger_identity_documents_required&&passengers.some(p=>!p.passportNumber||!p.passportExpiry))throw new Error("Passport number and expiry are required for this fare.");const r=await fetch(`${apiUrl}/api/duffel-sandbox/book`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fareId,contactEmail:email.trim(),contactPhone:phone.trim(),passengers:passengers.map(p=>({...p,firstName:p.firstName.trim(),lastName:p.lastName.trim(),nationality:p.nationality.trim().toUpperCase(),passportNumber:p.passportNumber.trim()||undefined,passportExpiry:p.passportExpiry||undefined}))})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??`Booking failed (${r.status})`);setConfirmation(d);window.scrollTo({top:0,behavior:"smooth"})}catch(x:any){setError(x?.message??"Booking failed");window.scrollTo({top:0,behavior:"smooth"})}finally{setSubmitting(false)}}
+
+ async function submit(e:FormEvent){
+  e.preventDefault();if(!offer||submitting)return;setError("");setSubmitting(true);
+  try{
+   if(supplier==="DUFFEL"){
+    // Duffel sandbox booking
+    const o=duffelOffer!;
+    if(o.raw?.passenger_identity_documents_required&&passengers.some(p=>!p.passportNumber||!p.passportExpiry))throw new Error("Passport number and expiry are required for this fare.");
+    const r=await fetch(`${apiUrl}/api/duffel-sandbox/book`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fareId,contactEmail:email.trim(),contactPhone:phone.trim(),passengers:passengers.map(p=>({...p,firstName:p.firstName.trim(),lastName:p.lastName.trim(),nationality:p.nationality.trim().toUpperCase(),passportNumber:p.passportNumber.trim()||undefined,passportExpiry:p.passportExpiry||undefined}))})});
+    const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??`Booking failed (${r.status})`);
+    setConfirmation(d);window.scrollTo({top:0,behavior:"smooth"});
+   }else{
+    // TripJack / RIYA: submit to main bookings API
+    const f=tripjackFare!;
+    const r=await fetch(`${apiUrl}/api/bookings`,{method:"POST",headers:{"Content-Type":"application/json","x-tenant-slug":"poomas"},body:JSON.stringify({fareId,supplier,passengers:passengers.map(p=>({...p,firstName:p.firstName.trim(),lastName:p.lastName.trim(),nationality:p.nationality.trim().toUpperCase()||undefined,passportNumber:p.passportNumber.trim()||undefined,passportExpiry:p.passportExpiry||undefined,dob:p.dob||undefined,gender:p.gender||undefined})),contactEmail:email.trim(),contactPhone:phone.trim().replace(/\D/g,""),fareSnapshot:{origin:f.origin,destination:f.destination,departureTime:f.departureTime,baseFare:Number(f.baseFare??0),taxes:Number(f.taxes??0),totalFare:Number(f.totalFare??0),currency:f.currency,airlineName:f.airlineName,flightNumber:f.flightNumber}})});
+    const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error??(d.message??`Booking failed (${r.status})`));
+    setConfirmation(d);window.scrollTo({top:0,behavior:"smooth"});
+   }
+  }catch(x:any){setError(x?.message??"Booking failed");window.scrollTo({top:0,behavior:"smooth"})}
+  finally{setSubmitting(false)}
+ }
+
  const t=(s?:string)=>s?new Date(s).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"--:--";
- if(loading)return <main className="ck"><style>{css}</style><div className="loading"><div className="spin"/><b>Checking latest fare</b><span>Confirming availability with Duffel…</span></div></main>;
- if(confirmation)return <main className="ck success"><style>{css}</style><div className="ok">✓</div><small>DUFFEL SANDBOX</small><h1>Booking confirmed</h1><p>No real charge or airline ticket was issued.</p><div className="receipt"><Row l="PNR" v={confirmation.pnr??"—"}/><Row l="Duffel order" v={confirmation.bookingReference??"—"}/><Row l="Status" v={confirmation.status??"CONFIRMED"}/></div><a className="home" href="/">Book another flight</a></main>;
- return <main className="ck"><style>{css}</style><header><button type="button" onClick={()=>history.back()}>‹</button><div><b>Secure checkout</b><span>Duffel sandbox</span></div><i>🔒</i></header><div className="steps"><b>1</b><em/><b>2</b><em className="off"/><b className="off">3</b></div><div className="stepLabels"><span>Flight</span><span>Travellers</span><span>Confirm</span></div>{error&&<div className="err"><b>Couldn’t continue</b><span>{error}</span></div>}{offer&&<section className="card flight"><div className="fh"><div><b>{offer.airlineName}</b><span>{offer.flightNumber}</span></div><strong>{money.format(offer.totalFare)}</strong></div><div className="route"><div><b>{t(offer.departureTime)}</b><span>{offer.origin}</span></div><div className="plane">✈</div><div className="end"><b>{t(offer.arrivalTime)}</b><span>{offer.destination}</span></div></div><div className="meta"><span>{offer.baggage?.checked||"Baggage per fare"}</span><span>{offer.currency}</span></div>{expiresAt&&<small>Offer expires {new Date(expiresAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</small>}</section>}<form onSubmit={submit}><section className="card"><div className="title"><span>👤</span><div><h2>Traveller details</h2><p>Enter details exactly as on the travel document.</p></div></div>{passengers.map((p,i)=><div className="pax" key={i}><div className="chip">Passenger {i+1} · {p.type}</div><div className="grid"><Input l="First name" v={p.firstName} c={v=>upd(i,"firstName",v)} r/><Input l="Last name" v={p.lastName} c={v=>upd(i,"lastName",v)} r/><Input l="Date of birth" t="date" v={p.dob} c={v=>upd(i,"dob",v)} r/><label>Gender<select value={p.gender} onChange={e=>upd(i,"gender",e.target.value)}><option value="M">Male</option><option value="F">Female</option></select></label><Input l="Nationality" v={p.nationality} c={v=>upd(i,"nationality",v.toUpperCase().slice(0,2))} r max={2}/><Input l="Passport number" v={p.passportNumber} c={v=>upd(i,"passportNumber",v)}/><Input l="Passport expiry" t="date" v={p.passportExpiry} c={v=>upd(i,"passportExpiry",v)}/></div></div>)}</section><section className="card"><div className="title"><span>☎</span><div><h2>Contact details</h2><p>We’ll send the sandbox confirmation here.</p></div></div><div className="grid"><Input l="Email address" t="email" v={email} c={setEmail} r/><Input l="Mobile number" t="tel" v={phone} c={setPhone} r ph="+971…"/></div></section><div className="note">🧪 <div><b>Sandbox mode</b><p>Test order only. No real money will be charged.</p></div></div><div className="spacer"/><div className="pay"><div><span>Total</span><b>{offer?money.format(offer.totalFare):"—"}</b></div><button disabled={!offer||submitting}>{submitting?"Booking…":"Confirm booking"}</button></div></form></main>
+
+ if(loading)return <main className="ck"><style>{css}</style><div className="loading"><div className="spin"/><b>Checking latest fare</b><span>Confirming availability…</span></div></main>;
+ if(confirmation)return <main className="ck success"><style>{css}</style><div className="ok">✓</div>{supplier==="DUFFEL"&&<small>DUFFEL SANDBOX</small>}<h1>Booking confirmed</h1>{supplier==="DUFFEL"&&<p>No real charge or airline ticket was issued.</p>}{supplier!=="DUFFEL"&&<p>Your booking has been submitted. You will receive a confirmation shortly.</p>}<div className="receipt"><Row l="Booking ID" v={confirmation.bookingId??"—"}/>{confirmation.pnr&&<Row l="PNR" v={confirmation.pnr}/>}{confirmation.bookingReference&&<Row l="Order ref" v={confirmation.bookingReference}/>}<Row l="Status" v={confirmation.status??"CONFIRMED"}/></div><a className="home" href="/">Search another flight</a></main>;
+
+ return <main className="ck"><style>{css}</style>
+  <header><button type="button" onClick={()=>history.back()}>‹</button><div><b>Secure checkout</b><span>{supplier==="DUFFEL"?"Duffel sandbox":supplier}</span></div><i>🔒</i></header>
+  <div className="steps"><b>1</b><em/><b>2</b><em className="off"/><b className="off">3</b></div>
+  <div className="stepLabels"><span>Flight</span><span>Travellers</span><span>Confirm</span></div>
+  {error&&<div className="err"><b>Couldn't continue</b><span>{error}</span></div>}
+  {offer&&<section className="card flight">
+   <div className="fh"><div><b>{offer.airlineName}</b><span>{offer.flightNumber}</span></div><strong>{money.format(offer.totalFare)}</strong></div>
+   <div className="route"><div><b>{t(offer.departureTime)}</b><span>{offer.origin}</span></div><div className="plane">✈</div><div className="end"><b>{t(offer.arrivalTime)}</b><span>{offer.destination}</span></div></div>
+   <div className="meta"><span>{(offer as any).baggage?.checked||(offer as DuffelOffer).baggage?.checked||"Baggage per fare"}</span><span>{offer.currency}</span></div>
+   {expiresAt&&<small>Offer expires {new Date(expiresAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</small>}
+  </section>}
+  <form onSubmit={submit}>
+   <section className="card">
+    <div className="title"><span>👤</span><div><h2>Traveller details</h2><p>Enter details exactly as on the travel document.</p></div></div>
+    {passengers.map((p,i)=><div className="pax" key={i}><div className="chip">Passenger {i+1} · {p.type}</div><div className="grid"><Input l="First name" v={p.firstName} c={v=>upd(i,"firstName",v)} r/><Input l="Last name" v={p.lastName} c={v=>upd(i,"lastName",v)} r/><Input l="Date of birth" t="date" v={p.dob} c={v=>upd(i,"dob",v)} r/><label>Gender<select value={p.gender} onChange={e=>upd(i,"gender",e.target.value as "M"|"F")}><option value="M">Male</option><option value="F">Female</option></select></label><Input l="Nationality (2-letter)" v={p.nationality} c={v=>upd(i,"nationality",v.toUpperCase().slice(0,2))} r max={2}/><Input l="Passport number" v={p.passportNumber} c={v=>upd(i,"passportNumber",v)}/><Input l="Passport expiry" t="date" v={p.passportExpiry} c={v=>upd(i,"passportExpiry",v)}/></div></div>)}
+   </section>
+   <section className="card">
+    <div className="title"><span>☎</span><div><h2>Contact details</h2><p>We'll send the confirmation here.</p></div></div>
+    <div className="grid"><Input l="Email address" t="email" v={email} c={setEmail} r/><Input l="Mobile number" t="tel" v={phone} c={setPhone} r ph="+91 / +971…"/></div>
+   </section>
+   {supplier==="DUFFEL"&&<div className="note">🧪 <div><b>Sandbox mode</b><p>Test order only. No real money will be charged.</p></div></div>}
+   <div className="spacer"/>
+   <div className="pay">
+    <div><span>Total</span><b>{offer?money.format(offer.totalFare):"—"}</b></div>
+    <button disabled={!offer||submitting}>{submitting?"Booking…":"Confirm booking"}</button>
+   </div>
+  </form>
+ </main>;
 }
 function Input({l,v,c,t="text",r=false,ph,max}:{l:string;v:string;c:(v:string)=>void;t?:string;r?:boolean;ph?:string;max?:number}){return <label>{l}<input type={t} value={v} onChange={e=>c(e.target.value)} required={r} placeholder={ph} maxLength={max}/></label>}
 function Row({l,v}:{l:string;v:string}){return <div className="row"><span>{l}</span><b>{v}</b></div>}
