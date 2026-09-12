@@ -75,6 +75,17 @@ app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {
   console.error(err);
   const status = "status" in err ? (err as { status: number }).status : 500;
+
+  // Sanitize SupplierError: expose only the human-readable body, not the supplier name or HTTP code
+  if ((err as any).name === "SupplierError") {
+    const body: string = (err as any).body ?? "Something went wrong — please try again";
+    const isExpired = /expired|not found|no longer/i.test(body);
+    return c.json(
+      { error: body, errorCode: isExpired ? "FARE_EXPIRED" : "SUPPLIER_ERROR" },
+      (status >= 400 && status < 600 ? status : 502) as 400 | 422 | 500 | 502,
+    );
+  }
+
   return c.json({ error: err.message ?? "Internal server error" }, status as 400 | 500);
 });
 
