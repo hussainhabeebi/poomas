@@ -59,9 +59,6 @@ export default function BookPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
-  const [fareChecking, setFareChecking] = useState(false);
-  const [fareVerified, setFareVerified] = useState(false);
-  const [fareCheckMessage, setFareCheckMessage] = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
 
   // Auth state
@@ -97,41 +94,7 @@ export default function BookPage() {
       cabinChecked:  q.get("bag") ?? "15 KG",
     });
 
-    if (supplier === "TRIPJACK") void verifyFare(fareId);
-    else setFareVerified(true);
   }, []);
-
-  async function verifyFare(fareId: string) {
-    setFareChecking(true);
-    setFareCheckMessage("");
-    setFareExpired(false);
-    setFareVerified(false);
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 20000);
-    try {
-      const res = await fetch(`${apiUrl}/api/search/validate-fare`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
-        body: JSON.stringify({ fareId, supplier: "TRIPJACK" }),
-        signal: controller.signal,
-      });
-      const d = await res.json().catch(() => ({})) as any;
-      if (res.ok && d.valid === false && d.reason === "expired") {
-        setFareExpired(true);
-      } else if (!res.ok || d.valid !== true) {
-        setFareCheckMessage("We couldn't verify this fare right now. You can retry below.");
-      } else {
-        setFareVerified(true);
-      }
-    } catch {
-      setFareCheckMessage(controller.signal.aborted
-        ? "Fare checking timed out. Please retry before booking."
-        : "Couldn't connect to check availability. Please retry; your details are still here.");
-    } finally {
-      window.clearTimeout(timeout);
-      setFareChecking(false);
-    }
-  }
 
   useEffect(() => {
     const t = getToken();
@@ -207,7 +170,7 @@ export default function BookPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!fare || submitting || fareChecking || !fareVerified || fareExpired) return;
+    if (!fare || submitting || fareExpired) return;
     setError("");
     setSubmitting(true);
     try {
@@ -324,19 +287,6 @@ export default function BookPage() {
           <b>This fare is no longer available</b>
           <span>The supplier could not offer this fare. Your entered details remain on this page.</span>
           <a href="/">Search flights again</a>
-        </div>
-      )}
-
-      {fareChecking && (
-        <div className="checkBanner">
-          <span className="spinner" /> Checking fare availability…
-        </div>
-      )}
-
-      {!fareChecking && !fareVerified && !fareExpired && fareCheckMessage && (
-        <div className="checkBanner checkError">
-          <span>{fareCheckMessage}</span>
-          <button type="button" onClick={() => fare && verifyFare(fare.fareId)}>Retry</button>
         </div>
       )}
 
@@ -462,8 +412,8 @@ export default function BookPage() {
             <span>Total</span>
             <b>{fare ? money.format(fare.totalFare) : "—"}</b>
           </div>
-          <button disabled={!fare || submitting || fareChecking || !fareVerified || fareExpired}>
-            {fareChecking ? "Checking fare…" : submitting ? "Booking…" : "Confirm Booking"}
+          <button disabled={!fare || submitting || fareExpired}>
+            {submitting ? "Booking…" : "Confirm Booking"}
           </button>
         </div>
       </form>
