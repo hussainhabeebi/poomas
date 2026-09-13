@@ -13,7 +13,7 @@ export class TripjackClient {
     this.proxyKey = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
   }
 
-  private async request<T>(path: string, body: unknown): Promise<T> {
+  private async request<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     if (!this.baseUrl || (!this.apiKey && !this.proxyKey)) {
       throw new Error("TripJack is enabled but its gateway or API credentials are missing");
     }
@@ -26,6 +26,7 @@ export class TripjackClient {
         ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
       },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!res.ok) {
@@ -34,7 +35,7 @@ export class TripjackClient {
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
         : res.status === 404
-          ? (path.includes("book") ? "Fare has expired — please search again and book quickly" : "TripJack route not found")
+          ? "TripJack route is unavailable"
           : res.status === 429
             ? "Rate limit exceeded"
             : "Upstream request failed";
@@ -72,7 +73,16 @@ export class TripjackClient {
   }
 
   async validateFare(fareId: string) {
-    return this.request("/air-fare-detail/v2", { id: fareId, flowType: "BOOK" });
+    const result = await this.request<any>("/fms/v1/review", { priceIds: [fareId] }, AbortSignal.timeout(15000));
+    const status = result?.status ?? result?.data?.status;
+    if (status?.success === false) {
+      throw new SupplierError("TRIPJACK", 409, String(status.statusMessage ?? "Fare verification unsuccessful"));
+    }
+    const bookingId = result?.bookingId ?? result?.data?.bookingId;
+    if (typeof bookingId !== "string" || !bookingId.trim()) {
+      throw new SupplierError("TRIPJACK", 502, "TripJack did not return a booking session");
+    }
+    return { bookingId, result };
   }
 
   async book(params: HoldParams & BookParams) {

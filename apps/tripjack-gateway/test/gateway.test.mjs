@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig, secretsEqual, upstreamUrl } from "../src/gateway.mjs";
+import { loadConfig, secretsEqual, upstreamUrl, ROUTES } from "../src/gateway.mjs";
 
 test("loads a secure UAT configuration", () => {
   const config = loadConfig({ POOMAS_GATEWAY_KEY: "internal" });
@@ -28,5 +28,9 @@ test("constructs the TripJack URL without duplicating paths", () => {
     upstreamUrl(new URL("https://apitest.tripjack.com"), "/fms/v1/air-search-all"),
     "https://apitest.tripjack.com/fms/v1/air-search-all",
   );
+});
+
+test("routes fare review through the TripJack gateway", () => {
+  assert.equal(ROUTES.get("/fms/v1/review"), "/fms/v1/review");
 });
 
