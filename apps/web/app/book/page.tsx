@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import SocialSignIn from "./SocialSignIn";
+import { bookingError } from "./booking-error";
 
 type Passenger = {
   type: "ADULT" | "CHILD" | "INFANT";
@@ -35,15 +36,6 @@ const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
   passportNumber: "", passportExpiry: "",
 });
 
-function friendlyError(msg: string, status: number): string {
-  if (/expired|sold\s*out|no longer available|session.*invalid/i.test(msg)) return "This fare is no longer available. Please search again.";
-  if (/passport|document/i.test(msg))           return "Please check your passport details and try again.";
-  if (/payment|wallet/i.test(msg))              return "Payment could not be processed. Please try again.";
-  if (status === 422)                            return "We couldn't complete your booking. Please search again and try a different fare.";
-  if (status >= 500)                            return "Something went wrong on our end. Please try again in a moment.";
-  return "Booking failed. Please check your details and try again.";
-}
-
 function getToken(): string {
   try {
     const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -58,6 +50,7 @@ export default function BookPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [bookingUncertain, setBookingUncertain] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
@@ -178,7 +171,7 @@ export default function BookPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!fare || submitting || fareExpired) return;
+    if (!fare || submitting || fareExpired || bookingUncertain) return;
     if (!reviewing) { setReviewing(true); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     setError("");
     setSubmitting(true);
@@ -205,6 +198,9 @@ export default function BookPage() {
             passportExpiry: p.passportExpiry || undefined,
           })),
         }),
+      }).catch(() => {
+        setBookingUncertain(true);
+        throw new Error(bookingError({ errorCode: "BOOKING_STATUS_UNKNOWN" }, 502));
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -213,8 +209,12 @@ export default function BookPage() {
           window.scrollTo({ top: 0, behavior: "smooth" });
           return;
         }
-        const msg = (d as any).error ?? "";
-        throw new Error(friendlyError(msg, res.status));
+        if (d.errorCode === "BOOKING_STATUS_UNKNOWN" || !d.errorCode && res.status >= 500) setBookingUncertain(true);
+        throw new Error(bookingError(d, res.status));
+      }
+      if (d.success !== true || typeof d.bookingReference !== "string" || !d.bookingReference) {
+        setBookingUncertain(true);
+        throw new Error(bookingError({ errorCode: "BOOKING_STATUS_UNKNOWN" }, 502));
       }
 
       // Save traveller details if opted in
@@ -258,7 +258,9 @@ export default function BookPage() {
     return (
       <main className="ck success"><style>{css}{checkoutCss}</style>
         <div className="ok">✓</div>
-        <h1>{confirmation.status === "CONFIRMED" && confirmation.pnr ? "Booking confirmed" : "Booking request received"}</h1>
+        <h1>{["CONFIRMED", "TICKETED"].includes(confirmation.status) && confirmation.pnr ? "Booking confirmed" : "Booking request received"}</h1>
+        {confirmation.warningCode === "BOOKING_SAVE_PENDING" && <p>The supplier accepted your request, but we couldn't save all details. Do not book again. Contact support with your booking reference.</p>}
+        {confirmation.status === "PENDING" && <p>Airline confirmation is pending. Do not submit another booking for this flight.</p>}
         {confirmation.pnr && (
           <p style={{ fontSize: 22, fontWeight: 800 }}>
             PNR: <span style={{ color: "#E31E24" }}>{confirmation.pnr}</span>
@@ -441,8 +443,8 @@ export default function BookPage() {
             <span>Total</span>
             <b>{fare ? money.format(fare.totalFare) : "—"}</b>
           </div>
-          <button disabled={!fare || submitting || fareExpired}>
-            {submitting ? "Submitting booking…" : reviewing ? "Confirm booking" : "Review booking"}
+          <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
+            {submitting ? "Submitting booking…" : bookingUncertain ? "Contact support to check status" : reviewing ? "Confirm booking" : "Review booking"}
           </button>
         </div>
       </form>
