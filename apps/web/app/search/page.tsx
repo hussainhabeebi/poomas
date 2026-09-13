@@ -112,7 +112,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {params.all !== "1" && <div style={{ fontSize: 13, color: "#475569", fontWeight: 700, marginBottom: 2 }}>Recommended for you</div>}
-          {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} />)}
+          {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} adults={Math.min(9, Math.max(1, parseInt(params.adults ?? "1") || 1))} />)}
           {params.all !== "1" && filteredFares.length > displayFares.length && (
             <a href={`/search?${allQuery.toString()}`} style={{ textAlign: "center", padding: 14, border: "1px solid #cbd5e1", borderRadius: 12, color: "#0f172a", textDecoration: "none", fontWeight: 800 }}>
               View all {filteredFares.length} flights
@@ -174,9 +174,10 @@ function formatMoney(amount: number, currency: string): string {
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
 }
 
-function buildBookUrl(fare: any, fareCurrency: string, price: number): string {
+function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number): string {
   const p = new URLSearchParams({
     fareId:   fare.id ?? "",
+    adults:   String(adults),
     supplier: fare.supplier ?? "",
     airline:  fare.airlineName ?? "",
     fn:       fare.flightNumber ?? "",
@@ -194,7 +195,7 @@ function buildBookUrl(fare: any, fareCurrency: string, price: number): string {
   return `/book?${p.toString()}`;
 }
 
-function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: string | null }) {
+function FareCard({ fare, requestedCurrency, adults }: { fare: any; requestedCurrency: string | null; adults: number }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -226,7 +227,7 @@ function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: s
         {!fare.isBookable && <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>}
         {isBookable && (
           <a
-            href={buildBookUrl(fare, fareCurrency, price)}
+            href={buildBookUrl(fare, fareCurrency, price, adults)}
             className="fare-card-book-btn"
             style={{ display: "block", marginTop: 8, textAlign: "center", textDecoration: "none", WebkitTapHighlightColor: "transparent" as any }}
           >

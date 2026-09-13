@@ -62,9 +62,10 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema), async (c) => {
     try {
       const review = await client.validateFare(body.fareId);
       bookingSessionId = review.bookingId;
-    } catch (err) {
-      console.error("[book] TripJack fare review failed", err);
-      throw new HTTPException(503, { message: "We couldn't verify this fare. Please retry or search again." });
+    } catch (err: any) {
+      console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
+      return c.json({ error: err?.code === "FARE_EXPIRED" ? "This fare is no longer available." : "We couldn't confirm availability. Your details are still here.",
+        errorCode: err?.code === "FARE_EXPIRED" ? "FARE_EXPIRED" : "FARE_REVIEW_FAILED", requestId: err?.requestId }, err?.code === "FARE_EXPIRED" ? 409 : 503);
     }
   }
 

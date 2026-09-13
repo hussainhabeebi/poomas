@@ -1,6 +1,7 @@
 import type { SearchParams, HoldParams, BookParams, SupplierCredentials } from "../base.js";
 import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
+import { reviewFailure, TripjackReviewError } from "./review-error.js";
 
 export class TripjackClient {
   private baseUrl: string;
@@ -31,6 +32,11 @@ export class TripjackClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      if (path === "/fms/v1/review") {
+        let detail: unknown = null;
+        try { detail = JSON.parse(text); } catch { /* Route/proxy HTML is not fare expiry. */ }
+        throw reviewFailure(res.status, detail, crypto.randomUUID());
+      }
       console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
@@ -73,16 +79,24 @@ export class TripjackClient {
   }
 
   async validateFare(fareId: string) {
-    const result = await this.request<any>("/fms/v1/review", { priceIds: [fareId] }, AbortSignal.timeout(15000));
-    const status = result?.status ?? result?.data?.status;
-    if (status?.success === false) {
-      throw new SupplierError("TRIPJACK", 409, String(status.statusMessage ?? "Fare verification unsuccessful"));
+    const requestId = crypto.randomUUID();
+    try {
+      const raw = await this.request<any>("/fms/v1/review", { priceIds: [fareId] }, AbortSignal.timeout(15000));
+      const result = raw?.data ?? raw?.result ?? raw;
+      if (raw?.status?.success === false || result?.status?.success === false || result?.errors?.length) {
+        throw reviewFailure(200, raw?.status?.success === false ? raw : result, requestId);
+      }
+      const bookingId = result?.bookingId;
+      if (typeof bookingId !== "string" || !bookingId.trim()) {
+        throw new TripjackReviewError("REVIEW_INVALID_RESPONSE", 502, requestId);
+      }
+      return { bookingId, result };
+    } catch (err) {
+      if (err instanceof TripjackReviewError) throw err;
+      const code = err instanceof Error && /TimeoutError|AbortError/.test(err.name) ? "REVIEW_TIMEOUT" : "REVIEW_UNAVAILABLE";
+      console.error("[tripjack-review]", JSON.stringify({ requestId, code }));
+      throw new TripjackReviewError(code, 503, requestId);
     }
-    const bookingId = result?.bookingId ?? result?.data?.bookingId;
-    if (typeof bookingId !== "string" || !bookingId.trim()) {
-      throw new SupplierError("TRIPJACK", 502, "TripJack did not return a booking session");
-    }
-    return { bookingId, result };
   }
 
   async book(params: HoldParams & BookParams) {

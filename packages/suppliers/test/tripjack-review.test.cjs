@@ -10,7 +10,8 @@ function moduleUrl(file) {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   return 'data:text/javascript;base64,' + Buffer.from(output.replace(
-    '"../riya/client.js"', JSON.stringify(file.includes('tripjack') ? moduleUrl('../src/riya/client.ts') : ''),
+    /from "(\.[^"]+\.js)"/g,
+    (_, dependency) => 'from ' + JSON.stringify(moduleUrl(path.join(path.dirname(file), dependency.replace(/\.js$/, '.ts')))),
   )).toString('base64');
 }
 
@@ -33,23 +34,36 @@ test('TripJack review contract and safe error handling', async (t) => {
   await t.test('unspecified supplier failure is not invented expiry', async () => {
     global.fetch = async () => Response.json({ status: { success: false } });
     await assert.rejects(client.validateFare('price-1'), (err) => {
-      assert.equal(err.body, 'Fare verification unsuccessful');
+      assert.equal(err.code, 'REVIEW_REJECTED');
       return true;
     });
   });
 
   await t.test('missing booking session fails closed', async () => {
     global.fetch = async () => Response.json({ status: { success: true } });
-    await assert.rejects(client.validateFare('price-1'), /did not return a booking session/);
+    await assert.rejects(client.validateFare('price-1'), (err) => err.code === 'REVIEW_INVALID_RESPONSE');
   });
 
   await t.test('route 404 is not fare expiry', async () => {
     global.fetch = async () => new Response('{}', { status: 404 });
-    await assert.rejects(client.validateFare('price-1'), /route is unavailable/);
+    await assert.rejects(client.validateFare('price-1'), (err) => err.code === 'REVIEW_ROUTE_UNAVAILABLE');
   });
 
   await t.test('explicit supplier fare expiry is preserved', async () => {
     global.fetch = async () => Response.json({ status: { success: false, statusMessage: 'Fare has expired' } });
     await assert.rejects(client.validateFare('price-1'), /Fare has expired/);
+  });
+
+  for (const wrapper of ['data', 'result']) await t.test(`accepts ${wrapper}-wrapped review`, async () => {
+    global.fetch = async () => Response.json({ [wrapper]: { status: { success: true }, bookingId: 'wrapped' } });
+    assert.equal((await client.validateFare('price-1')).bookingId, 'wrapped');
+  });
+  await t.test('credential expiry cannot be mistaken for fare expiry', async () => {
+    global.fetch = async () => Response.json({ errors: [{ errCode: '6041', message: 'API token expired' }] }, { status: 401 });
+    await assert.rejects(client.validateFare('price-1'), (err) => err.code === 'REVIEW_AUTH_FAILED');
+  });
+  await t.test('HTTP 400 structured fare expiry is recognised', async () => {
+    global.fetch = async () => Response.json({ errors: [{ message: 'Fare has expired' }] }, { status: 400 });
+    await assert.rejects(client.validateFare('price-1'), (err) => err.code === 'FARE_EXPIRED');
   });
 });

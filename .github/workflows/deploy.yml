@@ -11,6 +11,7 @@ env:
 jobs:
   deploy-api:
     name: Deploy API Worker
+    needs: migrate-db
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -43,7 +44,8 @@ jobs:
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "DATABASE_URL is not configured; skipping migrations."
+            echo "DATABASE_URL is required before deploying the social sign-in schema."
+            exit 1
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
@@ -57,6 +59,11 @@ jobs:
             echo "Applying $f..."
             psql "$DATABASE_URL" -f "$f" || echo "Warning: $f may already be applied, continuing..."
           done
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Require social sign-in schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f packages/db/drizzle/migrations/0003_customer_social_signin.sql
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
