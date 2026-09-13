@@ -35,7 +35,7 @@ const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
 });
 
 function friendlyError(msg: string, status: number): string {
-  if (/expired|no longer|not found/i.test(msg)) return "This fare is no longer available. Please search again.";
+  if (/expired|sold\s*out|no longer available|session.*invalid/i.test(msg)) return "This fare is no longer available. Please search again.";
   if (/passport|document/i.test(msg))           return "Please check your passport details and try again.";
   if (/payment|wallet/i.test(msg))              return "Payment could not be processed. Please try again.";
   if (status === 422)                            return "We couldn't complete your booking. Please search again and try a different fare.";
@@ -60,6 +60,8 @@ export default function BookPage() {
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
   const [fareChecking, setFareChecking] = useState(false);
+  const [fareVerified, setFareVerified] = useState(false);
+  const [fareCheckMessage, setFareCheckMessage] = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
 
   // Auth state
@@ -95,20 +97,41 @@ export default function BookPage() {
       cabinChecked:  q.get("bag") ?? "15 KG",
     });
 
-    // Validate the fare is still live before the customer starts typing
-    if (supplier === "TRIPJACK") {
-      setFareChecking(true);
-      fetch(`${apiUrl}/api/search/validate-fare`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
-        body:    JSON.stringify({ fareId, supplier }),
-      })
-        .then((r) => r.json())
-        .then((d: any) => { if (!d.valid) setFareExpired(true); })
-        .catch(() => { /* network error — let them try anyway */ })
-        .finally(() => setFareChecking(false));
-    }
+    if (supplier === "TRIPJACK") void verifyFare(fareId);
+    else setFareVerified(true);
   }, []);
+
+  async function verifyFare(fareId: string) {
+    setFareChecking(true);
+    setFareCheckMessage("");
+    setFareExpired(false);
+    setFareVerified(false);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch(`${apiUrl}/api/search/validate-fare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify({ fareId, supplier: "TRIPJACK" }),
+        signal: controller.signal,
+      });
+      const d = await res.json().catch(() => ({})) as any;
+      if (res.ok && d.valid === false && d.reason === "expired") {
+        setFareExpired(true);
+      } else if (!res.ok || d.valid !== true) {
+        setFareCheckMessage("We couldn't verify this fare right now. You can retry below.");
+      } else {
+        setFareVerified(true);
+      }
+    } catch {
+      setFareCheckMessage(controller.signal.aborted
+        ? "Fare checking timed out. Please retry before booking."
+        : "Couldn't connect to check availability. Please retry; your details are still here.");
+    } finally {
+      window.clearTimeout(timeout);
+      setFareChecking(false);
+    }
+  }
 
   useEffect(() => {
     const t = getToken();
@@ -184,7 +207,7 @@ export default function BookPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!fare || submitting) return;
+    if (!fare || submitting || fareChecking || !fareVerified || fareExpired) return;
     setError("");
     setSubmitting(true);
     try {
@@ -213,7 +236,7 @@ export default function BookPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if ((d as any).errorCode === "FARE_EXPIRED" || res.status === 404) {
+        if ((d as any).errorCode === "FARE_EXPIRED") {
           setFareExpired(true);
           window.scrollTo({ top: 0, behavior: "smooth" });
           return;
@@ -259,20 +282,6 @@ export default function BookPage() {
     }
   }
 
-  if (fareExpired) {
-    return (
-      <main className="ck success"><style>{css}</style>
-        <div className="ok" style={{ background: "#fef3c7", color: "#d97706" }}>⏱</div>
-        <h1>Fare No Longer Available</h1>
-        <p style={{ color: "#667085", maxWidth: 320, margin: "0 auto 24px" }}>
-          Flight prices change quickly. This fare expired before we could confirm it.
-          Please search again and book as soon as you find a price you like.
-        </p>
-        <a className="home" href="/">Search flights again</a>
-      </main>
-    );
-  }
-
   if (confirmation) {
     return (
       <main className="ck success"><style>{css}</style>
@@ -310,9 +319,24 @@ export default function BookPage() {
       </div>
       <div className="stepLabels"><span>Flight</span><span>Travellers</span><span>Confirm</span></div>
 
+      {fareExpired && (
+        <div className="err" role="alert">
+          <b>This fare is no longer available</b>
+          <span>The supplier could not offer this fare. Your entered details remain on this page.</span>
+          <a href="/">Search flights again</a>
+        </div>
+      )}
+
       {fareChecking && (
         <div className="checkBanner">
           <span className="spinner" /> Checking fare availability…
+        </div>
+      )}
+
+      {!fareChecking && !fareVerified && !fareExpired && fareCheckMessage && (
+        <div className="checkBanner checkError">
+          <span>{fareCheckMessage}</span>
+          <button type="button" onClick={() => fare && verifyFare(fare.fareId)}>Retry</button>
         </div>
       )}
 
@@ -438,7 +462,7 @@ export default function BookPage() {
             <span>Total</span>
             <b>{fare ? money.format(fare.totalFare) : "—"}</b>
           </div>
-          <button disabled={!fare || submitting || fareChecking}>
+          <button disabled={!fare || submitting || fareChecking || !fareVerified || fareExpired}>
             {fareChecking ? "Checking fare…" : submitting ? "Booking…" : "Confirm Booking"}
           </button>
         </div>
@@ -462,4 +486,4 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
+const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.checkError{justify-content:space-between;background:#fff7ed;border-color:#fed7aa;color:#9a3412}.checkError button{border:0;background:#ea580c;color:#fff;border-radius:8px;padding:7px 12px;font-weight:800;cursor:pointer}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
