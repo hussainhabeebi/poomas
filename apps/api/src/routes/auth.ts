@@ -6,8 +6,10 @@ import { SignJWT } from "jose";
 import { users, userSessions } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { socialAuthRoutes } from "./social-auth.js";
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+authRoutes.route("/social", socialAuthRoutes);
 
 const loginSchema = z.object({
   email:    z.string().email().optional(),

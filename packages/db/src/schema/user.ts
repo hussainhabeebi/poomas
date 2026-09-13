@@ -13,6 +13,8 @@ export const users = pgTable("users", {
   phone:        text("phone"),
   name:         text("name"),
   passwordHash: text("password_hash"),
+  socialProvider: text("social_provider"),
+  socialSubject: text("social_subject"),
   role:         userRoleEnum("role").notNull().default("CUSTOMER"),
   isActive:     boolean("is_active").notNull().default(true),
 
@@ -36,7 +38,17 @@ export const users = pgTable("users", {
 }, (t) => ({
   emailIdx: uniqueIndex("users_tenant_email_idx").on(t.tenantId, t.email),
   phoneIdx: uniqueIndex("users_tenant_phone_idx").on(t.tenantId, t.phone),
+  socialIdx: uniqueIndex("users_tenant_social_idx").on(t.tenantId, t.socialProvider, t.socialSubject),
 }));
+
+export const socialAuthChallenges = pgTable("social_auth_challenges", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  nonce: text("nonce").notNull(),
+  proofHash: text("proof_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
 
 export const userSessions = pgTable("user_sessions", {
   id:        text("id").primaryKey().default(sql`gen_random_uuid()`),

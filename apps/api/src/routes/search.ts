@@ -288,11 +288,10 @@ searchRoutes.post("/validate-fare", async (c) => {
       const result = await client.validateFare(fareId);
       return c.json({ valid: true, bookingId: result.bookingId });
     } catch (err: any) {
-      const message = `${err?.body ?? ""} ${err?.message ?? ""}`;
-      if (/(?:fare|price|booking session)\s+(?:has\s+|is\s+)?expired|fare\s+(?:is\s+)?no longer available|sold[ -]?out/i.test(message)) {
-        return c.json({ valid: false, reason: "expired" }, 200);
+      if (err?.code === "FARE_EXPIRED") {
+        return c.json({ valid: false, reason: "expired", requestId: err.requestId }, 200);
       }
-      return c.json({ valid: false, reason: "unavailable", message: "We couldn't verify this fare right now." }, 200);
+      return c.json({ valid: false, reason: "unavailable", requestId: err?.requestId, message: "We couldn't verify this fare right now." }, 200);
     }
   }
 
