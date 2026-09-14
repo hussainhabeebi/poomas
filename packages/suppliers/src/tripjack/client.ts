@@ -2,6 +2,12 @@ import type { SearchParams, HoldParams, BookParams, SupplierCredentials } from "
 import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
 
+/** Convert YYYY-MM-DD to TripJack's required dd-MM-yyyy format. */
+function toTripjackDate(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}-${m}-${y}`;
+}
+
 export class TripjackClient {
   private baseUrl: string;
   private apiKey:  string;
@@ -83,11 +89,13 @@ export class TripjackClient {
         ti: passenger.gender === "F" ? "Ms" : "Mr",
         fN: passenger.firstName,
         lN: passenger.lastName,
-        pt: passenger.type,
-        ...(passenger.dob ? { dob: passenger.dob } : {}),
+        // TripJack requires abbreviated codes: ADT, CHD, INF
+        pt: passenger.type === "ADULT" ? "ADT" : passenger.type === "CHILD" ? "CHD" : "INF",
+        // TripJack requires dd-MM-yyyy date format
+        ...(passenger.dob ? { dob: toTripjackDate(passenger.dob) } : {}),
         ...(passenger.nationality ? { pNat: passenger.nationality } : {}),
         ...(passenger.passportNumber ? { pNum: passenger.passportNumber } : {}),
-        ...(passenger.passportExpiry ? { eD: passenger.passportExpiry } : {}),
+        ...(passenger.passportExpiry ? { eD: toTripjackDate(passenger.passportExpiry) } : {}),
       })),
       deliveryInfo: {
         emails: [params.contactEmail],
