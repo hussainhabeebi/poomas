@@ -43,8 +43,15 @@ export class TripjackClient {
         try { detail = JSON.parse(text); } catch { /* Route/proxy HTML is not fare expiry. */ }
         throw reviewFailure(res.status, detail, crypto.randomUUID());
       }
-      if (path === "/air-book/v2") console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 500));
-      else console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
+      if (path === "/air-book/v2") {
+        console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 500));
+        let bookDetail: unknown = null;
+        try { bookDetail = JSON.parse(text); } catch {}
+        const statusMsg = String((bookDetail as any)?.status?.statusMessage ?? "").toLowerCase();
+        if (/expir|no longer available|booking session/i.test(statusMsg)) {
+          throw new SupplierError("TRIPJACK", 409, "Booking session expired");
+        }
+      } else console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
         : res.status === 404
@@ -109,7 +116,7 @@ export class TripjackClient {
   async book(params: HoldParams & BookParams) {
     const phone = params.contactPhone.replace(/\D/g, "");
     const travellerInfo = params.passengers.map((p) => ({
-      ti:  p.gender === "F" ? "Ms" : "Mr",
+      ti:  p.type !== "ADULT" ? (p.gender === "F" ? "Miss" : "Mstr") : (p.gender === "F" ? "Ms" : "Mr"),
       fN:  p.firstName,
       lN:  p.lastName,
       // TripJack requires abbreviated codes: ADT, CHD, INF
