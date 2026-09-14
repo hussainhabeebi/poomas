@@ -85,6 +85,17 @@ export interface HoldResult {
   fareSnapshot:  NormalizedFare;
 }
 
+export interface RevalidateResult {
+  success:       boolean;
+  fareId:        string;
+  bookingId:     string;
+  baseFare?:     number;
+  taxes?:        number;
+  totalFare?:    number;
+  currency?:     string;
+  raw:           unknown;
+}
+
 export interface BookParams extends HoldParams {
   holdId:       string;
   contactEmail: string;
@@ -121,6 +132,7 @@ export interface SupplierAdapter {
 
   search(params: SearchParams): Promise<NormalizedFare[]>;
   getFareRules?(fareId: string, sessionId?: string): Promise<FareRule[]>;
+  revalidate?(fareId: string): Promise<RevalidateResult>;
 
   // Bookable suppliers only
   hold?(params: HoldParams): Promise<HoldResult>;

@@ -3,6 +3,12 @@ import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
 import { reviewFailure, TripjackReviewError } from "./review-error.js";
 
+/** Convert YYYY-MM-DD to TripJack's required dd-MM-yyyy format. */
+function toTripjackDate(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}-${m}-${y}`;
+}
+
 export class TripjackClient {
   private baseUrl: string;
   private apiKey:  string;
@@ -101,22 +107,28 @@ export class TripjackClient {
   }
 
   async book(params: HoldParams & BookParams) {
+    const phone = params.contactPhone.replace(/\D/g, "");
     const travellerInfo = params.passengers.map((p) => ({
-      ti:   p.gender === "F" ? "Ms" : "Mr",
-      fN:   p.firstName,
-      lN:   p.lastName,
-      pt:   p.type,
-      dob:  p.dob,
-      pNum: p.passportNumber,
-      eD:   p.passportExpiry,
-      pid:  p.nationality ?? "IN",
+      ti:  p.gender === "F" ? "Ms" : "Mr",
+      fN:  p.firstName,
+      lN:  p.lastName,
+      // TripJack requires abbreviated codes: ADT, CHD, INF
+      pt:  p.type === "ADULT" ? "ADT" : p.type === "CHILD" ? "CHD" : "INF",
+      // TripJack requires dd-MM-yyyy date format
+      ...(p.dob            ? { dob: toTripjackDate(p.dob) }                : {}),
+      ...(p.passportNumber ? { pNum: p.passportNumber }                    : {}),
+      ...(p.passportExpiry ? { eD: toTripjackDate(p.passportExpiry) }      : {}),
+      ...(p.nationality    ? { pNat: p.nationality }                       : {}),
     }));
 
     return this.request("/air-book/v2", {
       bookingId:  params.holdId,
       deliveryInfo: {
         emails:  [params.contactEmail],
-        mobiles: [{ countryCode: "+91", number: params.contactPhone }],
+        mobiles: [{
+          countryCode: phone.length > 10 ? `+${phone.slice(0, phone.length - 10)}` : "+91",
+          number: phone.slice(-10),
+        }],
       },
       travellerInfo,
     }, AbortSignal.timeout(45000));

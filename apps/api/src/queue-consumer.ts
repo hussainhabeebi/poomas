@@ -276,6 +276,17 @@ async function handlePaymentCaptured(
     maxRetries:  s.maxRetries,
   }));
 
+  // Build platform credentials from env so the queue worker can reach suppliers
+  // even when they are configured only via env vars and not in the DB.
+  const platformCredentials = {
+    ...(env.RIYA_API_KEY && env.RIYA_API_BASE_URL
+      ? { RIYA: { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } }
+      : {}),
+    ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
+      ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY } }
+      : {}),
+  };
+
   // Load passengers
   const paxRows = await db
     .select()
@@ -283,7 +294,7 @@ async function handlePaymentCaptured(
     .where(eq(bookingPassengers.bookingId, booking.id));
 
   // Call supplier book()
-  const adapter = getBookableAdapter(booking.supplier as "RIYA" | "TRIPJACK", supplierConfigs);
+  const adapter = getBookableAdapter(booking.supplier as "RIYA" | "TRIPJACK", supplierConfigs, platformCredentials);
 
   if (!adapter.book) {
     throw new Error(`${booking.supplier} adapter does not implement book()`);
@@ -291,11 +302,27 @@ async function handlePaymentCaptured(
 
   const flightData = booking.flightData as Record<string, unknown>;
 
+  // TripJack requires a review step before booking to obtain a booking session ID.
+  // The review step may have been skipped during reservation creation (partner/checkout
+  // flows). If supplierBookingRef is not set, call review now to get the session ID.
+  let tripjackHoldId = booking.supplierBookingRef ?? "";
+  if (booking.supplier === "TRIPJACK" && !tripjackHoldId) {
+    const fareId = (flightData.id as string) ?? booking.supplierSessionId ?? "";
+    if (!fareId) throw new Error(`TripJack booking ${booking.id}: no fare ID to review`);
+    if (!adapter.revalidate) throw new Error("TripJack adapter missing revalidate");
+    const reviewed = await adapter.revalidate(fareId);
+    tripjackHoldId = reviewed.bookingId;
+    // Persist so retries don't call review again
+    await db.update(bookings)
+      .set({ supplierBookingRef: tripjackHoldId, updatedAt: new Date() })
+      .where(eq(bookings.id, booking.id));
+  }
+
   let bookResult;
   try {
     bookResult = await adapter.book({
       fareId:    flightData.id as string,
-      holdId:    booking.supplierBookingRef ?? "",
+      holdId:    booking.supplier === "TRIPJACK" ? tripjackHoldId : (booking.supplierBookingRef ?? ""),
       sessionId: booking.supplierSessionId ?? undefined,
       contactEmail: booking.contactEmail ?? "",
       contactPhone: booking.contactPhone ?? "",
