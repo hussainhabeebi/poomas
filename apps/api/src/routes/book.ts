@@ -95,6 +95,9 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   } catch (err: any) {
     // Once sent, a network/5xx failure cannot establish that no booking exists.
     const status = Number(err?.statusCode);
+    if (status === 409) {
+      return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
+    }
     const rejected = [400, 401, 403, 404, 422, 429].includes(status);
     console.error("[book-submit]", JSON.stringify({ requestId, httpStatus: status || null,
       code: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN" }));
@@ -103,6 +106,12 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   }
 
   if (!result.success) {
+    // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
+    // so the frontend shows "search again" rather than "contact support".
+    const rawMsg = String((result.raw as any)?.status?.statusMessage ?? "").toLowerCase();
+    if (/expir|no longer available|booking session/i.test(rawMsg)) {
+      return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
+    }
     return c.json({ errorCode: "BOOKING_REJECTED", requestId }, 422);
   }
 
