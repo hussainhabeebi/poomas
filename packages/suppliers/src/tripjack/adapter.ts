@@ -4,6 +4,7 @@ import type {
 } from "../base.js";
 import { TripjackClient } from "./client.js";
 import { normalizeTripjackFare } from "./normalizer.js";
+import { TripjackReviewError } from "./review-error.js";
 
 export class TripjackAdapter implements SupplierAdapter {
   readonly name = "TRIPJACK" as const;
@@ -54,31 +55,29 @@ export class TripjackAdapter implements SupplierAdapter {
   }
 
   async revalidate(fareId: string): Promise<RevalidateResult> {
-    const raw = await this.client.review(fareId) as Record<string, unknown>;
-    const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
-    const status = response.status as { success?: boolean; statusMessage?: string } | undefined;
-    if (status?.success === false) {
-      throw new Error(status.statusMessage || "TripJack could not revalidate this fare");
+    try {
+      const { bookingId, result } = await this.client.validateFare(fareId);
+      const response = (result as any)?.data ?? (result as any)?.result ?? result as Record<string, unknown>;
+      const price = (response as any).totalPriceInfo as {
+        fd?: { fC?: { BF?: number; TAF?: number; TF?: number } };
+      } | undefined;
+      const components = price?.fd?.fC;
+      return {
+        success: true,
+        fareId,
+        bookingId,
+        baseFare: components?.BF,
+        taxes: components?.TAF,
+        totalFare: components?.TF,
+        currency: String((response as any).currency ?? "INR"),
+        raw: response,
+      };
+    } catch (err) {
+      if (err instanceof TripjackReviewError) {
+        throw new Error(err.message || "TripJack could not revalidate this fare");
+      }
+      throw err;
     }
-
-    const bookingId = String(response.bookingId ?? "");
-    if (!bookingId) throw new Error("TripJack review did not return a booking ID");
-
-    const price = response.totalPriceInfo as {
-      fd?: { fC?: { BF?: number; TAF?: number; TF?: number } };
-    } | undefined;
-    const components = price?.fd?.fC;
-
-    return {
-      success: true,
-      fareId,
-      bookingId,
-      baseFare: components?.BF,
-      taxes: components?.TAF,
-      totalFare: components?.TF,
-      currency: String(response.currency ?? "INR"),
-      raw: response,
-    };
   }
 
   async hold(_params: HoldParams): Promise<HoldResult> {
