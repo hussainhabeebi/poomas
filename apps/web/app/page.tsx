@@ -21,7 +21,7 @@ export default function HomePage() {
     <main>
       <HeroBanner banners={[]} />
       <section id="flight-search" className="home-shell search-overlap">
-        <div className="section-kicker">Live flight &amp; hotel search</div>
+        <div className="section-kicker">Live flight search</div>
         <SearchWidget />
       </section>
 

@@ -1,10 +1,10 @@
-import { cookies } from "next/headers";
+import Link from "next/link";
 
-type HotelSearchParams = {
-  cityCode?: string; city?: string;
+type SearchParams = {
+  city?: string; cityName?: string;
   checkIn?: string; checkOut?: string;
   rooms?: string; adults?: string;
-  currency?: "INR" | "AED" | "USD";
+  currency?: string;
 };
 
 type NormalizedHotel = {
@@ -15,127 +15,135 @@ type NormalizedHotel = {
   currency: string; images: string[]; amenities: string[];
 };
 
-type HotelResult = {
+type HotelSearchResult = {
   hotels: NormalizedHotel[];
   supplier?: string;
   fromCache?: boolean;
-  apiError?: string;
+  error?: string;
 };
 
-const CURRENCY_LOCALES: Record<string, string> = {
-  INR: "en-IN", AED: "en-AE", USD: "en-US",
-};
+interface PageProps { searchParams: Promise<SearchParams>; }
 
-const MEAL_PLAN_LABELS: Record<string, string> = {
-  EP: "Room only", CP: "Breakfast included", MAP: "Half board", AP: "Full board",
-};
-
-interface HotelSearchPageProps { searchParams: Promise<HotelSearchParams>; }
-
-async function searchHotels(params: HotelSearchParams, sessionId: string | null): Promise<HotelResult> {
+async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
+  const rooms  = parseInt(params.rooms ?? "1");
+  const adults = parseInt(params.adults ?? "1");
   try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
-    const rooms = parseInt(params.rooms ?? "1");
-    const adults = parseInt(params.adults ?? "2");
-    const roomsArr = Array.from({ length: Math.max(1, rooms) }, () => ({ adults: Math.max(1, adults), children: 0 }));
-
     const res = await fetch(`${apiUrl}/api/hotels/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-tenant-slug": "poomas",
-        ...(sessionId ? { "X-Session-ID": sessionId } : {}),
-      },
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
       body: JSON.stringify({
-        cityCode:    params.cityCode ?? "",
+        cityCode:    params.city ?? "",
         checkIn:     params.checkIn ?? "",
         checkOut:    params.checkOut ?? "",
-        rooms:       roomsArr,
+        rooms:       Array.from({ length: rooms }, () => ({ adults, children: 0 })),
         nationality: "IN",
         currency:    params.currency ?? "INR",
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(35_000),
+      signal: AbortSignal.timeout(25_000),
     });
-
-    const raw = await res.text();
-    let data: HotelResult | { error?: string } | null = null;
-    try { data = raw ? JSON.parse(raw) : null; } catch {}
-
-    if (!res.ok) {
-      return {
-        hotels: [],
-        apiError: (data && "error" in data ? data.error : undefined) ?? `${res.status} ${res.statusText}${raw ? ` — ${raw.slice(0, 180)}` : ""}`,
-      };
-    }
-    return (data as HotelResult) ?? { hotels: [], apiError: "Hotel API returned an empty response" };
+    const data = await res.json().catch(() => ({})) as HotelSearchResult;
+    if (!res.ok) return { hotels: [], error: (data as any).error ?? `API error ${res.status}` };
+    return data;
   } catch (err) {
-    return { hotels: [], apiError: err instanceof Error ? err.message : "Hotel API unavailable" };
+    return { hotels: [], error: err instanceof Error ? err.message : "Search unavailable" };
   }
 }
 
-export default async function HotelSearchPage({ searchParams }: HotelSearchPageProps) {
-  const params = await searchParams;
-  let sessionId: string | null = null;
-  try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
-
-  const result = await searchHotels(params, sessionId);
-  const hotels = result.hotels ?? [];
-  const currency = (params.currency ?? "INR").toUpperCase();
-  const locale = CURRENCY_LOCALES[currency] ?? "en-US";
-  const nights = params.checkIn && params.checkOut
-    ? Math.round((new Date(params.checkOut).getTime() - new Date(params.checkIn).getTime()) / 86400000)
-    : 0;
-
-  function fmt(amount: number, cur: string): string {
-    const c = (cur || currency).toUpperCase();
-    const l = CURRENCY_LOCALES[c] ?? locale;
-    try { return new Intl.NumberFormat(l, { style: "currency", currency: c, maximumFractionDigits: 0 }).format(amount); }
-    catch { return `${c} ${amount.toLocaleString()}`; }
+function formatMoney(amount: number, currency: string): string {
+  const code = (currency || "INR").toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency: code, maximumFractionDigits: 0 }).format(amount);
+  } catch {
+    return `${code} ${amount.toLocaleString()}`;
   }
+}
+
+function buildBookUrl(hotel: NormalizedHotel, rooms: number): string {
+  const p = new URLSearchParams({
+    optionId:  hotel.id,
+    name:      hotel.name,
+    stars:     String(hotel.starRating),
+    price:     String(hotel.totalFare),
+    currency:  hotel.currency,
+    checkIn:   hotel.checkIn,
+    checkOut:  hotel.checkOut,
+    nights:    String(hotel.nights),
+    rooms:     String(rooms),
+    roomType:  hotel.roomType,
+    mealPlan:  hotel.mealPlan,
+    ref:       hotel.isRefundable ? "1" : "0",
+    city:      hotel.cityCode,
+    address:   hotel.address,
+  });
+  return `/hotels/book?${p}`;
+}
+
+function Stars({ n }: { n: number }) {
+  const full = Math.round(n);
+  return (
+    <span style={{ color: "#f59e0b", fontSize: 13, letterSpacing: 1 }}>
+      {"★".repeat(Math.max(0, Math.min(5, full)))}
+      {"☆".repeat(Math.max(0, 5 - Math.min(5, full)))}
+    </span>
+  );
+}
+
+export default async function HotelSearchPage({ searchParams }: PageProps) {
+  const params  = await searchParams;
+  const result  = await searchHotels(params);
+  const hotels  = result.hotels ?? [];
+  const rooms   = parseInt(params.rooms ?? "1");
+  const nights  = hotels[0]?.nights ?? (
+    params.checkIn && params.checkOut
+      ? Math.max(1, Math.round((new Date(params.checkOut).getTime() - new Date(params.checkIn).getTime()) / 86400000))
+      : 1
+  );
 
   return (
     <main className="page-container" style={{ paddingTop: 16 }}>
       <div style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: "clamp(18px,4vw,24px)", fontWeight: 800, margin: "0 0 4px" }}>
-          Hotels in {params.city ?? params.cityCode}
+          Hotels in {params.cityName ?? params.city}
         </h1>
         <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
-          {params.checkIn} → {params.checkOut}
-          {nights > 0 ? ` · ${nights} night${nights !== 1 ? "s" : ""}` : ""}
-          {` · ${params.rooms ?? 1} room${Number(params.rooms ?? 1) > 1 ? "s" : ""}`}
-          {` · ${params.adults ?? 2} adult${Number(params.adults ?? 2) > 1 ? "s" : ""}`}
-          {` · ${currency}`}
+          {params.checkIn} → {params.checkOut} · {nights} night{nights !== 1 ? "s" : ""} ·{" "}
+          {rooms} room{rooms !== 1 ? "s" : ""} · {params.adults ?? 1} adult{Number(params.adults) > 1 ? "s" : ""}/room
         </p>
       </div>
 
-      <a href="/" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#6b7280", textDecoration: "none", marginBottom: 12 }}>
-        ← Modify search
-      </a>
+      <div style={{ marginBottom: 16 }}>
+        <a href="/hotels" style={{ fontSize: 13, color: "#E31E24", textDecoration: "none", fontWeight: 600 }}>
+          ‹ New search
+        </a>
+      </div>
 
       {hotels.length === 0 ? (
         <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
           <div style={{ fontSize: 44, marginBottom: 14 }}>🏨</div>
           <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>
-            {result.apiError ? "Hotel search unavailable" : "No hotels found"}
+            {result.error ? "Hotel search unavailable" : "No hotels found"}
           </p>
-          <p style={{ margin: "0 0 12px" }}>
-            {result.apiError ? "The hotel API could not complete this search." : "Try different dates or destination."}
+          <p style={{ margin: "0 0 20px" }}>
+            {result.error ?? "Try different dates or destination."}
           </p>
-          {result.apiError && (
-            <p style={{ margin: "0 auto 16px", maxWidth: 760, fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 12px", wordBreak: "break-word" }}>
-              {result.apiError}
+          {result.error && (
+            <p style={{ fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 12px", maxWidth: 600, margin: "0 auto 20px", wordBreak: "break-word" }}>
+              {result.error}
             </p>
           )}
-          <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search Again</a>
+          <a href="/hotels" className="fare-card-book-btn" style={{ maxWidth: 200, margin: "0 auto" }}>
+            Search again
+          </a>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ fontSize: 13, color: "#475569", fontWeight: 700, marginBottom: 2 }}>
+          <p style={{ margin: 0, fontSize: 13, color: "#475569", fontWeight: 700 }}>
             {hotels.length} hotel{hotels.length !== 1 ? "s" : ""} found
-          </div>
+          </p>
           {hotels.map((hotel, i) => (
-            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} fmt={fmt} nights={nights} />
+            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} />
           ))}
         </div>
       )}
@@ -143,69 +151,68 @@ export default async function HotelSearchPage({ searchParams }: HotelSearchPageP
   );
 }
 
-function StarRating({ stars }: { stars: number }) {
-  return (
-    <span style={{ color: "#f59e0b", fontSize: 13 }}>
-      {"★".repeat(Math.min(5, Math.max(0, stars)))}
-      {"☆".repeat(Math.max(0, 5 - Math.min(5, stars)))}
-    </span>
-  );
-}
-
-function HotelCard({ hotel, fmt, nights }: { hotel: NormalizedHotel; fmt: (a: number, c: string) => string; nights: number }) {
-  const img = hotel.images?.[0];
-  const mealLabel = MEAL_PLAN_LABELS[hotel.mealPlan] ?? hotel.mealPlan;
+function HotelCard({ hotel, rooms }: { hotel: NormalizedHotel; rooms: number }) {
+  const price = hotel.totalFare;
+  const bookable = Boolean(hotel.id);
 
   return (
-    <div className="fare-card" style={{ flexDirection: "column", gap: 0, padding: 0, overflow: "hidden" }}>
-      <div style={{ display: "flex", gap: 0, flexWrap: "wrap" }}>
-        {img && (
-          <div style={{ width: 120, minHeight: 100, flexShrink: 0, overflow: "hidden" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={img} alt={hotel.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          </div>
-        )}
-        <div style={{ flex: 1, padding: "16px", display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{hotel.name}</div>
-              <StarRating stars={hotel.starRating} />
-            </div>
-            <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: 20, color: "var(--color-primary)" }}>
-                {fmt(hotel.totalFare, hotel.currency)}
-              </div>
-              {nights > 0 && (
-                <div style={{ fontSize: 11, color: "#9ca3af" }}>
-                  {fmt(Math.round(hotel.totalFare / nights), hotel.currency)} / night
-                </div>
-              )}
-            </div>
-          </div>
-
+    <div style={{
+      border: "1.5px solid #e5e7eb", borderRadius: 10, padding: 16, background: "white",
+      display: "flex", flexDirection: "column", gap: 10,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 3 }}>{hotel.name || "—"}</div>
+          <Stars n={hotel.starRating} />
           {hotel.address && (
-            <div style={{ fontSize: 12, color: "#6b7280" }}>📍 {hotel.address}</div>
-          )}
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
-            <span style={{ background: "#f1f5f9", borderRadius: 4, padding: "2px 7px", color: "#475569" }}>
-              {hotel.roomType}
-            </span>
-            <span style={{ background: "#f1f5f9", borderRadius: 4, padding: "2px 7px", color: "#475569" }}>
-              {mealLabel}
-            </span>
-            <span style={{ color: hotel.isRefundable ? "#059669" : "#9ca3af" }}>
-              {hotel.isRefundable ? "✓ Free cancellation" : "Non-refundable"}
-            </span>
-          </div>
-
-          {hotel.amenities?.length > 0 && (
-            <div style={{ fontSize: 11, color: "#94a3b8" }}>
-              {hotel.amenities.slice(0, 4).join(" · ")}
-            </div>
+            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 3 }}>{hotel.address}</div>
           )}
         </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 20, color: "#E31E24" }}>
+            {formatMoney(price, hotel.currency)}
+          </div>
+          <div style={{ fontSize: 11, color: "#9ca3af" }}>
+            {hotel.nights} night{hotel.nights !== 1 ? "s" : ""}, {rooms} room{rooms !== 1 ? "s" : ""}
+          </div>
+        </div>
       </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
+        {hotel.roomType && (
+          <span style={{ background: "#f1f5f9", color: "#374151", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>
+            {hotel.roomType}
+          </span>
+        )}
+        {hotel.mealPlan && hotel.mealPlan !== "EP" && (
+          <span style={{ background: "#f0fdf4", color: "#166534", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>
+            {hotel.mealPlan === "CP" ? "Breakfast included" : hotel.mealPlan === "MAP" ? "Half board" : hotel.mealPlan === "AP" ? "Full board" : hotel.mealPlan}
+          </span>
+        )}
+        <span style={{ color: hotel.isRefundable ? "#059669" : "#9ca3af", fontWeight: 600 }}>
+          {hotel.isRefundable ? "✓ Free cancellation" : "Non-refundable"}
+        </span>
+      </div>
+
+      {hotel.amenities.length > 0 && (
+        <div style={{ fontSize: 11, color: "#6b7280" }}>
+          {hotel.amenities.slice(0, 5).join(" · ")}
+        </div>
+      )}
+
+      {bookable ? (
+        <Link
+          href={buildBookUrl(hotel, rooms)}
+          className="fare-card-book-btn"
+          style={{ textDecoration: "none", textAlign: "center" }}
+        >
+          Book Now
+        </Link>
+      ) : (
+        <div style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", padding: "8px 0" }}>
+          Indicative price · Not directly bookable
+        </div>
+      )}
     </div>
   );
 }

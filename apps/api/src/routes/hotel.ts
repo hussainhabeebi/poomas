@@ -6,7 +6,7 @@ import type { SupplierCredentials } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 
 function tripjackCredentials(env: Env): SupplierCredentials {
-  return { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL };
+  return { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY };
 }
 
 const roomSchema = z.object({

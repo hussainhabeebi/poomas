@@ -17,11 +17,6 @@ const searchSchema = z.object({
   currency:      z.enum(["INR", "AED", "USD"]).optional(),
 });
 
-const revalidateSchema = z.object({
-  fareId: z.string().min(1),
-  supplier: z.literal("TRIPJACK"),
-});
-
 const SERP_TRIAL_TTL = 60 * 60 * 24;
 
 interface TripjackAdminConfig {
@@ -68,8 +63,8 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
 
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
-    { name: "RIYA",     priority: 10, timeoutMs: 25000 },
-    { name: "TRIPJACK", priority: 20, timeoutMs: 25000 },
+    { name: "RIYA",     priority: 10, timeoutMs: 15000 },
+    { name: "TRIPJACK", priority: 20, timeoutMs: 15000 },
     // DUFFEL and GOOGLE_SERP temporarily disabled
   ];
 
@@ -98,23 +93,16 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
   return supplierConfigs;
 }
 
-export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
-
-searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
-  const params   = c.req.valid("json");
-  const tenant   = c.get("tenant");
-  const db       = c.get("db");
-  const tenantId = c.get("tenantId");
-
-  const platformCredentials = platformCredentialsFromEnv(c.env);
-  const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
-  const tripjackApiKey = savedTripjack?.apiKey || c.env.TRIPJACK_API_KEY;
-  const tripjackBaseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
-  if ((tripjackApiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+export async function resolveFlightSuppliers(env: Env, tenant: Variables["tenant"], tenantId: string) {
+  const platformCredentials = platformCredentialsFromEnv(env);
+  const savedTripjack = await tripjackAdminConfig(env, tenantId);
+  const tripjackApiKey = savedTripjack?.apiKey || env.TRIPJACK_API_KEY;
+  const tripjackBaseUrl = env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
+  if ((tripjackApiKey || env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
     platformCredentials.TRIPJACK = {
       apiKey: tripjackApiKey,
       baseUrl: tripjackBaseUrl,
-      proxyKey: c.env.TRIPJACK_PROXY_KEY,
+      proxyKey: env.TRIPJACK_PROXY_KEY,
     };
   }
   const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
@@ -134,15 +122,15 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
     if (tripjackConfig) {
       tripjackConfig.isEnabled = savedTripjack.enabled === true;
-      if ((savedTripjack.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+      if ((savedTripjack.apiKey || env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
         tripjackConfig.credentials = {
           ...(tripjackConfig.credentials ?? {}),
           ...(savedTripjack.apiKey ? { apiKey: savedTripjack.apiKey } : {}),
           baseUrl: tripjackBaseUrl,
-          proxyKey: c.env.TRIPJACK_PROXY_KEY,
+          proxyKey: env.TRIPJACK_PROXY_KEY,
         };
       }
-    } else if (savedTripjack.enabled && (savedTripjack.apiKey || c.env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
+    } else if (savedTripjack.enabled && (savedTripjack.apiKey || env.TRIPJACK_PROXY_KEY) && tripjackBaseUrl) {
       supplierConfigs.push({
         name: "TRIPJACK",
         isEnabled: true,
@@ -150,14 +138,25 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
         credentials: {
           ...(savedTripjack.apiKey ? { apiKey: savedTripjack.apiKey } : {}),
           baseUrl: tripjackBaseUrl,
-          proxyKey: c.env.TRIPJACK_PROXY_KEY,
+          proxyKey: env.TRIPJACK_PROXY_KEY,
         },
-        timeoutMs: 25000,
+        timeoutMs: 15000,
         maxRetries: 0,
       });
     }
   }
 
+  return { platformCredentials, supplierConfigs };
+}
+
+export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
+  const params = c.req.valid("json");
+  const tenant = c.get("tenant");
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
   let currency = params.currency as "INR" | "AED" | "USD" | undefined;
 
@@ -258,57 +257,6 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   return c.json(response);
 });
 
-// Revalidate a TripJack search price and obtain the booking ID required by air-book.
-searchRoutes.post("/revalidate", zValidator("json", revalidateSchema), async (c) => {
-  const { fareId, supplier } = c.req.valid("json");
-  const tenant = c.get("tenant");
-  const tenantId = c.get("tenantId");
-  const platformCredentials = platformCredentialsFromEnv(c.env);
-  const savedTripjack = await tripjackAdminConfig(c.env, tenantId);
-  const apiKey = savedTripjack?.apiKey || c.env.TRIPJACK_API_KEY;
-  const baseUrl = c.env.TRIPJACK_API_BASE_URL || savedTripjack?.baseUrl;
-
-  if ((apiKey || c.env.TRIPJACK_PROXY_KEY) && baseUrl) {
-    platformCredentials.TRIPJACK = {
-      apiKey,
-      baseUrl,
-      proxyKey: c.env.TRIPJACK_PROXY_KEY,
-    };
-  }
-
-  const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
-  let config = supplierConfigs.find((item) => item.name === "TRIPJACK");
-  if (!config && platformCredentials.TRIPJACK) {
-    config = {
-      name: "TRIPJACK",
-      isEnabled: true,
-      priority: 20,
-      credentials: platformCredentials.TRIPJACK,
-      timeoutMs: 25000,
-      maxRetries: 0,
-    };
-    supplierConfigs.push(config);
-  }
-  if (config) {
-    config.isEnabled = savedTripjack ? savedTripjack.enabled === true : true;
-    config.credentials = { ...(config.credentials ?? {}), ...(platformCredentials.TRIPJACK ?? {}) };
-  }
-
-  try {
-    const { getBookableAdapter } = await import("@poomas/suppliers");
-    const adapter = getBookableAdapter(supplier, supplierConfigs, platformCredentials);
-    if (!adapter.revalidate) return c.json({ error: "Fare revalidation is unavailable" }, 501);
-    const reviewed = await adapter.revalidate(fareId);
-    return c.json(reviewed, 200, { "Cache-Control": "no-store" });
-  } catch (err) {
-    console.error("[search] TripJack fare review failed", err);
-    return c.json({
-      error: err instanceof Error ? err.message : "This fare is no longer available",
-      code: "FARE_REVALIDATION_FAILED",
-    }, 410);
-  }
-});
-
 // Safe operational status: exposes only booleans/names, never secret values.
 searchRoutes.get("/status", async (c) => {
   const tenant = c.get("tenant");
@@ -322,6 +270,33 @@ searchRoutes.get("/status", async (c) => {
       GOOGLE_SERP: false,  // temporarily disabled
     },
   });
+});
+
+// Review availability; a failed check does not establish that a fare expired.
+searchRoutes.post("/validate-fare", async (c) => {
+  const { fareId, supplier } = await c.req.json<{ fareId: string; supplier: string }>();
+  if (!fareId || !supplier) return c.json({ error: "fareId and supplier required" }, 400);
+
+  if (supplier === "TRIPJACK") {
+    const { TripjackClient } = await import("@poomas/suppliers");
+    const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), c.get("tenantId"));
+    const config = supplierConfigs.find((s) => s.name === "TRIPJACK");
+    if (!config?.isEnabled) return c.json({ valid: false, reason: "unavailable" });
+    const creds = { ...(platformCredentials.TRIPJACK ?? {}), ...(config.credentials ?? {}) };
+    const client = new TripjackClient(creds);
+    try {
+      const result = await client.validateFare(fareId);
+      return c.json({ valid: true, bookingId: result.bookingId });
+    } catch (err: any) {
+      if (err?.code === "FARE_EXPIRED") {
+        return c.json({ valid: false, reason: "expired", requestId: err.requestId }, 200);
+      }
+      return c.json({ valid: false, reason: "unavailable", requestId: err?.requestId, message: "We couldn't verify this fare right now." }, 200);
+    }
+  }
+
+  // Other suppliers — treat as always valid (they don't expire the same way)
+  return c.json({ valid: true });
 });
 
 searchRoutes.get("/fare-rules/:fareId", async (c) => {

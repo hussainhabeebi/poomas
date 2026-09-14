@@ -1,6 +1,7 @@
 import type { SearchParams, HoldParams, BookParams, SupplierCredentials } from "../base.js";
 import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
+import { reviewFailure, TripjackReviewError } from "./review-error.js";
 
 /** Convert YYYY-MM-DD to TripJack's required dd-MM-yyyy format. */
 function toTripjackDate(iso: string): string {
@@ -19,7 +20,7 @@ export class TripjackClient {
     this.proxyKey = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
   }
 
-  private async request<T>(path: string, body: unknown): Promise<T> {
+  private async request<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     if (!this.baseUrl || (!this.apiKey && !this.proxyKey)) {
       throw new Error("TripJack is enabled but its gateway or API credentials are missing");
     }
@@ -32,15 +33,22 @@ export class TripjackClient {
         ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
       },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
+      if (path === "/fms/v1/review") {
+        let detail: unknown = null;
+        try { detail = JSON.parse(text); } catch { /* Route/proxy HTML is not fare expiry. */ }
+        throw reviewFailure(res.status, detail, crypto.randomUUID());
+      }
+      if (path === "/air-book/v2") console.error(`[tripjack] ${path} failed with HTTP ${res.status}`);
+      else console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
         : res.status === 404
-          ? "Proxy route or TripJack base URL was not found"
+          ? "TripJack route is unavailable"
           : res.status === 429
             ? "Rate limit exceeded"
             : "Upstream request failed";
@@ -77,34 +85,53 @@ export class TripjackClient {
     return this.request("/air-fare-detail/v2", { id: fareId, flowType: "SEARCH" });
   }
 
-  async review(fareId: string) {
-    return this.request("/fms/v1/review", { priceIds: [fareId] });
+  async validateFare(fareId: string) {
+    const requestId = crypto.randomUUID();
+    try {
+      const raw = await this.request<any>("/fms/v1/review", { priceIds: [fareId] }, AbortSignal.timeout(15000));
+      const result = raw?.data ?? raw?.result ?? raw;
+      if (raw?.status?.success === false || result?.status?.success === false || result?.errors?.length) {
+        throw reviewFailure(200, raw?.status?.success === false ? raw : result, requestId);
+      }
+      const bookingId = result?.bookingId;
+      if (typeof bookingId !== "string" || !bookingId.trim()) {
+        throw new TripjackReviewError("REVIEW_INVALID_RESPONSE", 502, requestId);
+      }
+      return { bookingId, result };
+    } catch (err) {
+      if (err instanceof TripjackReviewError) throw err;
+      const code = err instanceof Error && /TimeoutError|AbortError/.test(err.name) ? "REVIEW_TIMEOUT" : "REVIEW_UNAVAILABLE";
+      console.error("[tripjack-review]", JSON.stringify({ requestId, code }));
+      throw new TripjackReviewError(code, 503, requestId);
+    }
   }
 
   async book(params: HoldParams & BookParams) {
     const phone = params.contactPhone.replace(/\D/g, "");
+    const travellerInfo = params.passengers.map((p) => ({
+      ti:  p.gender === "F" ? "Ms" : "Mr",
+      fN:  p.firstName,
+      lN:  p.lastName,
+      // TripJack requires abbreviated codes: ADT, CHD, INF
+      pt:  p.type === "ADULT" ? "ADT" : p.type === "CHILD" ? "CHD" : "INF",
+      // TripJack requires dd-MM-yyyy date format
+      ...(p.dob            ? { dob: toTripjackDate(p.dob) }                : {}),
+      ...(p.passportNumber ? { pNum: p.passportNumber }                    : {}),
+      ...(p.passportExpiry ? { eD: toTripjackDate(p.passportExpiry) }      : {}),
+      ...(p.nationality    ? { pNat: p.nationality }                       : {}),
+    }));
+
     return this.request("/air-book/v2", {
-      bookingId: params.holdId,
-      travellerInfo: params.passengers.map((passenger) => ({
-        ti: passenger.gender === "F" ? "Ms" : "Mr",
-        fN: passenger.firstName,
-        lN: passenger.lastName,
-        // TripJack requires abbreviated codes: ADT, CHD, INF
-        pt: passenger.type === "ADULT" ? "ADT" : passenger.type === "CHILD" ? "CHD" : "INF",
-        // TripJack requires dd-MM-yyyy date format
-        ...(passenger.dob ? { dob: toTripjackDate(passenger.dob) } : {}),
-        ...(passenger.nationality ? { pNat: passenger.nationality } : {}),
-        ...(passenger.passportNumber ? { pNum: passenger.passportNumber } : {}),
-        ...(passenger.passportExpiry ? { eD: toTripjackDate(passenger.passportExpiry) } : {}),
-      })),
+      bookingId:  params.holdId,
       deliveryInfo: {
-        emails: [params.contactEmail],
+        emails:  [params.contactEmail],
         mobiles: [{
           countryCode: phone.length > 10 ? `+${phone.slice(0, phone.length - 10)}` : "+91",
           number: phone.slice(-10),
         }],
       },
-    });
+      travellerInfo,
+    }, AbortSignal.timeout(45000));
   }
 
   async pnrStatus(pnr: string) {

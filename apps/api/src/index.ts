@@ -10,6 +10,7 @@ import { searchRoutes }        from "./routes/search.js";
 import { hotelRoutes }         from "./routes/hotel.js";
 import { bookingRoutes }       from "./routes/booking.js";
 import { duffelSandboxRoutes } from "./routes/duffel-sandbox.js";
+import { bookDirectRoutes }    from "./routes/book.js";
 import { integrationRoutes }   from "./routes/integrations.js";
 import { agentRoutes }         from "./routes/agents.js";
 import { walletRoutes }        from "./routes/wallet.js";
@@ -24,6 +25,7 @@ import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
 import { partnerRoutes }       from "./routes/partner.js";
+import { profileRoutes }       from "./routes/profile.js";
 
 export { TenantRateLimiter };
 
@@ -41,6 +43,7 @@ app.route("/webhooks",           webhookRoutes);
 app.route("/api/search",         searchRoutes);
 app.route("/api/hotels",         hotelRoutes);
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
+app.route("/api/book",           bookDirectRoutes);
 app.route("/api/integrations",   integrationRoutes);
 app.route("/api/partner/v1",    partnerRoutes);
 
@@ -55,6 +58,7 @@ app.use("/api/agents/*",   authMiddleware);
 app.use("/api/wallet/*",   authMiddleware);
 app.use("/api/session/*",  authMiddleware);
 app.use("/api/admin/*",    authMiddleware);
+app.use("/api/profile/*", authMiddleware);
 app.use("/api/whatsapp/*", authMiddleware);
 
 app.route("/api/session",  sessionRoutes);
@@ -65,11 +69,23 @@ app.route("/api/agents",   agentRoutes);
 app.route("/api/wallet",   walletRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/admin",    adminRoutes);
+app.route("/api/profile",  profileRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {
   console.error(err);
   const status = "status" in err ? (err as { status: number }).status : 500;
+
+  // Sanitize SupplierError: expose only the human-readable body, not the supplier name or HTTP code
+  if ((err as any).name === "SupplierError") {
+    const body: string = (err as any).body ?? "Something went wrong — please try again";
+    const isExpired = /(?:fare|price|booking session)\s+(?:has\s+|is\s+)?expired|fare\s+(?:is\s+)?no longer available|sold[ -]?out/i.test(body);
+    return c.json(
+      { error: body, errorCode: isExpired ? "FARE_EXPIRED" : "SUPPLIER_ERROR" },
+      (status >= 400 && status < 600 ? status : 502) as 400 | 422 | 500 | 502,
+    );
+  }
+
   return c.json({ error: err.message ?? "Internal server error" }, status as 400 | 500);
 });
 

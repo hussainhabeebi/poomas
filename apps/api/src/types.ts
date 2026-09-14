@@ -15,6 +15,11 @@ export interface Env {
   TENANT_RATE_LIMITER: DurableObjectNamespace;
   DATABASE_URL:           string;
   JWT_SECRET:             string;
+  GOOGLE_CLIENT_ID?:      string;
+  APPLE_CLIENT_ID?:       string;
+  APPLE_CLIENT_SECRET?:   string;
+  APPLE_REDIRECT_URI?:    string;
+  SOCIAL_AUTH_ORIGINS?:   string;
   RIYA_API_KEY:           string;
   RIYA_API_SECRET:        string;
   RIYA_API_BASE_URL:      string;

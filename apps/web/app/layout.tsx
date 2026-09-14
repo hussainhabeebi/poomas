@@ -34,8 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <img src="/logo.png" alt="POOMAS Traveldays" height={34} className="site-logo" />
           </a>
           <nav className="site-nav">
-            <a href="/#flight-search" className="nav-link">Flights</a>
-            <a href="/#hotel-search" className="nav-link">Hotels</a>
+            <a href="/search?origin=CCJ&destination=DXB&departureDate=2026-08-25&adults=1&cabinClass=ECONOMY&tripType=ONEWAY" className="nav-link">Flights</a>
+            <a href="/hotels" className="nav-link">Hotels</a>
           </nav>
         </header>
         {children}

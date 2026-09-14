@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
 import SearchResultControls from "./SearchResultControls";
-import TripjackBookButton from "./TripjackBookButton";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
@@ -50,7 +49,7 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
         ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(35_000),
+      signal: AbortSignal.timeout(25_000),
     });
 
     const raw = await res.text();
@@ -106,16 +105,14 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
       {filteredFares.length === 0 ? (
         <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
           <div style={{ fontSize: 44, marginBottom: 14 }}>✈️</div>
-          <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{result.apiError || failingSuppliers.length > 0 ? "Live flight search unavailable" : "No flights found"}</p>
-          <p style={{ margin: "0 0 12px" }}>{result.apiError ? "The flight API could not complete this search." : failingSuppliers.length > 0 ? `Supplier connection issue: ${failingSuppliers.join(", ")}` : "Try different dates or destinations."}</p>
-          {result.apiError && <p style={{ margin: "0 auto 16px", maxWidth: 760, fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 12px", wordBreak: "break-word" }}>{result.apiError}</p>}
-          {missingCredentialSuppliers.length > 0 && <p style={{ margin: "0 0 24px", fontSize: 12, color: "#9ca3af" }}>Not configured: {missingCredentialSuppliers.join(", ")}</p>}
+          <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{filteredFares.length === 0 && (result.apiError || failingSuppliers.length > 0) ? "No flights available right now" : "No flights found"}</p>
+          <p style={{ margin: "0 0 24px" }}>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
           <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search Again</a>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {params.all !== "1" && <div style={{ fontSize: 13, color: "#475569", fontWeight: 700, marginBottom: 2 }}>Recommended for you</div>}
-          {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} />)}
+          {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} adults={Math.min(9, Math.max(1, parseInt(params.adults ?? "1") || 1))} />)}
           {params.all !== "1" && filteredFares.length > displayFares.length && (
             <a href={`/search?${allQuery.toString()}`} style={{ textAlign: "center", padding: 14, border: "1px solid #cbd5e1", borderRadius: 12, color: "#0f172a", textDecoration: "none", fontWeight: 800 }}>
               View all {filteredFares.length} flights
@@ -177,14 +174,35 @@ function formatMoney(amount: number, currency: string): string {
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
 }
 
-function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: string | null }) {
+function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number): string {
+  const p = new URLSearchParams({
+    fareId:   fare.id ?? "",
+    adults:   String(adults),
+    supplier: fare.supplier ?? "",
+    airline:  fare.airlineName ?? "",
+    fn:       fare.flightNumber ?? "",
+    from:     fare.origin ?? "",
+    to:       fare.destination ?? "",
+    dep:      fare.departureTime ?? "",
+    arr:      fare.arrivalTime ?? "",
+    dur:      String(fare.duration ?? 0),
+    stops:    String(fare.stops ?? 0),
+    price:    String(price),
+    cur:      fareCurrency,
+    ref:      fare.isRefundable ? "1" : "0",
+    bag:      fare.baggage?.checked ?? "15 KG",
+  });
+  return `/book?${p.toString()}`;
+}
+
+function FareCard({ fare, requestedCurrency, adults }: { fare: any; requestedCurrency: string | null; adults: number }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const fareCurrency = String(fare.currency || requestedCurrency || "USD").toUpperCase();
+  const fareCurrency = String(fare.currency || requestedCurrency || "INR").toUpperCase();
   const price = Number(fare.displayPrice ?? fare.totalFare ?? 0);
   const currencyDiffers = Boolean(requestedCurrency && fareCurrency !== requestedCurrency);
-  const isDuffel = fare.supplier === "DUFFEL";
+  const isBookable = Boolean(fare.isBookable && fare.supplier !== "GOOGLE_SERP");
 
   return (
     <div className="fare-card" style={{ position: "relative", borderColor: fare.__badge ? "#fecaca" : undefined }}>
@@ -207,15 +225,14 @@ function FareCard({ fare, requestedCurrency }: { fare: any; requestedCurrency: s
         <div className="fare-card-price">{formatMoney(price, fareCurrency)}</div>
         <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{fareCurrency}{currencyDiffers ? " · supplier currency" : ""}</div>
         {!fare.isBookable && <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>}
-        {fare.isBookable && isDuffel && (
-          <form action="/book" method="GET" style={{ marginTop: 8 }}>
-            <input type="hidden" name="fareId" value={fare.id} />
-            <input type="hidden" name="supplier" value={fare.supplier} />
-            <button type="submit" className="fare-card-book-btn" style={{ width: "100%", border: 0, cursor: "pointer", WebkitTapHighlightColor: "transparent", touchAction: "manipulation" }}>Book Now</button>
-          </form>
-        )}
-        {fare.isBookable && !isDuffel && (
-          <TripjackBookButton fareId={fare.id} supplier={fare.supplier} fareData={fare} />
+        {isBookable && (
+          <a
+            href={buildBookUrl(fare, fareCurrency, price, adults)}
+            className="fare-card-book-btn"
+            style={{ display: "block", marginTop: 8, textAlign: "center", textDecoration: "none", WebkitTapHighlightColor: "transparent" as any }}
+          >
+            Book Now
+          </a>
         )}
       </div>
     </div>

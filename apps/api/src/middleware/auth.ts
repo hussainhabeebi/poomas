@@ -59,6 +59,18 @@ async function verifyJWT(c: Parameters<MiddlewareHandler>[0], token: string, nex
       throw new HTTPException(403, { message: "Token tenant mismatch" });
     }
 
+    // Checkout social identities can access only their saved traveller profile.
+    // They must not inherit the broader agent routes accepted by legacy tokens.
+    if (payload.scope === "customer-profile" && !c.req.path.startsWith("/api/profile/")) {
+      throw new HTTPException(403, { message: "Customer token cannot access this operation" });
+    }
+    if (payload.scope === "customer-profile") {
+      const session = await c.env.SESSIONS_KV.get(`session:${payload.userId}`, "json") as { sessionId?: string; tenantId?: string } | null;
+      if (!payload.sessionId || session?.sessionId !== payload.sessionId || session?.tenantId !== resolvedTenantId) {
+        throw new HTTPException(401, { message: "Customer session has ended. Please sign in again." });
+      }
+    }
+
     c.set("userId",   payload.userId);
     c.set("userRole", payload.role);
     if (payload.agentId) c.set("agentId", payload.agentId);
