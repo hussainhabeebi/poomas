@@ -43,7 +43,7 @@ export class TripjackClient {
         try { detail = JSON.parse(text); } catch { /* Route/proxy HTML is not fare expiry. */ }
         throw reviewFailure(res.status, detail, crypto.randomUUID());
       }
-      if (path === "/air-book/v2") console.error(`[tripjack] ${path} failed with HTTP ${res.status}`);
+      if (path === "/air-book/v2") console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 500));
       else console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
