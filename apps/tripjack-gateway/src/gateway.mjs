@@ -1,19 +1,25 @@
 import { timingSafeEqual } from "node:crypto";
 
 export const ROUTES = new Map([
+  // Canonical Poomas v1 alias paths
   ["/v1/air/search", "/fms/v1/air-search-all"],
-  ["/v1/air/fare-detail", "/air-fare-detail/v2"],
+  ["/v1/air/fare-detail", "/fms/v2/farerule"],
   ["/v1/air/review", "/fms/v1/review"],
-  ["/v1/air/book", "/air-book/v2"],
-  ["/v1/air/booking-detail", "/air-booking-detail/v2"],
-  ["/v1/air/cancel", "/air-cancel/v2"],
-  // Compatibility while Poomas still appends TripJack's native paths.
+  ["/v1/air/book", "/oms/v1/air/book"],
+  ["/v1/air/booking-detail", "/oms/v1/booking-details"],
+  ["/v1/air/cancel", "/oms/v1/air/amendment/submit-amendment"],
+  // TripJack native paths — forwarded 1:1 to the upstream
   ["/air-search-all/v2", "/fms/v1/air-search-all"],
-  ["/air-fare-detail/v2", "/air-fare-detail/v2"],
   ["/fms/v1/review", "/fms/v1/review"],
-  ["/air-book/v2", "/air-book/v2"],
-  ["/air-booking-detail/v2", "/air-booking-detail/v2"],
-  ["/air-cancel/v2", "/air-cancel/v2"],
+  ["/fms/v2/farerule", "/fms/v2/farerule"],
+  ["/oms/v1/air/book", "/oms/v1/air/book"],
+  ["/oms/v1/booking-details", "/oms/v1/booking-details"],
+  ["/oms/v1/air/amendment/submit-amendment", "/oms/v1/air/amendment/submit-amendment"],
+  // Legacy paths kept for backwards compatibility
+  ["/air-fare-detail/v2", "/fms/v2/farerule"],
+  ["/air-book/v2", "/oms/v1/air/book"],
+  ["/air-booking-detail/v2", "/oms/v1/booking-details"],
+  ["/air-cancel/v2", "/oms/v1/air/amendment/submit-amendment"],
   // Hotel routes
   ["/hotel-search/v1", "/hotel-search/v1"],
   ["/hotel-prebook/v1", "/hotel-prebook/v1"],
