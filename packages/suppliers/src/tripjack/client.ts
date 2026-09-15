@@ -43,11 +43,11 @@ export class TripjackClient {
         try { detail = JSON.parse(text); } catch { /* Route/proxy HTML is not fare expiry. */ }
         throw reviewFailure(res.status, detail, crypto.randomUUID());
       }
-      if (path === "/air-book/v2") {
+      if (path === "/oms/v1/air/book") {
         console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 500));
         let bookDetail: unknown = null;
         try { bookDetail = JSON.parse(text); } catch {}
-        const statusMsg = String((bookDetail as any)?.status?.statusMessage ?? "").toLowerCase();
+        const statusMsg = String((bookDetail as any)?.status?.statusMessage ?? (bookDetail as any)?.data?.order?.statusMessage ?? "").toLowerCase();
         if (/expir|no longer available|booking session/i.test(statusMsg)) {
           throw new SupplierError("TRIPJACK", 409, "Booking session expired");
         }

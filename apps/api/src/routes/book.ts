@@ -72,10 +72,16 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     try {
       const review = await client.validateFare(body.fareId);
       bookingSessionId = review.bookingId;
-      // Extract TF (total fare) from review — TripJack requires paymentInfos.amount = TF exactly
+      // TripJack requires paymentInfos.amount = TF from the review response exactly.
+      // review.result is already raw.data (unwrapped by validateFare).
+      // TF is at results[0].totalPriceInfo or results[0].fareGroups[0].totalPriceInfo.
       const rr = review.result as any;
-      const rResp = rr?.data ?? rr?.result ?? rr;
-      reviewPaymentAmount = rResp?.totalPriceInfo?.fd?.fC?.TF as number | undefined;
+      const rFirstResult = rr?.results?.[0];
+      reviewPaymentAmount = (
+        rFirstResult?.totalPriceInfo?.fd?.fC?.TF ??
+        rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.fC?.TF
+      ) as number | undefined;
+      if (!reviewPaymentAmount) console.warn("[book-review] TF not found in review response; falling back to displayed fare", JSON.stringify(rr).slice(0, 300));
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
       return c.json({ error: err?.code === "FARE_EXPIRED" ? "This fare is no longer available." : "We couldn't confirm availability. Your details are still here.",
@@ -112,9 +118,13 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   }
 
   if (!result.success) {
+    const raw = result.raw as any;
+    const orderMsg = String(raw?.data?.order?.statusMessage ?? raw?.data?.statusMessage ?? "");
+    const topMsg   = String(raw?.status?.statusMessage ?? "");
+    console.error("[book-rejected]", JSON.stringify({ requestId, orderMsg, topMsg, paymentAmount: params.paymentAmount, raw: JSON.stringify(raw).slice(0, 600) }));
     // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
     // so the frontend shows "search again" rather than "contact support".
-    const rawMsg = String((result.raw as any)?.status?.statusMessage ?? "").toLowerCase();
+    const rawMsg = (orderMsg + " " + topMsg).toLowerCase();
     if (/expir|no longer available|booking session/i.test(rawMsg)) {
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
