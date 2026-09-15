@@ -46,12 +46,25 @@ export class TripjackAdapter implements SupplierAdapter {
   }
 
   async getFareRules(fareId: string): Promise<FareRule[]> {
-    const raw = await this.client.fareRules(fareId) as { fareRule?: Record<string, { fareRestrictions?: unknown[] }> };
-    const rules = raw?.fareRule?.["DEFAULT"]?.fareRestrictions ?? [];
-    return (rules as { policyInfo?: string; type?: string }[]).map((r) => ({
-      category:    r.type ?? "General",
-      description: r.policyInfo ?? "",
-    }));
+    const raw = await this.client.fareRules(fareId) as any;
+    // v2 farerule returns tfr (timed fare rule) keyed by policy type
+    const tfr = raw?.fareRules?.tfr ?? raw?.fareRule?.DEFAULT?.fareRestrictions;
+    if (Array.isArray(tfr)) {
+      return (tfr as { policyInfo?: string; type?: string }[]).map((r) => ({
+        category:    r.type ?? "General",
+        description: r.policyInfo ?? "",
+      }));
+    }
+    // tfr is keyed by policy type (CANCELLATION, DATECHANGE, etc.)
+    if (tfr && typeof tfr === "object") {
+      return Object.entries(tfr).flatMap(([category, policies]) =>
+        (Array.isArray(policies) ? policies : []).map((r: any) => ({
+          category,
+          description: r.policyInfo ?? String(r.amount ?? ""),
+        })),
+      );
+    }
+    return [];
   }
 
   async revalidate(fareId: string): Promise<RevalidateResult> {
@@ -88,33 +101,50 @@ export class TripjackAdapter implements SupplierAdapter {
   async book(params: BookParams): Promise<BookResult> {
     const raw = await this.client.book(params as HoldParams & BookParams) as Record<string, unknown>;
     const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
+    const order = (response.order ?? response) as Record<string, unknown>;
+    const travellers = (response.travellerInfos ?? []) as Array<Record<string, unknown>>;
+    const pnrMap = travellers[0]?.pnrDetails as Record<string, string> | undefined;
+    const pnr = pnrMap ? Object.values(pnrMap)[0] ?? "" : String(response.pnrDetails ?? "");
+    const bookingRef = String(order.bookingId ?? response.bookingId ?? params.holdId);
+    const orderStatus = String(order.status ?? "").toUpperCase();
     return {
-      success:       (response.status as { success?: boolean })?.success ?? false,
-      bookingRef:    String(response.bookingId ?? params.holdId),
-      pnr:           String(response.pnrDetails ?? response.pnr ?? ""),
-      status:        "CONFIRMED",
+      success:       orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" || !!(pnr || bookingRef !== params.holdId),
+      bookingRef,
+      pnr,
+      status:        orderStatus === "SUCCESS" ? "CONFIRMED" : orderStatus === "ON_HOLD" ? "CONFIRMED" : "PENDING",
       ticketNumbers: [],
       raw: response,
     };
   }
 
-  async getPNRStatus(pnr: string): Promise<PNRStatusResult> {
-    const raw = await this.client.pnrStatus(pnr) as Record<string, unknown>;
+  async getPNRStatus(bookingId: string): Promise<PNRStatusResult> {
+    const raw = await this.client.pnrStatus(bookingId) as Record<string, unknown>;
+    // booking-details wraps response in order{}
+    const order = (raw.order ?? raw) as Record<string, unknown>;
+    const travellers = (raw.travellerInfos ?? []) as Array<Record<string, unknown>>;
+    const pnrMap = travellers[0]?.pnrDetails as Record<string, string> | undefined;
+    const pnr = pnrMap ? Object.values(pnrMap)[0] ?? "" : "";
     return {
       pnr,
-      status:     raw.status as string,
-      passengers: [],
-      itinerary:  raw.itemInfos,
+      status:     String(order.status ?? ""),
+      passengers: travellers.map((t) => ({
+        name:         `${t.fN ?? ""} ${t.lN ?? ""}`.trim(),
+        ticketNumber: Object.values((t.ticketNumberDetails as Record<string, string>) ?? {})[0] ?? "",
+        status:       String(order.status ?? ""),
+      })),
+      itinerary: raw.tripInfos ?? raw.itemInfos,
     };
   }
 
   async cancel(bookingRef: string): Promise<CancelResult> {
     const raw = await this.client.cancel(bookingRef) as Record<string, unknown>;
+    // submit-amendment returns amendmentId; success means amendment was accepted
+    const success = !!(raw.amendmentId) || (raw.status as any)?.success === true;
     return {
-      success:      (raw.status as { success?: boolean })?.success ?? false,
-      refundAmount: raw.refundAmount as number ?? 0,
-      penalty:      raw.cancellationCharge as number ?? 0,
-      status:       (raw.status as { statusMessage?: string })?.statusMessage ?? "",
+      success,
+      refundAmount: raw.refundableAmount as number ?? 0,
+      penalty:      raw.amendmentCharges as number ?? 0,
+      status:       raw.amendmentId ? "CANCELLATION_REQUESTED" : String((raw.status as any)?.statusMessage ?? ""),
     };
   }
 }
