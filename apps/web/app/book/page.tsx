@@ -395,7 +395,7 @@ export default function BookPage() {
               <div className="grid">
                 <Input l="First name"             v={p.firstName}      c={(v) => upd(i, "firstName",      v)} r />
                 <Input l="Last name"              v={p.lastName}       c={(v) => upd(i, "lastName",       v)} r />
-                <Input l="Date of birth"  t="date" v={p.dob}           c={(v) => upd(i, "dob",            v)} />
+                <Input l="Date of birth"  t="date" v={p.dob}           c={(v) => upd(i, "dob",            v)} r={p.type !== "ADULT"} />
                 <label>Gender
                   <select value={p.gender} onChange={(e) => upd(i, "gender", e.target.value as "M" | "F")}>
                     <option value="M">Male</option>
