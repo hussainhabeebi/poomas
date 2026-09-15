@@ -68,9 +68,14 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       ...(tripjackConfig?.credentials ?? {}),
     });
     tripjackClient = client;
+    let reviewPaymentAmount: number | undefined;
     try {
       const review = await client.validateFare(body.fareId);
       bookingSessionId = review.bookingId;
+      // Extract TF (total fare) from review — TripJack requires paymentInfos.amount = TF exactly
+      const rr = review.result as any;
+      const rResp = rr?.data ?? rr?.result ?? rr;
+      reviewPaymentAmount = rResp?.totalPriceInfo?.fd?.fC?.TF as number | undefined;
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
       return c.json({ error: err?.code === "FARE_EXPIRED" ? "This fare is no longer available." : "We couldn't confirm availability. Your details are still here.",
@@ -82,12 +87,13 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   let result;
   try {
     const params = {
-    fareId:       body.fareId,
-    holdId:       bookingSessionId,
-    passengers:   body.passengers,
-    contactEmail: body.contactEmail,
-    contactPhone: body.contactPhone,
-    paymentRef:   "DIRECT_B2C",
+      fareId:         body.fareId,
+      holdId:         bookingSessionId,
+      passengers:     body.passengers,
+      contactEmail:   body.contactEmail,
+      contactPhone:   body.contactPhone,
+      paymentRef:     "DIRECT_B2C",
+      paymentAmount:  reviewPaymentAmount ?? body.totalFare,
     };
     result = tripjackClient
       ? normalizeBookingResponse(await tripjackClient.book(params), bookingSessionId)

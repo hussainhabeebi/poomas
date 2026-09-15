@@ -89,7 +89,7 @@ export class TripjackClient {
   }
 
   async fareRules(fareId: string, sessionId?: string) {
-    return this.request("/air-fare-detail/v2", { id: fareId, flowType: "SEARCH" });
+    return this.request("/fms/v2/farerule", { id: fareId, flowType: "SEARCH" });
   }
 
   async validateFare(fareId: string) {
@@ -115,38 +115,43 @@ export class TripjackClient {
 
   async book(params: HoldParams & BookParams) {
     const phone = params.contactPhone.replace(/\D/g, "");
+    // TripJack contacts format: E.164 string e.g. "+919500112233"
+    const contact = phone.length > 10 ? `+${phone}` : `+91${phone.slice(-10)}`;
+
     const travellerInfo = params.passengers.map((p) => ({
-      ti:  p.type !== "ADULT" ? (p.gender === "F" ? "Miss" : "Mstr") : (p.gender === "F" ? "Ms" : "Mr"),
+      // TripJack titles: Adult → Mr/Ms, Child/Infant → Master/Ms
+      ti:  p.type !== "ADULT" ? (p.gender === "F" ? "Ms" : "Master") : (p.gender === "F" ? "Ms" : "Mr"),
       fN:  p.firstName,
       lN:  p.lastName,
-      // TripJack requires abbreviated codes: ADT, CHD, INF
-      pt:  p.type === "ADULT" ? "ADT" : p.type === "CHILD" ? "CHD" : "INF",
-      // TripJack requires dd-MM-yyyy date format
-      ...(p.dob            ? { dob: toTripjackDate(p.dob) }                : {}),
-      ...(p.passportNumber ? { pNum: p.passportNumber }                    : {}),
-      ...(p.passportExpiry ? { eD: toTripjackDate(p.passportExpiry) }      : {}),
-      ...(p.nationality    ? { pNat: p.nationality }                       : {}),
+      // TripJack requires full words: ADULT, CHILD, INFANT
+      pt:  p.type,
+      ...(p.dob            ? { dob: p.dob }                              : {}),
+      ...(p.passportNumber ? { pNum: p.passportNumber }                  : {}),
+      ...(p.passportExpiry ? { eD: p.passportExpiry }                    : {}),
+      ...(p.nationality    ? { pNat: p.nationality }                     : {}),
     }));
 
-    return this.request("/air-book/v2", {
-      bookingId:  params.holdId,
+    return this.request("/oms/v1/air/book", {
+      bookingId: params.holdId,
+      ...(params.paymentAmount != null ? { paymentInfos: [{ amount: params.paymentAmount }] } : {}),
       deliveryInfo: {
-        emails:  [params.contactEmail],
-        mobiles: [{
-          countryCode: phone.length > 10 ? `+${phone.slice(0, phone.length - 10)}` : "+91",
-          number: phone.slice(-10),
-        }],
+        emails:   [params.contactEmail],
+        contacts: [contact],
       },
       travellerInfo,
     }, AbortSignal.timeout(45000));
   }
 
-  async pnrStatus(pnr: string) {
-    return this.request("/air-booking-detail/v2", { id: pnr, type: "PNR" });
+  async pnrStatus(bookingId: string) {
+    return this.request("/oms/v1/booking-details", { bookingId });
   }
 
   async cancel(bookingRef: string) {
-    return this.request("/air-cancel/v2", { bookingId: bookingRef });
+    return this.request("/oms/v1/air/amendment/submit-amendment", {
+      bookingId: bookingRef,
+      type:      "CANCELLATION",
+      remarks:   "Customer requested cancellation",
+    });
   }
 
   // ── Hotels ──────────────────────────────────────────────────────

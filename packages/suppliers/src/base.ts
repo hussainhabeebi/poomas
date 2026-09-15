@@ -97,10 +97,11 @@ export interface RevalidateResult {
 }
 
 export interface BookParams extends HoldParams {
-  holdId:       string;
-  contactEmail: string;
-  contactPhone: string;
-  paymentRef:   string;
+  holdId:         string;
+  contactEmail:   string;
+  contactPhone:   string;
+  paymentRef:     string;
+  paymentAmount?: number;  // Total fare from review — required for TripJack instant ticketing
 }
 
 export interface BookResult {

@@ -4,33 +4,44 @@ import type { BookResult } from "@poomas/suppliers";
 export function normalizeBookingResponse(raw: unknown, sessionId: string): Omit<BookResult, "status"> & { status: BookResult["status"] | "PENDING" } {
   const root = raw as any;
   const data = root?.data ?? root?.result ?? root;
-  const apiStatus = data?.status ?? root?.status;
   const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
-  // Coerce success to boolean — TripJack may return string "true"/"false" or omit the field.
+  // TripJack /oms/v1/air/book response wraps in order{} with status = "SUCCESS"/"ON_HOLD"/"FAILED"
+  const order = data?.order ?? data;
+  const orderStatus = text(order?.status).toUpperCase();
+  const orderSuccess = orderStatus === "SUCCESS" || orderStatus === "ON_HOLD";
+
+  // Legacy: status.success boolean (proxy responses)
+  const apiStatus = data?.status ?? root?.status;
   const successFlag = apiStatus?.success;
-  const bookingRef = text(data?.bookingId) || text(root?.bookingId);
+
+  const bookingRef = text(order?.bookingId) || text(data?.bookingId) || text(root?.bookingId);
 
   // Throw only when there is genuinely no way to establish the outcome.
-  if (successFlag == null && !bookingRef) {
+  if (!orderStatus && successFlag == null && !bookingRef) {
     console.error("[book-normalize] Unrecognized booking response", JSON.stringify(root).slice(0, 500));
     throw new Error("Booking response did not establish an outcome");
   }
 
-  const isSuccess = successFlag === true || successFlag === "true";
-  const success = isSuccess && root?.status?.success !== false
-    && !(root?.errors?.length || data?.errors?.length);
+  const legacySuccess = successFlag === true || successFlag === "true";
+  const success = orderSuccess || (legacySuccess && !(root?.errors?.length || data?.errors?.length));
   const resolvedRef = bookingRef || (success ? sessionId : "");
-  const pnr = text(data?.pnr) || text(data?.pnrDetails) || text(root?.pnrDetails);
-  const state = text(data?.bookingStatus).toUpperCase();
-  const failed = ["FAILED", "CANCELLED", "REJECTED"].includes(state);
+
+  // PNR: travellerInfos[0].pnrDetails is an object { "DEP-ARR": "pnr" }
+  const travellers = Array.isArray(data?.travellerInfos) ? data.travellerInfos : [];
+  const pnrMap = travellers[0]?.pnrDetails;
+  const pnr = (pnrMap && typeof pnrMap === "object" ? Object.values(pnrMap)[0] : null)
+    ?? text(data?.pnr) ?? text(data?.pnrDetails) ?? text(root?.pnrDetails);
+
+  const failed = ["FAILED", "CANCELLED", "REJECTED", "ABORTED"].includes(orderStatus)
+    || (successFlag === false && !bookingRef);
   return {
     success: success && !failed && !!resolvedRef,
     bookingRef: resolvedRef,
-    pnr,
+    pnr: typeof pnr === "string" ? pnr : "",
     status: !success || failed ? "FAILED"
-      : pnr && state === "TICKETED" ? "TICKETED"
-      : pnr && state === "CONFIRMED" ? "CONFIRMED" : "PENDING",
+      : pnr && orderStatus === "SUCCESS" ? "TICKETED"
+      : pnr ? "CONFIRMED" : "PENDING",
     ticketNumbers: [],
     raw,
   };
