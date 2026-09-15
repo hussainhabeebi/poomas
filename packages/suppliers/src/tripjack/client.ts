@@ -125,9 +125,10 @@ export class TripjackClient {
       lN:  p.lastName,
       // TripJack requires full words: ADULT, CHILD, INFANT
       pt:  p.type,
-      ...(p.dob            ? { dob: p.dob }                              : {}),
+      // TripJack requires dd-MM-yyyy for dob; HTML date inputs produce YYYY-MM-DD
+      ...(p.dob            ? { dob: toTripjackDate(p.dob) }              : {}),
       ...(p.passportNumber ? { pNum: p.passportNumber }                  : {}),
-      ...(p.passportExpiry ? { eD: p.passportExpiry }                    : {}),
+      ...(p.passportExpiry ? { eD: toTripjackDate(p.passportExpiry) }    : {}),
       ...(p.nationality    ? { pNat: p.nationality }                     : {}),
     }));
 
