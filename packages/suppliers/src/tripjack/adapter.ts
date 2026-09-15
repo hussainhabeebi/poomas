@@ -111,7 +111,7 @@ export class TripjackAdapter implements SupplierAdapter {
       success:       orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" || !!(pnr || bookingRef !== params.holdId),
       bookingRef,
       pnr,
-      status:        orderStatus === "SUCCESS" ? "CONFIRMED" : orderStatus === "ON_HOLD" ? "CONFIRMED" : "PENDING",
+      status:        orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" ? "CONFIRMED" : "FAILED",
       ticketNumbers: [],
       raw: response,
     };
