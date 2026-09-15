@@ -61,6 +61,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   // the supplier gives us a fresh booking session instead of rejecting a stale ID.
   let bookingSessionId = body.fareId;
   let tripjackClient: TripjackClient | undefined;
+  let reviewPaymentAmount: number | undefined;
   if (body.supplier === "TRIPJACK") {
     const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
     const client = new TripjackClient({
@@ -68,7 +69,6 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       ...(tripjackConfig?.credentials ?? {}),
     });
     tripjackClient = client;
-    let reviewPaymentAmount: number | undefined;
     try {
       const review = await client.validateFare(body.fareId);
       bookingSessionId = review.bookingId;
