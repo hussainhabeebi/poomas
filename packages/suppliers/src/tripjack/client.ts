@@ -132,11 +132,11 @@ export class TripjackClient {
       ...(p.nationality    ? { pNat: p.nationality }                     : {}),
     }));
 
-    // Do not send paymentInfos — TripJack B2B accounts deduct from the agent
-    // wallet at the amount it locked in during review. Sending an amount that
-    // differs even slightly from the reviewed TF causes immediate rejection.
+    // paymentInfos.amount must equal the exact TF from the review response.
+    // TripJack B2B deducts from the agent wallet, but the field is required.
     return this.request("/oms/v1/air/book", {
       bookingId: params.holdId,
+      paymentInfos: [{ amount: params.paymentAmount }],
       deliveryInfo: {
         emails:   [params.contactEmail],
         contacts: [contact],
