@@ -77,9 +77,15 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       // TF is at results[0].totalPriceInfo or results[0].fareGroups[0].totalPriceInfo.
       const rr = review.result as any;
       const rFirstResult = rr?.results?.[0];
+      // TripJack v2: fd is keyed by passenger type: fd.ADULT.fC.TF
+      // Some proxy/legacy responses have fd.fC.TF directly — try both.
+      const priceInfo = rFirstResult?.totalPriceInfo;
+      const fd = priceInfo?.fd;
       reviewPaymentAmount = (
-        rFirstResult?.totalPriceInfo?.fd?.fC?.TF ??
-        rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.fC?.TF
+        fd?.fC?.TF ??
+        fd?.ADULT?.fC?.TF ??
+        rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.fC?.TF ??
+        rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.ADULT?.fC?.TF
       ) as number | undefined;
       if (!reviewPaymentAmount) console.warn("[book-review] TF not found in review response; falling back to displayed fare", JSON.stringify(rr).slice(0, 300));
     } catch (err: any) {

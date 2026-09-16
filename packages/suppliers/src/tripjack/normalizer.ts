@@ -3,8 +3,10 @@ import type { NormalizedFare } from "../base.js";
 export function normalizeTripjackFare(r: Record<string, unknown>): NormalizedFare {
   const fi = (r.sI as Record<string, unknown>[])?.[0] ?? {};
   const totalPriceInfo = (r.totalPriceInfo as {
-    fd?: { fC?: { BF?: number; TAF?: number; TF?: number } };
+    fd?: { fC?: { BF?: number; TAF?: number; TF?: number }; ADULT?: { fC?: { BF?: number; TAF?: number; TF?: number } } };
   }) ?? {};
+  // TripJack v2: fd is keyed by pax type (fd.ADULT.fC) or flat (fd.fC)
+  const fC = totalPriceInfo.fd?.fC ?? totalPriceInfo.fd?.ADULT?.fC;
   return {
     id:            r.id as string,
     supplier:      "TRIPJACK",
@@ -20,9 +22,9 @@ export function normalizeTripjackFare(r: Record<string, unknown>): NormalizedFar
     stops:         (r.sI as unknown[]).length - 1,
     stopDetails:   [],
     cabinClass:    r.cabinClass as string ?? "ECONOMY",
-    baseFare:      totalPriceInfo.fd?.fC?.BF ?? 0,
-    taxes:         totalPriceInfo.fd?.fC?.TAF ?? 0,
-    totalFare:     totalPriceInfo.fd?.fC?.TF ?? 0,
+    baseFare:      fC?.BF ?? 0,
+    taxes:         fC?.TAF ?? 0,
+    totalFare:     fC?.TF ?? 0,
     currency:      "INR",
     isRefundable:  (r.fareIdentifier as string) !== "NONREFUNDABLE",
     baggage: {

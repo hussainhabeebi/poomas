@@ -72,9 +72,10 @@ export class TripjackAdapter implements SupplierAdapter {
       const { bookingId, result } = await this.client.validateFare(fareId);
       const response = (result as any)?.data ?? (result as any)?.result ?? result as Record<string, unknown>;
       const price = (response as any).totalPriceInfo as {
-        fd?: { fC?: { BF?: number; TAF?: number; TF?: number } };
+        fd?: { fC?: { BF?: number; TAF?: number; TF?: number }; ADULT?: { fC?: { BF?: number; TAF?: number; TF?: number } } };
       } | undefined;
-      const components = price?.fd?.fC;
+      // TripJack v2: fd keyed by pax type (fd.ADULT.fC) or flat (fd.fC)
+      const components = price?.fd?.fC ?? price?.fd?.ADULT?.fC;
       return {
         success: true,
         fareId,
