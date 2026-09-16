@@ -3,11 +3,6 @@ import type { HotelSearchParams, HotelBookParams } from "./hotel-types.js";
 import { SupplierError } from "../riya/client.js";
 import { reviewFailure, TripjackReviewError } from "./review-error.js";
 
-/** Convert YYYY-MM-DD to TripJack's required dd-MM-yyyy format. */
-function toTripjackDate(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split("-");
-  return `${d}-${m}-${y}`;
-}
 
 export class TripjackClient {
   private baseUrl: string;
@@ -125,11 +120,14 @@ export class TripjackClient {
       lN:  p.lastName,
       // TripJack requires full words: ADULT, CHILD, INFANT
       pt:  p.type,
-      // TripJack requires dd-MM-yyyy for dob; HTML date inputs produce YYYY-MM-DD
-      ...(p.dob            ? { dob: toTripjackDate(p.dob) }              : {}),
-      ...(p.passportNumber ? { pNum: p.passportNumber }                  : {}),
-      ...(p.passportExpiry ? { eD: toTripjackDate(p.passportExpiry) }    : {}),
-      ...(p.nationality    ? { pNat: p.nationality }                     : {}),
+      // TripJack v2 accepts YYYY-MM-DD for dob (HTML date input format)
+      ...(p.dob            ? { dob: p.dob }                              : {}),
+      // Only send passport fields when passport number is present
+      ...(p.passportNumber ? {
+        pNum: p.passportNumber,
+        ...(p.passportExpiry ? { eD: p.passportExpiry }                  : {}),
+        ...(p.nationality    ? { pNat: p.nationality }                   : {}),
+      } : {}),
     }));
 
     // paymentInfos.amount must equal the exact TF from the review response.
