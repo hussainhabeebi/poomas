@@ -151,10 +151,22 @@ export default function SearchWidget() {
   const [departDate, setDepartDate] = useState("");
   const [returnDate, setReturnDate] = useState("");
   const [adults,     setAdults]     = useState(1);
+  const [children,   setChildren]   = useState(0);
+  const [infants,    setInfants]    = useState(0);
+  const [paxOpen,    setPaxOpen]    = useState(false);
+  const paxRef = useRef<HTMLDivElement>(null);
   const [cabinClass, setCabinClass] = useState<(typeof CABIN_CLASSES)[number]>("Economy");
   const [currency,   setCurrencyState] = useState<CurrencyCode>("INR");
   const [searching,  setSearching] = useState(false);
   const [searchStage, setSearchStage] = useState(0);
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (paxRef.current && !paxRef.current.contains(e.target as Node)) setPaxOpen(false);
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, []);
 
   const SEARCH_STAGES = ["Checking live fares", "Comparing airlines", "Finding your best options"];
 
@@ -190,6 +202,8 @@ export default function SearchWidget() {
       destination:   dest.code,
       departureDate: departDate,
       adults:        String(adults),
+      children:      String(children),
+      infants:       String(infants),
       cabinClass:    CABIN_MAP[cabinClass] ?? "ECONOMY",
       tripType:      tripType === "Round Trip" ? "ROUNDTRIP" : "ONEWAY",
       currency,
@@ -217,16 +231,39 @@ export default function SearchWidget() {
             {t}
           </button>
         ))}
-        <select
-          className="passengers-select"
-          value={adults}
-          onChange={(e) => setAdults(Number(e.target.value))}
-          aria-label="Passengers"
-        >
-          {[1, 2, 3, 4, 5, 6].map((n) => (
-            <option key={n} value={n}>{n} {n === 1 ? "Adult" : "Adults"}</option>
-          ))}
-        </select>
+        <div ref={paxRef} style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="passengers-select"
+            onClick={() => setPaxOpen((v) => !v)}
+            aria-label="Passengers"
+            style={{ cursor: "pointer", textAlign: "left" }}
+          >
+            {adults + children + infants} Pax {children + infants > 0 ? `· ${adults}A${children > 0 ? ` ${children}C` : ""}${infants > 0 ? ` ${infants}I` : ""}` : adults === 1 ? "Adult" : "Adults"}
+          </button>
+          {paxOpen && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 50, background: "#fff", border: "1px solid #d0d5dd", borderRadius: 14, padding: "14px 16px", minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,.12)" }}>
+              {([
+                { label: "Adults", sub: "12+ years", val: adults, set: setAdults, min: 1, max: 9 },
+                { label: "Children", sub: "2–11 years", val: children, set: setChildren, min: 0, max: 6 },
+                { label: "Infants", sub: "Under 2", val: infants, set: setInfants, min: 0, max: 4 },
+              ] as const).map(({ label, sub, val, set, min, max }) => (
+                <div key={label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: label !== "Infants" ? "1px solid #f2f4f7" : "none" }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{label}</div>
+                    <div style={{ fontSize: 12, color: "#667085" }}>{sub}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button type="button" onClick={() => (set as (n: number) => void)(Math.max(min, val - 1))} disabled={val <= min} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #d0d5dd", background: val <= min ? "#f9fafb" : "#fff", fontWeight: 800, fontSize: 18, cursor: val <= min ? "default" : "pointer", color: val <= min ? "#d0d5dd" : "#111" }}>−</button>
+                    <span style={{ minWidth: 18, textAlign: "center", fontWeight: 700 }}>{val}</span>
+                    <button type="button" onClick={() => (set as (n: number) => void)(Math.min(max, val + 1))} disabled={val >= max} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #d0d5dd", background: val >= max ? "#f9fafb" : "#fff", fontWeight: 800, fontSize: 18, cursor: val >= max ? "default" : "pointer", color: val >= max ? "#d0d5dd" : "#111" }}>+</button>
+                  </div>
+                </div>
+              ))}
+              <button type="button" onClick={() => setPaxOpen(false)} style={{ marginTop: 12, width: "100%", height: 40, borderRadius: 10, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>Done</button>
+            </div>
+          )}
+        </div>
 
         {/* Currency selector */}
         <div className="currency-pills" role="group" aria-label="Currency">
