@@ -134,7 +134,8 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     if (/expir|no longer available|booking session/i.test(rawMsg)) {
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
-    return c.json({ errorCode: "BOOKING_REJECTED", requestId }, 422);
+    const supplierMessage = (orderMsg || topMsg) || undefined;
+    return c.json({ errorCode: "BOOKING_REJECTED", requestId, ...(supplierMessage ? { supplierMessage } : {}) }, 422);
   }
 
   // Persist booking record
