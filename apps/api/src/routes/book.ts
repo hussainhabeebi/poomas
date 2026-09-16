@@ -121,7 +121,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     const raw = result.raw as any;
     const orderMsg = String(raw?.data?.order?.statusMessage ?? raw?.data?.statusMessage ?? "");
     const topMsg   = String(raw?.status?.statusMessage ?? "");
-    console.error("[book-rejected]", JSON.stringify({ requestId, orderMsg, topMsg, paymentAmount: params.paymentAmount, raw: JSON.stringify(raw).slice(0, 600) }));
+    console.error("[book-rejected]", JSON.stringify({ requestId, orderMsg, topMsg, paymentAmount: reviewPaymentAmount ?? body.totalFare, raw: JSON.stringify(raw).slice(0, 600) }));
     // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
     // so the frontend shows "search again" rather than "contact support".
     const rawMsg = (orderMsg + " " + topMsg).toLowerCase();
