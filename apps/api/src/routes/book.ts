@@ -117,10 +117,13 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
     const rejected = [400, 401, 403, 404, 422, 429].includes(status);
+    const httpSupplierMsg = typeof (err as any)?.supplierDetail === "string" && (err as any).supplierDetail.trim()
+      ? (err as any).supplierDetail.trim() : undefined;
     console.error("[book-submit]", JSON.stringify({ requestId, httpStatus: status || null,
       code: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN" }));
     return c.json({ errorCode: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN",
-      requestId, bookingReference: bookingSessionId }, rejected ? 422 : 502);
+      requestId, bookingReference: bookingSessionId,
+      ...(httpSupplierMsg ? { supplierMessage: httpSupplierMsg } : {}) }, rejected ? 422 : 502);
   }
 
   if (!result.success) {
