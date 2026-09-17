@@ -46,6 +46,15 @@ export class TripjackClient {
         if (/expir|no longer available|booking session/i.test(statusMsg)) {
           throw new SupplierError("TRIPJACK", 409, "Booking session expired");
         }
+        const supplierDetail = String((bookDetail as any)?.status?.statusMessage ?? (bookDetail as any)?.data?.order?.statusMessage ?? "").trim() || undefined;
+        const safeMsg = res.status === 401 || res.status === 403
+          ? "Authentication or proxy IP whitelist rejected"
+          : res.status === 404 ? "TripJack route is unavailable"
+          : res.status === 429 ? "Rate limit exceeded"
+          : "Upstream request failed";
+        const err = new SupplierError("TRIPJACK", res.status, safeMsg) as any;
+        if (supplierDetail) err.supplierDetail = supplierDetail;
+        throw err;
       } else console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
       const safeMessage = res.status === 401 || res.status === 403
         ? "Authentication or proxy IP whitelist rejected"
@@ -134,7 +143,7 @@ export class TripjackClient {
     // TripJack B2B deducts from the agent wallet, but the field is required.
     return this.request("/oms/v1/air/book", {
       bookingId: params.holdId,
-      paymentInfos: [{ amount: params.paymentAmount }],
+      paymentInfos: [{ amount: params.paymentAmount, type: "ONLINE" }],
       deliveryInfo: {
         emails:   [params.contactEmail],
         contacts: [contact],
