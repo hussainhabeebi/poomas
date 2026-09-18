@@ -8,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { getBookableAdapter, TripjackClient } from "@poomas/suppliers";
 import { normalizeBookingResponse } from "../lib/booking-response.js";
 import { resolveFlightSuppliers } from "./search.js";
+import { logSupplierCall } from "../lib/supplier-logger.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import type { Env, Variables } from "../types.js";
 
@@ -69,6 +70,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       ...(tripjackConfig?.credentials ?? {}),
     });
     tripjackClient = client;
+    const reviewStart = Date.now();
     try {
       const review = await client.validateFare(body.fareId);
       bookingSessionId = review.bookingId;
@@ -88,8 +90,17 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.ADULT?.fC?.TF
       ) as number | undefined;
       if (!reviewPaymentAmount) console.warn("[book-review] TF not found in review response; falling back to displayed fare", JSON.stringify(rr).slice(0, 300));
+      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+        httpStatus: 200, level: "INFO", requestId,
+        requestSummary: { fareId: body.fareId, bookingId: review.bookingId, tf: reviewPaymentAmount },
+        durationMs: Date.now() - reviewStart });
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
+      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+        level: "ERROR", requestId: err?.requestId ?? requestId,
+        requestSummary: { fareId: body.fareId },
+        errorCode: err?.code, errorMessage: err?.message,
+        durationMs: Date.now() - reviewStart });
       return c.json({ error: err?.code === "FARE_EXPIRED" ? "This fare is no longer available." : "We couldn't confirm availability. Your details are still here.",
         errorCode: err?.code === "FARE_EXPIRED" ? "FARE_EXPIRED" : "FARE_REVIEW_FAILED",
         diagnosticCode: err?.code, requestId: err?.requestId ?? requestId }, err?.code === "FARE_EXPIRED" ? 409 : 503);
@@ -97,6 +108,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   }
 
   let result;
+  const bookStart = Date.now();
   try {
     const params = {
       fareId:         body.fareId,
@@ -114,6 +126,10 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // Once sent, a network/5xx failure cannot establish that no booking exists.
     const status = Number(err?.statusCode);
     if (status === 409) {
+      void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+        httpStatus: 409, level: "ERROR", requestId,
+        requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination },
+        errorCode: "FARE_EXPIRED", errorMessage: "Booking session expired", durationMs: Date.now() - bookStart });
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
     const rejected = [400, 401, 403, 404, 422, 429].includes(status);
@@ -121,6 +137,11 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       ? (err as any).supplierDetail.trim() : undefined;
     console.error("[book-submit]", JSON.stringify({ requestId, httpStatus: status || null,
       code: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN" }));
+    void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+      httpStatus: status || undefined, level: "ERROR", requestId,
+      requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
+      errorCode: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN",
+      errorMessage: httpSupplierMsg ?? err?.message, durationMs: Date.now() - bookStart });
     return c.json({ errorCode: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN",
       requestId, bookingReference: bookingSessionId,
       ...(httpSupplierMsg ? { supplierMessage: httpSupplierMsg } : {}) }, rejected ? 422 : 502);
@@ -131,6 +152,12 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     const orderMsg = String(raw?.data?.order?.statusMessage ?? raw?.data?.statusMessage ?? "");
     const topMsg   = String(raw?.status?.statusMessage ?? "");
     console.error("[book-rejected]", JSON.stringify({ requestId, orderMsg, topMsg, paymentAmount: reviewPaymentAmount ?? body.totalFare, raw: JSON.stringify(raw).slice(0, 600) }));
+    void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+      httpStatus: 200, level: "ERROR", requestId,
+      requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
+      responseSnippet: JSON.stringify(raw).slice(0, 800),
+      errorCode: "BOOKING_REJECTED", errorMessage: orderMsg || topMsg || "Supplier rejected booking",
+      durationMs: Date.now() - bookStart });
     // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
     // so the frontend shows "search again" rather than "contact support".
     const rawMsg = (orderMsg + " " + topMsg).toLowerCase();
@@ -139,6 +166,14 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     }
     const supplierMessage = (orderMsg || topMsg) || undefined;
     return c.json({ errorCode: "BOOKING_REJECTED", requestId, ...(supplierMessage ? { supplierMessage } : {}) }, 422);
+  }
+
+  if (body.supplier === "TRIPJACK") {
+    void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+      httpStatus: 200, level: "INFO", requestId,
+      requestSummary: { bookingId: bookingSessionId, bookingRef: result.bookingRef, pnr: result.pnr,
+        origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
+      durationMs: Date.now() - bookStart });
   }
 
   // Persist booking record
