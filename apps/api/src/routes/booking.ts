@@ -82,11 +82,12 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
       platformCredentials.TRIPJACK = { apiKey, baseUrl, omsBaseUrl: c.env.TRIPJACK_OMS_BASE_URL || undefined, proxyKey: c.env.TRIPJACK_PROXY_KEY };
       let config = supplierConfigs.find((item) => item.name === "TRIPJACK");
       if (!config) {
-        config = {
-          name: "TRIPJACK", isEnabled: saved ? saved.enabled === true : true,
-          priority: 20, credentials: platformCredentials.TRIPJACK, timeoutMs: 25000, maxRetries: 0,
+        const newConfig = {
+          name: "TRIPJACK" as const, isEnabled: saved ? saved.enabled === true : true,
+          priority: 20, credentials: platformCredentials.TRIPJACK ?? null, timeoutMs: 25000, maxRetries: 0,
         };
-        supplierConfigs.push(config);
+        supplierConfigs.push(newConfig);
+        config = newConfig;
       } else {
         config.isEnabled = saved ? saved.enabled === true : true;
         config.credentials = { ...(config.credentials ?? {}), ...platformCredentials.TRIPJACK };
