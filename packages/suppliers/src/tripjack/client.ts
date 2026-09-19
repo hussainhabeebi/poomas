@@ -143,7 +143,7 @@ export class TripjackClient {
     // TripJack B2B deducts from the agent wallet, but the field is required.
     return this.request("/oms/v1/air/book", {
       bookingId: params.holdId,
-      paymentInfos: [{ amount: params.paymentAmount, type: "ONLINE" }],
+      paymentInfos: [{ amount: params.paymentAmount }],
       deliveryInfo: {
         emails:   [params.contactEmail],
         contacts: [contact],
