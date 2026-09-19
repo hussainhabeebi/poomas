@@ -107,6 +107,13 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     }
   }
 
+  // Log that a book attempt is being made — written before the call so CF timeout can't swallow it.
+  void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+    level: "INFO", requestId,
+    requestSummary: { bookingId: bookingSessionId, fareId: body.fareId,
+      origin: body.origin, destination: body.destination, paxCount: body.passengers.length,
+      paymentAmount: reviewPaymentAmount ?? body.totalFare, status: "INITIATED" } });
+
   let result;
   const bookStart = Date.now();
   try {
@@ -125,26 +132,27 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   } catch (err: any) {
     // Once sent, a network/5xx failure cannot establish that no booking exists.
     const status = Number(err?.statusCode);
+    const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError" || /timeout/i.test(String(err?.message));
     if (status === 409) {
-      void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+      c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
         httpStatus: 409, level: "ERROR", requestId,
         requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination },
-        errorCode: "FARE_EXPIRED", errorMessage: "Booking session expired", durationMs: Date.now() - bookStart });
+        errorCode: "FARE_EXPIRED", errorMessage: "Booking session expired", durationMs: Date.now() - bookStart }));
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
     const rejected = [400, 401, 403, 404, 422, 429].includes(status);
     const httpSupplierMsg = typeof (err as any)?.supplierDetail === "string" && (err as any).supplierDetail.trim()
       ? (err as any).supplierDetail.trim() : undefined;
-    console.error("[book-submit]", JSON.stringify({ requestId, httpStatus: status || null,
-      code: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN" }));
-    void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+    const errorCode = isTimeout ? "BOOK_TIMEOUT" : rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN";
+    console.error("[book-submit]", JSON.stringify({ requestId, httpStatus: status || null, code: errorCode }));
+    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
       httpStatus: status || undefined, level: "ERROR", requestId,
       requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
-      errorCode: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN",
-      errorMessage: httpSupplierMsg ?? err?.message, durationMs: Date.now() - bookStart });
-    return c.json({ errorCode: rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN",
+      errorCode,
+      errorMessage: httpSupplierMsg ?? err?.message, durationMs: Date.now() - bookStart }));
+    return c.json({ errorCode: isTimeout ? "BOOKING_STATUS_UNKNOWN" : rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN",
       requestId, bookingReference: bookingSessionId,
-      ...(httpSupplierMsg ? { supplierMessage: httpSupplierMsg } : {}) }, rejected ? 422 : 502);
+      ...(httpSupplierMsg ? { supplierMessage: httpSupplierMsg } : {}) }, isTimeout ? 502 : rejected ? 422 : 502);
   }
 
   if (!result.success) {
@@ -152,12 +160,12 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     const orderMsg = String(raw?.data?.order?.statusMessage ?? raw?.data?.statusMessage ?? "");
     const topMsg   = String(raw?.status?.statusMessage ?? "");
     console.error("[book-rejected]", JSON.stringify({ requestId, orderMsg, topMsg, paymentAmount: reviewPaymentAmount ?? body.totalFare, raw: JSON.stringify(raw).slice(0, 600) }));
-    void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
       httpStatus: 200, level: "ERROR", requestId,
       requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
       responseSnippet: JSON.stringify(raw).slice(0, 800),
       errorCode: "BOOKING_REJECTED", errorMessage: orderMsg || topMsg || "Supplier rejected booking",
-      durationMs: Date.now() - bookStart });
+      durationMs: Date.now() - bookStart }));
     // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
     // so the frontend shows "search again" rather than "contact support".
     const rawMsg = (orderMsg + " " + topMsg).toLowerCase();
@@ -169,11 +177,11 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   }
 
   if (body.supplier === "TRIPJACK") {
-    void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
       httpStatus: 200, level: "INFO", requestId,
       requestSummary: { bookingId: bookingSessionId, bookingRef: result.bookingRef, pnr: result.pnr,
         origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
-      durationMs: Date.now() - bookStart });
+      durationMs: Date.now() - bookStart }));
   }
 
   // Persist booking record
@@ -221,10 +229,10 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error("[book-save]", JSON.stringify({ requestId, bookingReference: result.bookingRef, error: errMsg }));
-    void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "db:bookings:insert",
+    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "db:bookings:insert",
       level: "ERROR", requestId,
       requestSummary: { bookingRef: result.bookingRef, pnr: result.pnr },
-      errorCode: "DB_WRITE_FAILED", errorMessage: errMsg });
+      errorCode: "DB_WRITE_FAILED", errorMessage: errMsg }));
     // The supplier accepted this request. Do not invite a duplicate booking.
     return c.json({ success: true, bookingId: booking?.id, pnr: result.pnr,
       bookingReference: result.bookingRef, status: result.status,
