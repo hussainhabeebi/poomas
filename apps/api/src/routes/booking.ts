@@ -79,7 +79,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     const apiKey = saved?.apiKey || c.env.TRIPJACK_API_KEY;
     const baseUrl = c.env.TRIPJACK_API_BASE_URL || saved?.baseUrl;
     if ((apiKey || c.env.TRIPJACK_PROXY_KEY) && baseUrl) {
-      platformCredentials.TRIPJACK = { apiKey, baseUrl, proxyKey: c.env.TRIPJACK_PROXY_KEY };
+      platformCredentials.TRIPJACK = { apiKey, baseUrl, omsBaseUrl: c.env.TRIPJACK_OMS_BASE_URL || undefined, proxyKey: c.env.TRIPJACK_PROXY_KEY };
       let config = supplierConfigs.find((item) => item.name === "TRIPJACK");
       if (!config) {
         config = {

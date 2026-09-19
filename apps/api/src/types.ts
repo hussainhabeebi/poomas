@@ -25,6 +25,7 @@ export interface Env {
   RIYA_API_BASE_URL:      string;
   TRIPJACK_API_KEY:       string;
   TRIPJACK_API_BASE_URL:  string;
+  TRIPJACK_OMS_BASE_URL?: string;  // OMS (book/cancel) base URL — set when proxy only covers FMS
   TRIPJACK_PROXY_KEY:     string;
   SERP_API_KEY:           string;
   DUFFEL_API_KEY:         string;

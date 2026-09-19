@@ -102,6 +102,7 @@ export async function resolveFlightSuppliers(env: Env, tenant: Variables["tenant
     platformCredentials.TRIPJACK = {
       apiKey: tripjackApiKey,
       baseUrl: tripjackBaseUrl,
+      omsBaseUrl: env.TRIPJACK_OMS_BASE_URL || undefined,
       proxyKey: env.TRIPJACK_PROXY_KEY,
     };
   }
