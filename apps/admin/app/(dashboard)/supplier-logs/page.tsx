@@ -28,7 +28,7 @@ const ENDPOINT_LABEL: Record<string, string> = {
   "/oms/v1/air/amendment/submit-amendment": "Cancel",
 };
 
-async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[] }> {
+async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; fetchError?: string }> {
   try {
     const q = new URLSearchParams();
     if (sp.level)    q.set("level", sp.level);
@@ -42,10 +42,15 @@ async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[] }
       headers: { Authorization: `Bearer ${process.env.ADMIN_SERVICE_TOKEN}` },
       cache: "no-store",
     });
-    if (!res.ok) return { logs: [] };
-    return res.json();
-  } catch {
-    return { logs: [] };
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { logs: [], fetchError: `API returned HTTP ${res.status}: ${text.slice(0, 200)}` };
+    }
+    const data = await res.json() as any;
+    if (data.error) return { logs: [], fetchError: `API error: ${data.error} — ${data.details ?? ""}` };
+    return { logs: data.logs ?? [], ...data };
+  } catch (err) {
+    return { logs: [], fetchError: `Network error: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -65,7 +70,7 @@ export default async function SupplierLogsPage({
   searchParams: Promise<Record<string, string>>;
 }) {
   const sp = await searchParams;
-  const { logs } = await getLogs(sp);
+  const { logs, fetchError } = await getLogs(sp);
 
   const offset  = parseInt(sp.offset ?? "0");
   const limit   = parseInt(sp.limit  ?? "100");
@@ -86,6 +91,17 @@ export default async function SupplierLogsPage({
           Every TripJack / Riya API call — timestamp, endpoint, HTTP status, error detail.
         </p>
       </div>
+
+      {/* Error banner */}
+      {fetchError && (
+        <div style={{
+          background: "rgba(239,68,68,.12)", border: "1px solid #ef4444",
+          borderRadius: 8, padding: "12px 16px", marginBottom: 20,
+          color: "#fca5a5", fontSize: 13, fontFamily: "monospace",
+        }}>
+          ⚠ {fetchError}
+        </div>
+      )}
 
       {/* Filters */}
       <form method="GET" style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 24 }}>

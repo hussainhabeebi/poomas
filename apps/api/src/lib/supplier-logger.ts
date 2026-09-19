@@ -30,7 +30,7 @@ export async function logSupplierCall(db: Db, entry: SupplierCallLog): Promise<v
       errorMessage:    entry.errorMessage ?? null,
       durationMs:      entry.durationMs ?? null,
     });
-  } catch {
-    // Logging must never break the booking flow
+  } catch (err) {
+    console.error("[supplier-logger] insert failed:", err instanceof Error ? err.message : String(err));
   }
 }
