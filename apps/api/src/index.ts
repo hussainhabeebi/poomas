@@ -57,7 +57,19 @@ app.use("/api/eticket/*",  authMiddleware);
 app.use("/api/agents/*",   authMiddleware);
 app.use("/api/wallet/*",   authMiddleware);
 app.use("/api/session/*",  authMiddleware);
-app.use("/api/admin/*",    authMiddleware);
+// Admin service-token bypass: if ADMIN_SERVICE_TOKEN is set and matches the
+// Authorization header, skip JWT verification and grant SUPER_ADMIN access.
+app.use("/api/admin/*", async (c, next) => {
+  const serviceToken = c.env.ADMIN_SERVICE_TOKEN;
+  if (serviceToken) {
+    const auth = c.req.header("Authorization") ?? "";
+    if (auth === `Bearer ${serviceToken}`) {
+      c.set("userRole", "SUPER_ADMIN");
+      return next();
+    }
+  }
+  return authMiddleware(c, next);
+});
 app.use("/api/profile/*", authMiddleware);
 app.use("/api/whatsapp/*", authMiddleware);
 

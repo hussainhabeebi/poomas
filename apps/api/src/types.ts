@@ -38,6 +38,9 @@ export interface Env {
   RESEND_API_KEY:         string;
   GEMINI_API_KEY:         string;
 
+  // Static service token for admin app server-to-server calls (any random secret)
+  ADMIN_SERVICE_TOKEN?:     string;
+
   // One-time admin bootstrap (set in Cloudflare dashboard, unset after first use)
   PLATFORM_ADMIN_EMAIL?:    string;
   PLATFORM_ADMIN_PASSWORD?: string;
