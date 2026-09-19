@@ -218,8 +218,13 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       passportCountry: p.nationality ?? null,
     })),
   );
-  } catch {
-    console.error("[book-save]", JSON.stringify({ requestId, bookingReference: result.bookingRef }));
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[book-save]", JSON.stringify({ requestId, bookingReference: result.bookingRef, error: errMsg }));
+    void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "db:bookings:insert",
+      level: "ERROR", requestId,
+      requestSummary: { bookingRef: result.bookingRef, pnr: result.pnr },
+      errorCode: "DB_WRITE_FAILED", errorMessage: errMsg });
     // The supplier accepted this request. Do not invite a duplicate booking.
     return c.json({ success: true, bookingId: booking?.id, pnr: result.pnr,
       bookingReference: result.bookingRef, status: result.status,
