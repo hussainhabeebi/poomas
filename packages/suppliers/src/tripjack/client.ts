@@ -149,6 +149,8 @@ export class TripjackClient {
         contacts: [contact],
       },
       travellerInfo,
+      // Some TripJack partner accounts require a remarks field; harmless when not required.
+      remarks: "Direct booking",
     }, AbortSignal.timeout(25000));
   }
 

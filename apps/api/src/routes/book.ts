@@ -185,7 +185,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
     // so the frontend shows "search again" rather than "contact support".
     const rawMsg = (orderMsg + " " + topMsg).toLowerCase();
-    if (/expir|no longer available|booking session/i.test(rawMsg)) {
+    if (/expir|no longer available|booking session|no tripjack comment|no comment found|session not found/i.test(rawMsg)) {
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
     const supplierMessage = (orderMsg || topMsg) || undefined;
