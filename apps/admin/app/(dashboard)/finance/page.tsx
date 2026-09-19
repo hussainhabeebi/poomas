@@ -1,4 +1,4 @@
-import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/server.js";
 
 interface FinanceSummary {
   totalRevenue:        number;

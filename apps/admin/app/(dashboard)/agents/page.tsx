@@ -1,4 +1,4 @@
-import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/server.js";
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   PENDING:   { bg: "#fffbeb", color: "#92400e" },

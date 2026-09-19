@@ -1,4 +1,4 @@
-import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/server.js";
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   SEARCHED:        { bg: "#1e293b", color: "#64748b" },
