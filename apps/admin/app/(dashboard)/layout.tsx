@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/integrations", label: "Integrations",  icon: "⚙️" },
   { href: "/api-keys",     label: "API Keys",      icon: "🔑" },
   { href: "/settings",     label: "Settings",      icon: "🔧" },
+  { href: "/supplier-logs", label: "API Logs",     icon: "📡" },
 ];
 
 export default function AdminDashboardLayout({ children }: { children: React.ReactNode }) {

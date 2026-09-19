@@ -1,0 +1,238 @@
+interface LogEntry {
+  id: string;
+  supplier: string;
+  endpoint: string;
+  httpStatus: number | null;
+  level: string;
+  requestId: string | null;
+  requestSummary: Record<string, unknown> | null;
+  responseSnippet: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  durationMs: number | null;
+  createdAt: string;
+}
+
+const LEVEL_COLOR: Record<string, string> = {
+  INFO:  "#4ade80",
+  WARN:  "#fbbf24",
+  ERROR: "#f87171",
+};
+
+const ENDPOINT_LABEL: Record<string, string> = {
+  "/fms/v1/review":               "Fare Review",
+  "/oms/v1/air/book":             "Book",
+  "/air-search-all/v2":           "Search",
+  "/fms/v2/farerule":             "Fare Rules",
+  "/oms/v1/booking-details":      "PNR Status",
+  "/oms/v1/air/amendment/submit-amendment": "Cancel",
+};
+
+async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[] }> {
+  try {
+    const q = new URLSearchParams();
+    if (sp.level)    q.set("level", sp.level);
+    if (sp.supplier) q.set("supplier", sp.supplier);
+    if (sp.endpoint) q.set("endpoint", sp.endpoint);
+    if (sp.from)     q.set("from", sp.from);
+    if (sp.to)       q.set("to", sp.to);
+    q.set("limit",  String(Math.min(parseInt(sp.limit ?? "100"), 500)));
+    q.set("offset", sp.offset ?? "0");
+    const res = await fetch(`${process.env.API_BASE_URL}/api/admin/supplier-logs?${q}`, {
+      headers: { Authorization: `Bearer ${process.env.ADMIN_SERVICE_TOKEN}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return { logs: [] };
+    return res.json();
+  } catch {
+    return { logs: [] };
+  }
+}
+
+function fmtTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleString("en-IN", {
+      hour12: false, timeZone: "Asia/Kolkata",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  } catch { return iso; }
+}
+
+export default async function SupplierLogsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string>>;
+}) {
+  const sp = await searchParams;
+  const { logs } = await getLogs(sp);
+
+  const offset  = parseInt(sp.offset ?? "0");
+  const limit   = parseInt(sp.limit  ?? "100");
+
+  const prevOffset = Math.max(0, offset - limit);
+  const nextOffset = offset + limit;
+
+  function buildHref(overrides: Record<string, string>) {
+    const p = new URLSearchParams({ ...sp, ...overrides });
+    return `/supplier-logs?${p}`;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>Supplier API Logs</h1>
+        <p style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
+          Every TripJack / Riya API call — timestamp, endpoint, HTTP status, error detail.
+        </p>
+      </div>
+
+      {/* Filters */}
+      <form method="GET" style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 24 }}>
+        <select name="supplier" defaultValue={sp.supplier ?? "TRIPJACK"} style={sel}>
+          <option value="">All suppliers</option>
+          <option value="TRIPJACK">TRIPJACK</option>
+          <option value="RIYA">RIYA</option>
+        </select>
+        <select name="level" defaultValue={sp.level ?? ""} style={sel}>
+          <option value="">All levels</option>
+          <option value="INFO">INFO</option>
+          <option value="WARN">WARN</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+        <select name="endpoint" defaultValue={sp.endpoint ?? ""} style={sel}>
+          <option value="">All endpoints</option>
+          {Object.entries(ENDPOINT_LABEL).map(([k, v]) => (
+            <option key={k} value={k}>{v}</option>
+          ))}
+        </select>
+        <input name="from" type="date" defaultValue={sp.from ?? ""} style={inp} />
+        <input name="to"   type="date" defaultValue={sp.to   ?? ""} style={inp} />
+        <button type="submit" style={btn}>Search</button>
+      </form>
+
+      {/* Table */}
+      <div style={{ overflowX: "auto", borderRadius: 10, border: "1px solid #1e293b" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "#1e293b" }}>
+              {["Timestamp (IST)", "Level", "Supplier", "Endpoint", "HTTP", "ms", "Request ID", "Error"].map((h) => (
+                <th key={h} style={th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 && (
+              <tr>
+                <td colSpan={8} style={{ textAlign: "center", padding: 40, color: "#475569" }}>
+                  No logs found for these filters.
+                </td>
+              </tr>
+            )}
+            {logs.map((log, i) => (
+              <tr key={log.id} style={{
+                borderTop: i === 0 ? "none" : "1px solid #1e293b",
+                background: log.level === "ERROR" ? "rgba(239,68,68,.04)" : "transparent",
+              }}>
+                <td style={td}><span style={{ fontFamily: "monospace", fontSize: 12 }}>{fmtTime(log.createdAt)}</span></td>
+                <td style={td}>
+                  <span style={{ fontWeight: 700, color: LEVEL_COLOR[log.level] ?? "#94a3b8", fontSize: 11 }}>
+                    {log.level}
+                  </span>
+                </td>
+                <td style={td}><span style={{ color: "#94a3b8" }}>{log.supplier}</span></td>
+                <td style={td}>
+                  <span style={{ color: "#e2e8f0" }}>{ENDPOINT_LABEL[log.endpoint] ?? log.endpoint}</span>
+                  <span style={{ display: "block", fontFamily: "monospace", fontSize: 10, color: "#475569" }}>
+                    {log.endpoint}
+                  </span>
+                </td>
+                <td style={{ ...td, textAlign: "center" }}>
+                  {log.httpStatus ? (
+                    <span style={{
+                      fontWeight: 700,
+                      color: log.httpStatus < 300 ? "#4ade80"
+                        : log.httpStatus < 500 ? "#fbbf24" : "#f87171",
+                    }}>
+                      {log.httpStatus}
+                    </span>
+                  ) : <span style={{ color: "#475569" }}>—</span>}
+                </td>
+                <td style={{ ...td, textAlign: "right", color: "#64748b" }}>
+                  {log.durationMs != null ? log.durationMs : "—"}
+                </td>
+                <td style={{ ...td }}>
+                  <span style={{ fontFamily: "monospace", fontSize: 11, color: "#475569" }}>
+                    {log.requestId ? log.requestId.slice(0, 8) + "…" : "—"}
+                  </span>
+                </td>
+                <td style={td}>
+                  {log.errorCode && (
+                    <span style={{ color: "#f87171", fontWeight: 600, fontSize: 12 }}>{log.errorCode}</span>
+                  )}
+                  {log.errorMessage && (
+                    <span style={{ color: "#64748b", fontSize: 12, display: "block" }}>
+                      {log.errorMessage.slice(0, 80)}
+                    </span>
+                  )}
+                  {log.requestSummary && (
+                    <details style={{ marginTop: 4 }}>
+                      <summary style={{ color: "#475569", fontSize: 11, cursor: "pointer" }}>Details</summary>
+                      <pre style={{
+                        fontFamily: "monospace", fontSize: 11, color: "#94a3b8",
+                        whiteSpace: "pre-wrap", wordBreak: "break-all",
+                        background: "#0f172a", padding: 8, borderRadius: 4, marginTop: 4,
+                        maxHeight: 160, overflow: "auto",
+                      }}>
+                        {JSON.stringify(log.requestSummary, null, 2)}
+                        {log.responseSnippet ? "\n\n--- response ---\n" + log.responseSnippet : ""}
+                      </pre>
+                    </details>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <div style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center" }}>
+        {offset > 0 && (
+          <a href={buildHref({ offset: String(prevOffset) })} style={pgA}>← Prev</a>
+        )}
+        <span style={{ fontSize: 13, color: "#64748b" }}>
+          Showing {offset + 1}–{offset + logs.length}
+        </span>
+        {logs.length === limit && (
+          <a href={buildHref({ offset: String(nextOffset) })} style={pgA}>Next →</a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const sel: React.CSSProperties = {
+  background: "#1e293b", color: "#f1f5f9", border: "1px solid #334155",
+  borderRadius: 8, padding: "9px 12px", fontSize: 13,
+};
+const inp: React.CSSProperties = {
+  background: "#1e293b", color: "#f1f5f9", border: "1px solid #334155",
+  borderRadius: 8, padding: "9px 12px", fontSize: 13,
+};
+const btn: React.CSSProperties = {
+  background: "#E31E24", color: "#fff", border: "none",
+  borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+};
+const th: React.CSSProperties = {
+  padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 700,
+  color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em",
+  whiteSpace: "nowrap",
+};
+const td: React.CSSProperties = {
+  padding: "10px 14px", verticalAlign: "top", color: "#cbd5e1",
+};
+const pgA: React.CSSProperties = {
+  padding: "6px 16px", border: "1px solid #334155", borderRadius: 6,
+  background: "#1e293b", color: "#94a3b8", textDecoration: "none", fontSize: 13,
+};
