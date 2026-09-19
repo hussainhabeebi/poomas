@@ -165,6 +165,27 @@ export class TripjackClient {
     return this.request("/oms/v1/booking-details", { bookingId });
   }
 
+  async ssrList(bookingId: string) {
+    return this.request<any>("/oms/v1/air/ssr-list", { bookingId });
+  }
+
+  async addSsr(bookingId: string, ssrDetails: Array<{
+    type:         "MEAL" | "BAGGAGE";
+    key:          string;
+    paxIndex:     number;
+    segmentIndex?: number;
+  }>) {
+    return this.request("/oms/v1/air/ssr", {
+      bookingId,
+      ssrDetails: ssrDetails.map((s) => ({
+        code:         s.key,
+        type:         s.type,
+        paxIndex:     s.paxIndex,
+        segmentIndex: s.segmentIndex ?? 0,
+      })),
+    });
+  }
+
   async cancel(bookingRef: string) {
     return this.request("/oms/v1/air/amendment/submit-amendment", {
       bookingId: bookingRef,

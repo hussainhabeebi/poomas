@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { getBookableAdapter, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
+import { getBookableAdapter, TripjackClient, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
 import { bookings, bookingPassengers, payments, walletAccounts, walletTransactions } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
@@ -324,6 +324,69 @@ bookingRoutes.get("/:id", async (c) => {
   }
 
   return c.json(booking);
+});
+
+// SSR list — available meal/baggage options for a confirmed TripJack booking
+bookingRoutes.get("/:id/ssr", async (c) => {
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+
+  const [booking] = await db
+    .select({ id: bookings.id, supplier: bookings.supplier, supplierBookingRef: bookings.supplierBookingRef })
+    .from(bookings)
+    .where(and(eq(bookings.id, c.req.param("id")), eq(bookings.tenantId, tenantId)))
+    .limit(1);
+
+  if (!booking) throw new HTTPException(404, { message: "Booking not found" });
+  if (booking.supplier !== "TRIPJACK") throw new HTTPException(400, { message: "SSR only supported for TripJack bookings" });
+  if (!booking.supplierBookingRef) throw new HTTPException(400, { message: "Booking has no supplier reference" });
+
+  const tenant = c.get("tenant");
+  const saved = await c.env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:integration:tripjack`, "json") as { apiKey?: string; baseUrl?: string } | null;
+  const client = new TripjackClient({
+    apiKey:     saved?.apiKey || c.env.TRIPJACK_API_KEY,
+    baseUrl:    c.env.TRIPJACK_API_BASE_URL || saved?.baseUrl || "",
+    omsBaseUrl: c.env.TRIPJACK_OMS_BASE_URL || "",
+    proxyKey:   c.env.TRIPJACK_PROXY_KEY,
+  });
+
+  const raw = await client.ssrList(booking.supplierBookingRef);
+  return c.json({ bookingId: booking.id, ssr: raw?.data ?? raw });
+});
+
+// Add SSR (meal / baggage) to a confirmed TripJack booking
+bookingRoutes.post("/:id/ssr", zValidator("json", z.object({
+  ssrDetails: z.array(z.object({
+    type:         z.enum(["MEAL", "BAGGAGE"]),
+    key:          z.string().min(1),
+    paxIndex:     z.number().int().min(0),
+    segmentIndex: z.number().int().min(0).optional(),
+  })).min(1),
+})), async (c) => {
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+  const body     = c.req.valid("json");
+
+  const [booking] = await db
+    .select({ id: bookings.id, supplier: bookings.supplier, supplierBookingRef: bookings.supplierBookingRef })
+    .from(bookings)
+    .where(and(eq(bookings.id, c.req.param("id")), eq(bookings.tenantId, tenantId)))
+    .limit(1);
+
+  if (!booking) throw new HTTPException(404, { message: "Booking not found" });
+  if (booking.supplier !== "TRIPJACK") throw new HTTPException(400, { message: "SSR only supported for TripJack bookings" });
+  if (!booking.supplierBookingRef) throw new HTTPException(400, { message: "Booking has no supplier reference" });
+
+  const saved = await c.env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:integration:tripjack`, "json") as { apiKey?: string; baseUrl?: string } | null;
+  const client = new TripjackClient({
+    apiKey:     saved?.apiKey || c.env.TRIPJACK_API_KEY,
+    baseUrl:    c.env.TRIPJACK_API_BASE_URL || saved?.baseUrl || "",
+    omsBaseUrl: c.env.TRIPJACK_OMS_BASE_URL || "",
+    proxyKey:   c.env.TRIPJACK_PROXY_KEY,
+  });
+
+  const result = await client.addSsr(booking.supplierBookingRef, body.ssrDetails);
+  return c.json({ success: true, result });
 });
 
 // PNR status check (no auth required — public tool)

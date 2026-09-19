@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { supplierApiLogs } from "@poomas/db/schema";
 import { eq, and, desc, gte, lte } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 
 export const supplierLogsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -48,4 +50,41 @@ supplierLogsAdminRoutes.get("/", async (c) => {
     console.error("[admin-supplier-logs] query failed:", err instanceof Error ? err.message : String(err));
     return c.json({ error: "Failed to query supplier logs", details: err instanceof Error ? err.message : String(err) }, 500);
   }
+});
+
+// GET /api/admin/supplier-logs/export — download TripJack API logs as JSON (UAT submission)
+supplierLogsAdminRoutes.get("/export", async (c) => {
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+  const role     = c.get("userRole");
+  const supplier = (c.req.query("supplier") ?? "TRIPJACK") as "TRIPJACK" | "RIYA";
+  const from     = c.req.query("from");
+  const to       = c.req.query("to");
+  const filterTenantId = c.req.query("tenantId");
+
+  const conditions: ReturnType<typeof eq>[] = [
+    eq(supplierApiLogs.supplier, supplier),
+  ];
+  if (role !== "SUPER_ADMIN") {
+    conditions.push(eq(supplierApiLogs.tenantId, tenantId));
+  } else if (filterTenantId) {
+    conditions.push(eq(supplierApiLogs.tenantId, filterTenantId));
+  }
+  if (from) conditions.push(gte(supplierApiLogs.createdAt, new Date(from)));
+  if (to)   conditions.push(lte(supplierApiLogs.createdAt, new Date(to)));
+
+  const rows = await db
+    .select()
+    .from(supplierApiLogs)
+    .where(and(...conditions))
+    .orderBy(desc(supplierApiLogs.createdAt))
+    .limit(500);
+
+  const filename = `${supplier.toLowerCase()}-logs-${new Date().toISOString().slice(0, 10)}.json`;
+  return new Response(JSON.stringify({ exportedAt: new Date().toISOString(), supplier, count: rows.length, logs: rows }, null, 2), {
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
 });
