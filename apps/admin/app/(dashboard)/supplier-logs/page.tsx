@@ -1,3 +1,5 @@
+import { LogDetail } from "./LogDetail";
+
 const SERVER_API   = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const SERVER_TOKEN = process.env.ADMIN_SERVICE_TOKEN ?? "";
 
@@ -29,6 +31,7 @@ const ENDPOINT_LABEL: Record<string, string> = {
   "/fms/v2/farerule":             "Fare Rules",
   "/oms/v1/booking-details":      "PNR Status",
   "/oms/v1/air/amendment/submit-amendment": "Cancel",
+  "db:bookings:insert":           "DB Save",
 };
 
 async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; fetchError?: string }> {
@@ -190,25 +193,12 @@ export default async function SupplierLogsPage({
                   {log.errorCode && (
                     <span style={{ color: "#f87171", fontWeight: 600, fontSize: 12 }}>{log.errorCode}</span>
                   )}
-                  {log.errorMessage && (
-                    <span style={{ color: "#64748b", fontSize: 12, display: "block" }}>
-                      {log.errorMessage.slice(0, 80)}
-                    </span>
-                  )}
-                  {log.requestSummary && (
-                    <details style={{ marginTop: 4 }}>
-                      <summary style={{ color: "#475569", fontSize: 11, cursor: "pointer" }}>Details</summary>
-                      <pre style={{
-                        fontFamily: "monospace", fontSize: 11, color: "#94a3b8",
-                        whiteSpace: "pre-wrap", wordBreak: "break-all",
-                        background: "#0f172a", padding: 8, borderRadius: 4, marginTop: 4,
-                        maxHeight: 160, overflow: "auto",
-                      }}>
-                        {JSON.stringify(log.requestSummary, null, 2)}
-                        {log.responseSnippet ? "\n\n--- response ---\n" + log.responseSnippet : ""}
-                      </pre>
-                    </details>
-                  )}
+                  <LogDetail
+                    errorCode={log.errorCode}
+                    errorMessage={log.errorMessage}
+                    requestSummary={log.requestSummary}
+                    responseSnippet={log.responseSnippet}
+                  />
                 </td>
               </tr>
             ))}
