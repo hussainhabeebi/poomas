@@ -6,6 +6,7 @@ import { getBookableAdapter, type SupplierConfig, type PlatformCredentials } fro
 import { bookings, bookingPassengers, payments, walletAccounts, walletTransactions } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { logSupplierCall } from "../lib/supplier-logger.js";
 
 const passengerSchema = z.object({
   type:            z.enum(["ADULT", "CHILD", "INFANT"]),
@@ -103,6 +104,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     if (!adapter.book) throw new HTTPException(500, { message: "TripJack book method not available" });
 
     let bookResult;
+    const bookStart = Date.now();
     try {
       bookResult = await adapter.book({
         fareId:       body.fareId,
@@ -113,15 +115,32 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
         contactPhone: body.contactPhone,
         paymentRef:   "TRIPJACK_DIRECT",
       });
-    } catch (err) {
-      throw new HTTPException(422, {
-        message: err instanceof Error ? err.message : "TripJack booking failed",
-      });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+        level: "ERROR", requestId: body.sessionId,
+        requestSummary: { fareId: body.fareId, sessionId: body.sessionId,
+          origin: snap.origin, destination: snap.destination, paxCount: body.passengers.length },
+        errorCode: "BOOKING_FAILED", errorMessage: errMsg,
+        durationMs: Date.now() - bookStart });
+      throw new HTTPException(422, { message: errMsg });
     }
 
     if (!bookResult.success) {
+      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+        httpStatus: 200, level: "ERROR", requestId: body.sessionId,
+        requestSummary: { fareId: body.fareId, sessionId: body.sessionId,
+          origin: snap.origin, destination: snap.destination, paxCount: body.passengers.length },
+        errorCode: "BOOKING_REJECTED", errorMessage: "TripJack booking was not confirmed",
+        durationMs: Date.now() - bookStart });
       throw new HTTPException(422, { message: "TripJack booking was not confirmed" });
     }
+
+    void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+      httpStatus: 200, level: "INFO", requestId: body.sessionId,
+      requestSummary: { fareId: body.fareId, bookingRef: bookResult.bookingRef, pnr: bookResult.pnr,
+        origin: snap.origin, destination: snap.destination, paxCount: body.passengers.length },
+      durationMs: Date.now() - bookStart });
 
     const paxValues = body.passengers.map((p) => ({
       passengerType: p.type,
@@ -135,39 +154,51 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
       passportCountry: p.passportCountry ?? null,
     }));
 
-    const [booking] = await db.insert(bookings).values({
-      tenantId,
-      userId:             userId ?? null,
-      agentId:            agentId ?? null,
-      channel:            agentId ? "B2B_PORTAL" : "B2C_WEB",
-      status:             "CONFIRMED",
-      tripType:           "ONEWAY",
-      cabinClass:         "ECONOMY",
-      origin:             snap.origin,
-      destination:        snap.destination,
-      departureDate:      new Date(snap.departureTime),
-      flightData:         snap as unknown as Record<string, unknown>,
-      adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
-      childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
-      infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
-      baseFare:           String(snap.baseFare),
-      taxes:              String(snap.taxes),
-      totalAmount:        String(snap.totalFare),
-      currency:           snap.currency.toUpperCase() as "INR" | "AED" | "USD",
-      supplier:           body.supplier,
-      supplierBookingRef: bookResult.bookingRef ?? null,
-      pnr:                bookResult.pnr ?? null,
-      gstNumber:          body.gstNumber ?? null,
-      heldUntil:          null,
-      contactEmail:       body.contactEmail,
-      contactPhone:       body.contactPhone,
-    }).returning();
+    let booking: typeof bookings.$inferSelect | undefined;
+    try {
+      [booking] = await db.insert(bookings).values({
+        tenantId,
+        userId:             userId ?? null,
+        agentId:            agentId ?? null,
+        channel:            agentId ? "B2B_PORTAL" : "B2C_WEB",
+        status:             "CONFIRMED",
+        tripType:           "ONEWAY",
+        cabinClass:         "ECONOMY",
+        origin:             snap.origin,
+        destination:        snap.destination,
+        departureDate:      new Date(snap.departureTime),
+        flightData:         snap as unknown as Record<string, unknown>,
+        adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
+        childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
+        infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
+        baseFare:           String(snap.baseFare),
+        taxes:              String(snap.taxes),
+        totalAmount:        String(snap.totalFare),
+        currency:           snap.currency.toUpperCase() as "INR" | "AED" | "USD",
+        supplier:           body.supplier,
+        supplierBookingRef: bookResult.bookingRef ?? null,
+        pnr:                bookResult.pnr ?? null,
+        gstNumber:          body.gstNumber ?? null,
+        heldUntil:          null,
+        contactEmail:       body.contactEmail,
+        contactPhone:       body.contactPhone,
+      }).returning();
 
-    await db.insert(bookingPassengers).values(
-      paxValues.map((p) => ({ ...p, bookingId: booking.id })),
-    );
+      await db.insert(bookingPassengers).values(
+        paxValues.map((p) => ({ ...p, bookingId: booking!.id })),
+      );
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[booking-save]", JSON.stringify({ sessionId: body.sessionId, bookingRef: bookResult.bookingRef, error: errMsg }));
+      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "db:bookings:insert",
+        level: "ERROR", requestId: body.sessionId,
+        requestSummary: { bookingRef: bookResult.bookingRef, pnr: bookResult.pnr },
+        errorCode: "DB_WRITE_FAILED", errorMessage: errMsg });
+      return c.json({ bookingId: undefined, pnr: bookResult.pnr, status: "CONFIRMED",
+        bookingRef: bookResult.bookingRef, warningCode: "BOOKING_SAVE_PENDING" }, 202);
+    }
 
-    return c.json({ bookingId: booking.id, pnr: bookResult.pnr, status: "CONFIRMED" }, 201);
+    return c.json({ bookingId: booking!.id, pnr: bookResult.pnr, status: "CONFIRMED" }, 201);
   }
 
   // RIYA (and future suppliers): hold seat before taking payment

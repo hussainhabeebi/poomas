@@ -149,7 +149,7 @@ export class TripjackClient {
         contacts: [contact],
       },
       travellerInfo,
-    }, AbortSignal.timeout(45000));
+    }, AbortSignal.timeout(25000));
   }
 
   async pnrStatus(bookingId: string) {

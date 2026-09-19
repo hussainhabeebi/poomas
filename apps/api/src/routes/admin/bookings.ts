@@ -6,31 +6,33 @@ import type { Env, Variables } from "../../types.js";
 export const bookingsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // TENANT_ADMIN sees only their tenant's bookings
-// SUPER_ADMIN can pass ?tenantId= to see any tenant's bookings
+// SUPER_ADMIN sees all bookings; optionally filtered by ?tenantId=
 bookingsAdminRoutes.get("/", async (c) => {
-  const db       = c.get("db");
-  const role     = c.get("userRole");
-  const tenantId = role === "SUPER_ADMIN"
-    ? (c.req.query("tenantId") ?? c.get("tenantId"))
-    : c.get("tenantId");
+  const db             = c.get("db");
+  const role           = c.get("userRole");
+  const filterTenantId = role === "SUPER_ADMIN"
+    ? c.req.query("tenantId")   // optional for SUPER_ADMIN
+    : c.get("tenantId");        // mandatory for TENANT_ADMIN
 
   const status  = c.req.query("status");
+  const pnr     = c.req.query("pnr");
   const limit   = Math.min(parseInt(c.req.query("limit") ?? "50"), 200);
   const offset  = parseInt(c.req.query("offset") ?? "0");
+
+  const conditions = [];
+  if (filterTenantId) conditions.push(eq(bookings.tenantId, filterTenantId));
+  if (status)         conditions.push(eq(bookings.status, status as "CONFIRMED"));
+  if (pnr)            conditions.push(eq(bookings.pnr, pnr));
 
   const rows = await db
     .select()
     .from(bookings)
-    .where(
-      status
-        ? and(eq(bookings.tenantId, tenantId), eq(bookings.status, status as "CONFIRMED"))
-        : eq(bookings.tenantId, tenantId),
-    )
+    .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(bookings.createdAt))
     .limit(limit)
     .offset(offset);
 
-  return c.json(rows);
+  return c.json({ bookings: rows, total: rows.length });
 });
 
 // Force status override (admin only, audit-logged)
