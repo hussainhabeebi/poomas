@@ -1,3 +1,5 @@
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   SEARCHED:        { bg: "#1e293b", color: "#64748b" },
   HELD:            { bg: "#422006", color: "#fbbf24" },
@@ -28,7 +30,6 @@ interface Booking {
 async function getBookings(searchParams: Record<string, string>): Promise<{ bookings: Booking[]; total: number }> {
   try {
     const params = new URLSearchParams(searchParams).toString();
-    const { SERVER_API, SERVER_TOKEN } = await import("../../../lib/api.js");
     const res = await fetch(`${SERVER_API}/api/admin/bookings?${params}`, {
       headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
       cache: "no-store",
