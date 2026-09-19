@@ -28,8 +28,9 @@ interface Booking {
 async function getBookings(searchParams: Record<string, string>): Promise<{ bookings: Booking[]; total: number }> {
   try {
     const params = new URLSearchParams(searchParams).toString();
-    const res = await fetch(`${process.env.API_BASE_URL}/api/admin/bookings?${params}`, {
-      headers: { "Authorization": `Bearer ${process.env.ADMIN_SERVICE_TOKEN}` },
+    const { SERVER_API, SERVER_TOKEN } = await import("../../../lib/api.js");
+    const res = await fetch(`${SERVER_API}/api/admin/bookings?${params}`, {
+      headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
       cache: "no-store",
     });
     if (!res.ok) return { bookings: [], total: 0 };

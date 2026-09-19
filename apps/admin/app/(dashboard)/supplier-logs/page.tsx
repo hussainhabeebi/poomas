@@ -38,8 +38,10 @@ async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; 
     if (sp.to)       q.set("to", sp.to);
     q.set("limit",  String(Math.min(parseInt(sp.limit ?? "100"), 500)));
     q.set("offset", sp.offset ?? "0");
-    const res = await fetch(`${process.env.API_BASE_URL}/api/admin/supplier-logs?${q}`, {
-      headers: { Authorization: `Bearer ${process.env.ADMIN_SERVICE_TOKEN}` },
+    const { SERVER_API, SERVER_TOKEN } = await import("../../../lib/api.js");
+    if (!SERVER_TOKEN) return { logs: [], fetchError: "ADMIN_SERVICE_TOKEN / ADMIN_API_TOKEN env var is not set" };
+    const res = await fetch(`${SERVER_API}/api/admin/supplier-logs?${q}`, {
+      headers: { Authorization: `Bearer ${SERVER_TOKEN}` },
       cache: "no-store",
     });
     if (!res.ok) {
