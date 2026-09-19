@@ -1,5 +1,5 @@
 import type { Handler } from "hono";
-import { payments } from "@poomas/db/schema";
+import { payments, bookings } from "@poomas/db/schema";
 import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 
@@ -29,9 +29,22 @@ export const nomodWebhook: Handler<{ Bindings: Env; Variables: Variables }> = as
   const db = c.get("db");
 
   if (event.event_type === "PAYMENT_SUCCESS") {
+    // Look up booking before updating payment so we have the id
+    const [pm] = await db
+      .select({ bookingId: payments.bookingId })
+      .from(payments)
+      .where(eq(payments.gatewayOrderId, event.order_ref))
+      .limit(1);
+
     await db.update(payments)
       .set({ status: "SUCCESS", gatewayPaymentId: event.payment_id, updatedAt: new Date() })
       .where(eq(payments.gatewayOrderId, event.order_ref));
+
+    if (pm?.bookingId) {
+      await db.update(bookings)
+        .set({ status: "PAYMENT_PENDING", updatedAt: new Date() })
+        .where(eq(bookings.id, pm.bookingId));
+    }
 
     await c.env.BOOKING_QUEUE.send({
       type:             "PAYMENT_CAPTURED",

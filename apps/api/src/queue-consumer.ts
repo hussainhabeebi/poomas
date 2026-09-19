@@ -321,21 +321,23 @@ async function handlePaymentCaptured(
   let bookResult;
   try {
     bookResult = await adapter.book({
-      fareId:    flightData.id as string,
-      holdId:    booking.supplier === "TRIPJACK" ? tripjackHoldId : (booking.supplierBookingRef ?? ""),
-      sessionId: booking.supplierSessionId ?? undefined,
-      contactEmail: booking.contactEmail ?? "",
-      contactPhone: booking.contactPhone ?? "",
-      paymentRef:   data.gatewayPaymentId,
+      fareId:        flightData.id as string,
+      holdId:        booking.supplier === "TRIPJACK" ? tripjackHoldId : (booking.supplierBookingRef ?? ""),
+      sessionId:     booking.supplierSessionId ?? undefined,
+      contactEmail:  booking.contactEmail ?? "",
+      contactPhone:  booking.contactPhone ?? "",
+      paymentRef:    data.gatewayPaymentId,
+      paymentAmount: Number(booking.totalAmount),
       passengers: paxRows.map((p) => ({
-        type:          p.passengerType as "ADULT" | "CHILD" | "INFANT",
-        firstName:     p.firstName,
-        lastName:      p.lastName,
-        dob:           p.dob?.toISOString().slice(0, 10),
-        gender:        p.gender ?? undefined,
-        nationality:   p.nationality ?? undefined,
-        passportNumber: p.passportNumber ?? undefined,
+        type:           p.passengerType as "ADULT" | "CHILD" | "INFANT",
+        firstName:      p.firstName,
+        lastName:       p.lastName,
+        dob:            p.dob?.toISOString().slice(0, 10),
+        gender:         p.gender ?? undefined,
+        nationality:    p.nationality ?? undefined,
+        passportNumber: p.passportNumber  ?? undefined,
         passportExpiry: p.passportExpiry?.toISOString().slice(0, 10),
+        passportCountry: p.passportCountry ?? undefined,
       })),
     });
   } catch (err) {

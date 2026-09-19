@@ -147,6 +147,8 @@ importers:
         specifier: ^4.86.0
         version: 4.125.0(@cloudflare/workers-types@5.20260823.1)
 
+  apps/tripjack-gateway: {}
+
   apps/web:
     dependencies:
       '@poomas/ui':

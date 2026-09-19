@@ -21,6 +21,7 @@ const passengerSchema = z.object({
   nationality:     z.string().max(2).optional(),
   passportNumber:  z.string().optional(),
   passportExpiry:  z.string().optional(),
+  passportCountry: z.string().max(2).optional(),
 });
 
 const directBookSchema = z.object({
@@ -127,6 +128,63 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         errorCode: err?.code === "FARE_EXPIRED" ? "FARE_EXPIRED" : "FARE_REVIEW_FAILED",
         diagnosticCode: err?.code, requestId: err?.requestId ?? requestId }, err?.code === "FARE_EXPIRED" ? 409 : 503);
     }
+
+    // Safe payment flow: save booking as PAYMENT_PENDING and let the frontend
+    // call /api/payments/checkout to get a payment URL. The actual TripJack
+    // book() call happens in the queue consumer after payment is captured.
+    let pendingBooking: typeof bookings.$inferSelect | undefined;
+    try {
+      [pendingBooking] = await db.insert(bookings).values({
+        tenantId,
+        channel:            "B2C_WEB",
+        status:             "PAYMENT_PENDING",
+        tripType:           "ONEWAY",
+        cabinClass:         "ECONOMY",
+        origin:             body.origin.toUpperCase(),
+        destination:        body.destination.toUpperCase(),
+        departureDate:      new Date(body.departureDate),
+        flightData:         { id: body.fareId },
+        adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
+        childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
+        infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
+        baseFare:           String(reviewPaymentAmount ?? body.totalFare),
+        taxes:              "0",
+        totalAmount:        String(reviewPaymentAmount ?? body.totalFare),
+        currency:           body.currency,
+        supplier:           body.supplier,
+        supplierBookingRef: bookingSessionId,
+        contactEmail:       body.contactEmail,
+        contactPhone:       body.contactPhone,
+      }).returning();
+
+      await db.insert(bookingPassengers).values(
+        body.passengers.map((p) => ({
+          bookingId:       pendingBooking!.id,
+          passengerType:   p.type,
+          firstName:       p.firstName,
+          lastName:        p.lastName,
+          dob:             p.dob ? new Date(p.dob) : null,
+          gender:          p.gender ?? null,
+          nationality:     p.nationality ?? null,
+          passportNumber:  p.passportNumber  ?? null,
+          passportExpiry:  p.passportExpiry  ? new Date(p.passportExpiry) : null,
+          passportCountry: p.passportCountry ?? p.nationality ?? null,
+        })),
+      );
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[book-save]", JSON.stringify({ requestId, error: errMsg }));
+      return c.json({ errorCode: "BOOKING_SAVE_FAILED", requestId }, 500);
+    }
+
+    return c.json({
+      success:         true,
+      bookingId:       pendingBooking!.id,
+      amount:          reviewPaymentAmount ?? body.totalFare,
+      currency:        body.currency,
+      requiresPayment: true,
+      requestId,
+    }, 201);
   }
 
   // Log that a book attempt is being made — written before the call so CF timeout can't swallow it.
@@ -196,14 +254,6 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     }
     const supplierMessage = (orderMsg || topMsg) || undefined;
     return c.json({ errorCode: "BOOKING_REJECTED", requestId, ...(supplierMessage ? { supplierMessage } : {}) }, 422);
-  }
-
-  if (body.supplier === "TRIPJACK") {
-    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
-      httpStatus: 200, level: "INFO", requestId,
-      requestSummary: { bookingId: bookingSessionId, bookingRef: result.bookingRef, pnr: result.pnr,
-        origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
-      durationMs: Date.now() - bookStart }));
   }
 
   // Persist booking record
