@@ -1,3 +1,5 @@
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   PENDING:   { bg: "#fffbeb", color: "#92400e" },
   APPROVED:  { bg: "#ecfdf5", color: "#065f46" },
@@ -17,7 +19,6 @@ interface Agent {
 
 async function getAgents(): Promise<Agent[]> {
   try {
-    const { SERVER_API, SERVER_TOKEN } = await import("../../../lib/api.js");
     const res = await fetch(`${SERVER_API}/api/admin/agents`, {
       headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
       cache: "no-store",

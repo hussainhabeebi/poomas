@@ -1,3 +1,5 @@
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+
 interface FinanceSummary {
   totalRevenue:        number;
   totalMarkup:         number;
@@ -11,7 +13,6 @@ interface FinanceSummary {
 
 async function getFinanceSummary(): Promise<FinanceSummary | null> {
   try {
-    const { SERVER_API, SERVER_TOKEN } = await import("../../../lib/api.js");
     const res = await fetch(`${SERVER_API}/api/admin/finance/summary`, {
       headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
       cache: "no-store",

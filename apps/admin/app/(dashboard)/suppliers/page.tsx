@@ -1,3 +1,5 @@
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/api.js";
+
 interface SupplierConfig {
   supplier:    string;
   isEnabled:   boolean;
@@ -9,7 +11,6 @@ interface SupplierConfig {
 
 async function getSuppliers(): Promise<SupplierConfig[]> {
   try {
-    const { SERVER_API, SERVER_TOKEN } = await import("../../../lib/api.js");
     const res = await fetch(`${SERVER_API}/api/admin/suppliers`, {
       headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
       cache: "no-store",
