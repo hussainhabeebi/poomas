@@ -6,21 +6,28 @@ import { reviewFailure, TripjackReviewError } from "./review-error.js";
 
 export class TripjackClient {
   private baseUrl: string;
+  private omsBaseUrl: string;  // separate base for /oms/ paths when proxy only covers /fms/
   private apiKey:  string;
   private proxyKey: string;
 
   constructor(creds: SupplierCredentials) {
-    this.baseUrl = ((creds.baseUrl as string) ?? process.env.TRIPJACK_API_BASE_URL ?? "").replace(/\/$/, "");
-    this.apiKey  = (creds.apiKey   as string) ?? process.env.TRIPJACK_API_KEY      ?? "";
-    this.proxyKey = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
+    this.baseUrl    = ((creds.baseUrl    as string) ?? process.env.TRIPJACK_API_BASE_URL ?? "").replace(/\/$/, "");
+    this.omsBaseUrl = ((creds.omsBaseUrl as string) ?? process.env.TRIPJACK_OMS_BASE_URL ?? "").replace(/\/$/, "");
+    this.apiKey     = (creds.apiKey   as string) ?? process.env.TRIPJACK_API_KEY      ?? "";
+    this.proxyKey   = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
   }
 
   private async request<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-    if (!this.baseUrl || (!this.apiKey && !this.proxyKey)) {
+    // OMS paths (book, cancel, booking-details) use omsBaseUrl when set — allows the
+    // proxy to cover only FMS (search/review) while OMS goes direct to TripJack.
+    const isOms = path.startsWith("/oms/");
+    const base  = (isOms && this.omsBaseUrl) ? this.omsBaseUrl : this.baseUrl;
+
+    if (!base || (!this.apiKey && !this.proxyKey)) {
       throw new Error("TripJack is enabled but its gateway or API credentials are missing");
     }
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const res = await fetch(`${base}${path}`, {
       method:  "POST",
       headers: {
         "Content-Type": "application/json",
@@ -149,6 +156,8 @@ export class TripjackClient {
         contacts: [contact],
       },
       travellerInfo,
+      // Some TripJack partner accounts require a remarks field; harmless when not required.
+      remarks: "Direct booking",
     }, AbortSignal.timeout(25000));
   }
 

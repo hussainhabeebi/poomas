@@ -78,16 +78,19 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       // review.result is already raw.data (unwrapped by validateFare).
       // TF is at results[0].totalPriceInfo or results[0].fareGroups[0].totalPriceInfo.
       const rr = review.result as any;
-      const rFirstResult = rr?.results?.[0];
-      // TripJack review: TF lives at different paths depending on API version / proxy.
-      // Try fd.fC.TF, fd.ADULT.fC.TF, then the same via fareGroups[0].
-      // Also try totalFareDetail (some TripJack gateway versions use this instead of fd).
+      // TripJack review: response uses either "results" or "tripInfos" at the top level
+      // depending on the API version / proxy. Try both.
+      const rFirstResult = rr?.results?.[0] ?? rr?.tripInfos?.[0];
       const priceInfo = rFirstResult?.totalPriceInfo;
       const fd  = priceInfo?.fd;
       const tfd = priceInfo?.totalFareDetail;
       const fg0Price = rFirstResult?.fareGroups?.[0]?.totalPriceInfo;
       const fg0fd  = fg0Price?.fd;
       const fg0tfd = fg0Price?.totalFareDetail;
+      // Also try the top-level totalPriceInfo directly on rr (some gateway versions)
+      const rrPrice = rr?.totalPriceInfo;
+      const rrfd  = rrPrice?.fd;
+      const rrtfd = rrPrice?.totalFareDetail;
       reviewPaymentAmount = (
         fd?.fC?.TF ??
         fd?.ADULT?.fC?.TF ??
@@ -96,19 +99,22 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         fg0fd?.fC?.TF ??
         fg0fd?.ADULT?.fC?.TF ??
         fg0tfd?.fC?.TF ??
-        fg0tfd?.ADULT?.fC?.TF
+        fg0tfd?.ADULT?.fC?.TF ??
+        rrfd?.fC?.TF ??
+        rrfd?.ADULT?.fC?.TF ??
+        rrtfd?.fC?.TF ??
+        rrtfd?.ADULT?.fC?.TF
       ) as number | undefined;
       if (!reviewPaymentAmount) {
         // Log the raw structure so the next request tells us the correct path.
-        console.warn("[book-review] TF not found; falling back to displayed fare. priceInfo keys:",
-          JSON.stringify(Object.keys(priceInfo ?? {})), "fg0Price keys:", JSON.stringify(Object.keys(fg0Price ?? {})),
-          "snippet:", JSON.stringify(rr).slice(0, 500));
+        console.warn("[book-review] TF not found; falling back to displayed fare. rr keys:",
+          JSON.stringify(Object.keys(rr ?? {})), "snippet:", JSON.stringify(rr).slice(0, 500));
       }
       void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
         httpStatus: 200, level: reviewPaymentAmount ? "INFO" : "WARN", requestId,
         requestSummary: { fareId: body.fareId, bookingId: review.bookingId, tf: reviewPaymentAmount,
           tfMissing: !reviewPaymentAmount || undefined },
-        responseSnippet: !reviewPaymentAmount ? JSON.stringify(priceInfo ?? fg0Price ?? rr).slice(0, 800) : undefined,
+        responseSnippet: !reviewPaymentAmount ? JSON.stringify(priceInfo ?? fg0Price ?? rrPrice ?? rr).slice(0, 800) : undefined,
         durationMs: Date.now() - reviewStart });
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
@@ -185,7 +191,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // If the raw TripJack response indicates session/fare expiry, surface it as FARE_EXPIRED
     // so the frontend shows "search again" rather than "contact support".
     const rawMsg = (orderMsg + " " + topMsg).toLowerCase();
-    if (/expir|no longer available|booking session/i.test(rawMsg)) {
+    if (/expir|no longer available|booking session|no tripjack comment|no comment found|session not found/i.test(rawMsg)) {
       return c.json({ errorCode: "FARE_EXPIRED", requestId }, 409);
     }
     const supplierMessage = (orderMsg || topMsg) || undefined;
