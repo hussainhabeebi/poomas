@@ -79,20 +79,36 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       // TF is at results[0].totalPriceInfo or results[0].fareGroups[0].totalPriceInfo.
       const rr = review.result as any;
       const rFirstResult = rr?.results?.[0];
-      // TripJack v2: fd is keyed by passenger type: fd.ADULT.fC.TF
-      // Some proxy/legacy responses have fd.fC.TF directly — try both.
+      // TripJack review: TF lives at different paths depending on API version / proxy.
+      // Try fd.fC.TF, fd.ADULT.fC.TF, then the same via fareGroups[0].
+      // Also try totalFareDetail (some TripJack gateway versions use this instead of fd).
       const priceInfo = rFirstResult?.totalPriceInfo;
-      const fd = priceInfo?.fd;
+      const fd  = priceInfo?.fd;
+      const tfd = priceInfo?.totalFareDetail;
+      const fg0Price = rFirstResult?.fareGroups?.[0]?.totalPriceInfo;
+      const fg0fd  = fg0Price?.fd;
+      const fg0tfd = fg0Price?.totalFareDetail;
       reviewPaymentAmount = (
         fd?.fC?.TF ??
         fd?.ADULT?.fC?.TF ??
-        rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.fC?.TF ??
-        rFirstResult?.fareGroups?.[0]?.totalPriceInfo?.fd?.ADULT?.fC?.TF
+        tfd?.fC?.TF ??
+        tfd?.ADULT?.fC?.TF ??
+        fg0fd?.fC?.TF ??
+        fg0fd?.ADULT?.fC?.TF ??
+        fg0tfd?.fC?.TF ??
+        fg0tfd?.ADULT?.fC?.TF
       ) as number | undefined;
-      if (!reviewPaymentAmount) console.warn("[book-review] TF not found in review response; falling back to displayed fare", JSON.stringify(rr).slice(0, 300));
+      if (!reviewPaymentAmount) {
+        // Log the raw structure so the next request tells us the correct path.
+        console.warn("[book-review] TF not found; falling back to displayed fare. priceInfo keys:",
+          JSON.stringify(Object.keys(priceInfo ?? {})), "fg0Price keys:", JSON.stringify(Object.keys(fg0Price ?? {})),
+          "snippet:", JSON.stringify(rr).slice(0, 500));
+      }
       void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
-        httpStatus: 200, level: "INFO", requestId,
-        requestSummary: { fareId: body.fareId, bookingId: review.bookingId, tf: reviewPaymentAmount },
+        httpStatus: 200, level: reviewPaymentAmount ? "INFO" : "WARN", requestId,
+        requestSummary: { fareId: body.fareId, bookingId: review.bookingId, tf: reviewPaymentAmount,
+          tfMissing: !reviewPaymentAmount || undefined },
+        responseSnippet: !reviewPaymentAmount ? JSON.stringify(priceInfo ?? fg0Price ?? rr).slice(0, 800) : undefined,
         durationMs: Date.now() - reviewStart });
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
