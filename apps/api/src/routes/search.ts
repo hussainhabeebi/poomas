@@ -300,6 +300,51 @@ searchRoutes.post("/validate-fare", async (c) => {
   return c.json({ valid: true });
 });
 
+// Debug endpoint — returns the raw TripJack search response for a given route.
+// Restricted to admin/internal use; exposes no payment or PII data.
+searchRoutes.get("/debug-tripjack", async (c) => {
+  const origin      = (c.req.query("origin")      ?? "").toUpperCase();
+  const destination = (c.req.query("destination")  ?? "").toUpperCase();
+  const date        = c.req.query("date") ?? new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+  if (!origin || !destination) return c.json({ error: "origin and destination required" }, 400);
+
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), c.get("tenantId"));
+  const config = supplierConfigs.find((s) => s.name === "TRIPJACK");
+  if (!config?.isEnabled) return c.json({ error: "TRIPJACK not enabled", credentialAvailability: platformCredentials.TRIPJACK });
+
+  const { TripjackClient } = await import("@poomas/suppliers");
+  const creds = { ...(platformCredentials.TRIPJACK ?? {}), ...(config.credentials ?? {}) };
+  const client = new TripjackClient(creds);
+  try {
+    const raw = await (client as any).request("/air-search-all/v2", {
+      searchQuery: {
+        cabinClass: "E",
+        paxInfo: { ADULT: 1, CHILD: 0, INFANT: 0 },
+        routeInfos: [{ fromCityOrAirport: { code: origin }, toCityOrAirport: { code: destination }, travelDate: date }],
+        searchModifiers: { isDirectFlight: false },
+      },
+    });
+    const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
+    const tripInfos = (response.searchResult as any)?.tripInfos ?? null;
+    const keys = tripInfos ? Object.keys(tripInfos) : null;
+    const counts: Record<string, number> = {};
+    if (tripInfos) {
+      for (const k of Object.keys(tripInfos)) {
+        counts[k] = Array.isArray(tripInfos[k]) ? tripInfos[k].length : -1;
+      }
+    }
+    return c.json({
+      status:      response.status,
+      tripInfoKeys: keys,
+      tripInfoCounts: counts,
+      hasSearchResult: !!response.searchResult,
+      firstTrip: tripInfos ? Object.values(tripInfos).find(Array.isArray)?.[0] ?? null : null,
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message ?? String(err), stack: err.stack?.slice(0, 500) }, 200);
+  }
+});
+
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
   const supplier = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;

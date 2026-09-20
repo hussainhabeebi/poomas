@@ -18,13 +18,15 @@ export class TripjackAdapter implements SupplierAdapter {
     const raw = await this.client.search(params) as Record<string, unknown>;
     // Some whitelisted proxies wrap the upstream JSON in `data` or `result`.
     const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
-    const status = response.status as { success?: boolean } | undefined;
+    const status = response.status as { success?: boolean; statusMessage?: string } | undefined;
     if (status?.success === false) {
-      throw new Error("TripJack rejected the flight search request");
+      console.error("[tripjack-search] rejected:", JSON.stringify({ status, keys: Object.keys(response) }));
+      throw new Error(`TripJack rejected the flight search request: ${status?.statusMessage ?? "unknown reason"}`);
     }
 
     const searchResult = response.searchResult as { tripInfos?: Record<string, unknown[]> } | undefined;
     if (!searchResult?.tripInfos) {
+      console.error("[tripjack-search] unrecognized response structure:", JSON.stringify({ topKeys: Object.keys(response), hasSearchResult: !!response.searchResult }));
       throw new Error("TripJack returned an unrecognized flight-search response");
     }
 
@@ -33,10 +35,12 @@ export class TripjackAdapter implements SupplierAdapter {
     // present as an empty array [] rather than undefined, so ?? alone isn't enough —
     // check for a non-empty array explicitly before falling back.
     const onwardKey = searchResult.tripInfos["ONWARD"];
+    const tripInfoKeys = Object.keys(searchResult.tripInfos);
     const trips: unknown[] =
       (Array.isArray(onwardKey) && onwardKey.length > 0 ? onwardKey : null) ??
       Object.values(searchResult.tripInfos).find((v) => Array.isArray(v) && v.length > 0) ??
       [];
+    console.info(`[tripjack-search] tripInfos keys=${JSON.stringify(tripInfoKeys)} trips=${trips.length}`);
     // TripJack puts the bookable fare id and price inside totalPriceList, not
     // on the itinerary wrapper. Expand every price option so the client receives
     // the real id required by fare rules and checkout instead of an empty id.
