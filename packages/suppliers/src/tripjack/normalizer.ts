@@ -19,7 +19,7 @@ export function normalizeTripjackFare(r: Record<string, unknown>): NormalizedFar
     departureTime: fi.dt as string ?? "",
     arrivalTime:   fi.at as string ?? "",
     duration:      fi.duration as number ?? 0,
-    stops:         (r.sI as unknown[]).length - 1,
+    stops:         Array.isArray(r.sI) ? (r.sI as unknown[]).length - 1 : 0,
     stopDetails:   [],
     cabinClass:    r.cabinClass as string ?? "ECONOMY",
     baseFare:      fC?.BF ?? 0,

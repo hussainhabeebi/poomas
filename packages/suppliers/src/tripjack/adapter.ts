@@ -28,7 +28,13 @@ export class TripjackAdapter implements SupplierAdapter {
       throw new Error("TripJack returned an unrecognized flight-search response");
     }
 
-    const trips = searchResult.tripInfos["ONWARD"] ?? [];
+    // TripJack keys one-way results as "ONWARD" in v2, but some proxy versions
+    // key by route string (e.g. "CCJ-AUH") or another label. Fall back to the
+    // first non-empty array in tripInfos so results are never silently dropped.
+    const trips: unknown[] =
+      searchResult.tripInfos["ONWARD"] ??
+      Object.values(searchResult.tripInfos).find((v) => Array.isArray(v) && v.length > 0) ??
+      [];
     // TripJack puts the bookable fare id and price inside totalPriceList, not
     // on the itinerary wrapper. Expand every price option so the client receives
     // the real id required by fare rules and checkout instead of an empty id.
