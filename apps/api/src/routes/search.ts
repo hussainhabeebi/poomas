@@ -39,15 +39,14 @@ async function tripjackAdminConfig(env: Env, tenantId: string): Promise<Tripjack
 
 function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   return {
-    ...(env.RIYA_API_KEY     ? { RIYA:     { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } } : {}),
+    // RIYA, DUFFEL and GOOGLE_SERP are temporarily disabled — credentials intentionally excluded
     ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
       ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY } }
       : {}),
-    // DUFFEL and GOOGLE_SERP are temporarily disabled — credentials intentionally excluded
   };
 }
 
-const TEMPORARILY_DISABLED_SUPPLIERS = new Set<string>(["DUFFEL", "GOOGLE_SERP"]);
+const TEMPORARILY_DISABLED_SUPPLIERS = new Set<string>(["RIYA", "DUFFEL", "GOOGLE_SERP"]);
 
 function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentials: PlatformCredentials): SupplierConfig[] {
   const supplierConfigs: SupplierConfig[] = tenant.supplierConfigs
@@ -63,9 +62,8 @@ function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentia
 
   const configuredNames = new Set(supplierConfigs.map((s) => s.name));
   const defaults: Array<{ name: SupplierConfig["name"]; priority: number; timeoutMs: number }> = [
-    { name: "RIYA",     priority: 10, timeoutMs: 15000 },
     { name: "TRIPJACK", priority: 20, timeoutMs: 15000 },
-    // DUFFEL and GOOGLE_SERP temporarily disabled
+    // RIYA, DUFFEL and GOOGLE_SERP temporarily disabled
   ];
 
   for (const def of defaults) {
@@ -174,7 +172,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
 
   const availableSuppliers = supplierConfigs.filter((s) => s.isEnabled).map((s) => s.name);
   const credentialAvailability = {
-    RIYA:        Boolean(platformCredentials.RIYA || supplierConfigs.find((s) => s.name === "RIYA")?.credentials),
+    RIYA:        false,  // temporarily disabled
     TRIPJACK:    Boolean(platformCredentials.TRIPJACK || supplierConfigs.find((s) => s.name === "TRIPJACK")?.credentials),
     DUFFEL:      false,  // temporarily disabled
     GOOGLE_SERP: false,  // temporarily disabled
@@ -265,7 +263,7 @@ searchRoutes.get("/status", async (c) => {
     tenant: tenant.slug,
     enabledSuppliers: tenant.supplierConfigs.filter((s) => s.isEnabled).map((s) => s.supplier),
     platformSecrets: {
-      RIYA:        Boolean(c.env.RIYA_API_KEY && c.env.RIYA_API_BASE_URL),
+      RIYA:        false,  // temporarily disabled
       TRIPJACK:    Boolean(c.env.TRIPJACK_API_BASE_URL && (c.env.TRIPJACK_API_KEY || c.env.TRIPJACK_PROXY_KEY)),
       DUFFEL:      false,  // temporarily disabled
       GOOGLE_SERP: false,  // temporarily disabled
