@@ -9,7 +9,7 @@ import {
 } from "@poomas/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
-import { createRazorpayOrder, createNomodCheckout } from "./lib/payment-gateway.js";
+import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, createRefundNomod } from "./lib/payment-gateway.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
 
@@ -230,6 +230,69 @@ async function handleInitiatePayment(
   );
 }
 
+// ── AUTO-REFUND ───────────────────────────────────────────────────
+
+async function triggerAutoRefund(
+  db: ReturnType<typeof createDb>,
+  env: Env,
+  bookingId: string,
+  gatewayPaymentId: string,
+  amount: number,
+): Promise<void> {
+  // Skip wallet payments — no gateway to refund
+  if (gatewayPaymentId.startsWith("wallet_")) return;
+
+  const [payment] = await db
+    .select({ gateway: payments.gateway, gatewayOrderId: payments.gatewayOrderId })
+    .from(payments)
+    .where(eq(payments.bookingId, bookingId))
+    .limit(1);
+
+  if (!payment) {
+    console.warn(`[autoRefund] No payment record for booking ${bookingId}`);
+    return;
+  }
+
+  try {
+    if (payment.gateway === "RAZORPAY") {
+      const keyId     = env.RAZORPAY_KEY_ID;
+      const keySecret = env.RAZORPAY_KEY_SECRET;
+      if (!keyId || !keySecret) {
+        console.error("[autoRefund] Razorpay credentials not configured");
+        return;
+      }
+      const { refundId } = await createRefundRazorpay(
+        { keyId, keySecret },
+        { paymentId: gatewayPaymentId, amount, notes: { bookingId, reason: "booking_failed" } },
+      );
+      await db.update(payments).set({
+        status:    "REFUNDED",
+        updatedAt: new Date(),
+      }).where(eq(payments.bookingId, bookingId));
+      console.info(`[autoRefund] Razorpay refund ${refundId} issued for booking ${bookingId}`);
+    } else if (payment.gateway === "NOMOD") {
+      const apiKey    = env.NOMOD_API_KEY;
+      const apiSecret = env.NOMOD_API_SECRET;
+      if (!apiKey || !apiSecret) {
+        console.error("[autoRefund] Nomod credentials not configured");
+        return;
+      }
+      const { refundId } = await createRefundNomod(
+        { apiKey, apiSecret },
+        { paymentId: gatewayPaymentId, amount, reason: "booking_failed" },
+      );
+      await db.update(payments).set({
+        status:    "REFUNDED",
+        updatedAt: new Date(),
+      }).where(eq(payments.bookingId, bookingId));
+      console.info(`[autoRefund] Nomod refund ${refundId} issued for booking ${bookingId}`);
+    }
+  } catch (refundErr) {
+    // Refund failure must never swallow the original booking failure — log and continue
+    console.error(`[autoRefund] Refund attempt failed for booking ${bookingId}:`, refundErr);
+  }
+}
+
 // ── PAYMENT_CAPTURED ──────────────────────────────────────────────
 
 async function handlePaymentCaptured(
@@ -345,6 +408,7 @@ async function handlePaymentCaptured(
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
+    await triggerAutoRefund(db, env, booking.id, data.gatewayPaymentId, Number(booking.totalAmount));
     throw err;
   }
 
@@ -352,6 +416,7 @@ async function handlePaymentCaptured(
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
+    await triggerAutoRefund(db, env, booking.id, data.gatewayPaymentId, Number(booking.totalAmount));
     throw new Error(`Supplier booking failed: ${JSON.stringify(bookResult)}`);
   }
 
