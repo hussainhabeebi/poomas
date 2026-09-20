@@ -115,3 +115,29 @@ export async function createRefundRazorpay(
   const refund = await res.json() as { id: string };
   return { refundId: refund.id };
 }
+
+export async function createRefundNomod(
+  config: NomodConfig,
+  params: { paymentId: string; amount: number; reason?: string },
+): Promise<{ refundId: string }> {
+  const res = await fetch(`https://api.nomod.com/v1/payments/${params.paymentId}/refunds`, {
+    method: "POST",
+    headers: {
+      "x-api-key":    config.apiKey,
+      "x-api-secret": config.apiSecret,
+      "Content-Type":  "application/json",
+    },
+    body: JSON.stringify({
+      amount: params.amount,
+      reason: params.reason ?? "booking_failed",
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Nomod refund failed: ${err}`);
+  }
+
+  const refund = await res.json() as { id: string };
+  return { refundId: refund.id };
+}

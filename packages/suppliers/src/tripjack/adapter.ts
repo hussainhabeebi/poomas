@@ -28,11 +28,13 @@ export class TripjackAdapter implements SupplierAdapter {
       throw new Error("TripJack returned an unrecognized flight-search response");
     }
 
-    // TripJack keys one-way results as "ONWARD" in v2, but some proxy versions
-    // key by route string (e.g. "CCJ-AUH") or another label. Fall back to the
-    // first non-empty array in tripInfos so results are never silently dropped.
+    // TripJack keys one-way results as "ONWARD" in v2, but some proxy/API versions
+    // key by route string (e.g. "DEL-DXB") or another label. "ONWARD" may also be
+    // present as an empty array [] rather than undefined, so ?? alone isn't enough —
+    // check for a non-empty array explicitly before falling back.
+    const onwardKey = searchResult.tripInfos["ONWARD"];
     const trips: unknown[] =
-      searchResult.tripInfos["ONWARD"] ??
+      (Array.isArray(onwardKey) && onwardKey.length > 0 ? onwardKey : null) ??
       Object.values(searchResult.tripInfos).find((v) => Array.isArray(v) && v.length > 0) ??
       [];
     // TripJack puts the bookable fare id and price inside totalPriceList, not
