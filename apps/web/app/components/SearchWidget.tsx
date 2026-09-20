@@ -60,7 +60,10 @@ const CURRENCIES = [
 type CurrencyCode = "INR" | "AED" | "USD";
 
 type Airport = typeof AIRPORTS[number];
-type TripType = "One Way" | "Round Trip";
+type TripType = "One Way" | "Round Trip" | "Multi-city";
+
+const SPECIAL_FARES = ["Regular", "Student", "Senior Citizen", "Armed Forces"] as const;
+type SpecialFare = typeof SPECIAL_FARES[number];
 
 function AirportInput({
   id, label, value, onChange, placeholder, tabIndex,
@@ -155,10 +158,12 @@ export default function SearchWidget() {
   const [infants,    setInfants]    = useState(0);
   const [paxOpen,    setPaxOpen]    = useState(false);
   const paxRef = useRef<HTMLDivElement>(null);
-  const [cabinClass, setCabinClass] = useState<(typeof CABIN_CLASSES)[number]>("Economy");
-  const [currency,   setCurrencyState] = useState<CurrencyCode>("INR");
-  const [searching,  setSearching] = useState(false);
-  const [searchStage, setSearchStage] = useState(0);
+  const [cabinClass,    setCabinClass]    = useState<(typeof CABIN_CLASSES)[number]>("Economy");
+  const [currency,      setCurrencyState] = useState<CurrencyCode>("INR");
+  const [searching,     setSearching]     = useState(false);
+  const [searchStage,   setSearchStage]   = useState(0);
+  const [directOnly,    setDirectOnly]    = useState(false);
+  const [specialFare,   setSpecialFare]   = useState<SpecialFare>("Regular");
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
@@ -207,6 +212,7 @@ export default function SearchWidget() {
       cabinClass:    CABIN_MAP[cabinClass] ?? "ECONOMY",
       tripType:      tripType === "Round Trip" ? "ROUNDTRIP" : "ONEWAY",
       currency,
+      ...(directOnly ? { stops: "0" } : {}),
       ...(tripType === "Round Trip" && returnDate ? { returnDate } : {}),
     });
     const url = `/search?${params.toString()}`;
@@ -222,7 +228,7 @@ export default function SearchWidget() {
     <div className="search-widget">
       {/* Top bar: trip type + passengers */}
       <div className="trip-tabs">
-        {(["One Way", "Round Trip"] as TripType[]).map((t) => (
+        {(["One Way", "Round Trip", "Multi-city"] as TripType[]).map((t) => (
           <button
             key={t} type="button"
             onClick={() => setTripType(t)}
@@ -329,6 +335,32 @@ export default function SearchWidget() {
                   {CABIN_CLASSES.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </div>
+            )}
+          </div>
+
+          {/* Extras bar: direct-flights + special fares + cabin (always) */}
+          <div className="sw-extras-bar">
+            <label className={`toggle-pill${directOnly ? " on" : ""}`}>
+              <input type="checkbox" checked={directOnly} onChange={(e) => setDirectOnly(e.target.checked)} />
+              <span className="toggle-pill-icon">✈</span> Direct flights only
+            </label>
+            <select
+              className="special-fare-select"
+              value={specialFare}
+              onChange={(e) => setSpecialFare(e.target.value as SpecialFare)}
+              aria-label="Special fare"
+            >
+              {SPECIAL_FARES.map((f) => <option key={f}>{f}</option>)}
+            </select>
+            {tripType === "One Way" && (
+              <select
+                className="special-fare-select"
+                value={cabinClass}
+                onChange={(e) => setCabinClass(e.target.value as typeof cabinClass)}
+                aria-label="Cabin class"
+              >
+                {CABIN_CLASSES.map((c) => <option key={c}>{c}</option>)}
+              </select>
             )}
           </div>
 
