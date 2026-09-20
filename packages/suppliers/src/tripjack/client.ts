@@ -79,7 +79,9 @@ export class TripjackClient {
   // ── Flights ─────────────────────────────────────────────────────
 
   async search(params: SearchParams) {
-    return this.request("/air-search-all/v2", {
+    // Gateway alias path when proxyKey is set; direct TripJack path otherwise.
+    const searchPath = this.proxyKey ? "/air-search-all/v2" : "/fms/v1/air-search-all";
+    return this.request(searchPath, {
       searchQuery: {
         cabinClass:    params.cabinClass.charAt(0),  // Tripjack uses E/B/F
         paxInfo: {
