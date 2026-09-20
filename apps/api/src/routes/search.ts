@@ -312,34 +312,30 @@ searchRoutes.get("/debug-tripjack", async (c) => {
 
   const { TripjackClient } = await import("@poomas/suppliers");
   const creds = { ...(platformCredentials.TRIPJACK ?? {}), ...(config.credentials ?? {}) };
+  const resolvedBaseUrl = (creds.baseUrl as string | undefined)?.replace(/\/+$/, "") ?? "(not set)";
+  const usingGateway    = Boolean(creds.proxyKey);
   const client = new TripjackClient(creds);
   try {
-    const raw = await (client as any).request("/air-search-all/v2", {
-      searchQuery: {
-        cabinClass: "E",
-        paxInfo: { ADULT: 1, CHILD: 0, INFANT: 0 },
-        routeInfos: [{ fromCityOrAirport: { code: origin }, toCityOrAirport: { code: destination }, travelDate: date }],
-        searchModifiers: { isDirectFlight: false },
-      },
-    });
-    const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
-    const tripInfos = (response.searchResult as any)?.tripInfos ?? null;
-    const keys = tripInfos ? Object.keys(tripInfos) : null;
+    // Use client.search() so path selection mirrors production exactly.
+    const raw = await (client as any).search({ origin, destination, departureDate: date, adults: 1, children: 0, infants: 0, cabinClass: "ECONOMY", tripType: "ONEWAY", currency: "INR" }) as Record<string, unknown>;
+    const response    = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
+    const tripInfos   = (response.searchResult as any)?.tripInfos ?? null;
+    const keys        = tripInfos ? Object.keys(tripInfos) : null;
     const counts: Record<string, number> = {};
     if (tripInfos) {
-      for (const k of Object.keys(tripInfos)) {
-        counts[k] = Array.isArray(tripInfos[k]) ? tripInfos[k].length : -1;
-      }
+      for (const k of Object.keys(tripInfos)) counts[k] = Array.isArray(tripInfos[k]) ? (tripInfos[k] as unknown[]).length : -1;
     }
     return c.json({
-      status:      response.status,
-      tripInfoKeys: keys,
-      tripInfoCounts: counts,
+      resolvedBaseUrl,
+      usingGateway,
+      status:          response.status,
+      tripInfoKeys:    keys,
+      tripInfoCounts:  counts,
       hasSearchResult: !!response.searchResult,
-      firstTrip: tripInfos ? Object.values(tripInfos).find(Array.isArray)?.[0] ?? null : null,
+      firstTrip:       tripInfos ? (Object.values(tripInfos).find(Array.isArray) as unknown[] | undefined)?.[0] ?? null : null,
     });
   } catch (err: any) {
-    return c.json({ error: err.message ?? String(err), stack: err.stack?.slice(0, 500) }, 200);
+    return c.json({ resolvedBaseUrl, usingGateway, error: err.message ?? String(err), stack: err.stack?.slice(0, 500) }, 200);
   }
 });
 

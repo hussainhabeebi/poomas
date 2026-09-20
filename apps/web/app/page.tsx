@@ -16,6 +16,26 @@ const steps = [
   ["04", "Pay & fly", "Pay securely and receive your ticket."],
 ];
 
+const DEAL_ROUTES = [
+  { from: "COK", to: "DXB", label: "Kochi → Dubai",       price: "₹9,499", note: "From Oct 2026" },
+  { from: "CCJ", to: "DXB", label: "Kozhikode → Dubai",   price: "₹8,999", note: "From Oct 2026" },
+  { from: "DEL", to: "DXB", label: "Delhi → Dubai",       price: "₹10,299", note: "From Oct 2026" },
+  { from: "BOM", to: "DXB", label: "Mumbai → Dubai",      price: "₹11,499", note: "From Oct 2026" },
+  { from: "COK", to: "DOH", label: "Kochi → Doha",        price: "₹8,799", note: "From Oct 2026" },
+  { from: "BLR", to: "SIN", label: "Bangalore → Singapore", price: "₹13,999", note: "From Oct 2026" },
+];
+
+const AIRLINE_LOGOS = [
+  { code: "AI", name: "Air India",       icon: "🇮🇳" },
+  { code: "EK", name: "Emirates",        icon: "🇦🇪" },
+  { code: "QR", name: "Qatar Airways",   icon: "🇶🇦" },
+  { code: "EY", name: "Etihad",          icon: "🇦🇪" },
+  { code: "6E", name: "IndiGo",          icon: "✈" },
+  { code: "SG", name: "SpiceJet",        icon: "🌶" },
+  { code: "G8", name: "Go First",        icon: "✈" },
+  { code: "UK", name: "Vistara",         icon: "✈" },
+];
+
 export default function HomePage() {
   return (
     <main>
@@ -23,6 +43,52 @@ export default function HomePage() {
       <section id="flight-search" className="home-shell search-overlap">
         <div className="section-kicker">Live flight search</div>
         <SearchWidget />
+      </section>
+
+      {/* Trust bar */}
+      <div className="trust-bar">
+        <div className="trust-item"><span className="trust-item-icon">🔒</span> Secure payments</div>
+        <div className="trust-item"><span className="trust-item-icon">✅</span> Instant e-ticket</div>
+        <div className="trust-item"><span className="trust-item-icon">💬</span> WhatsApp support</div>
+        <div className="trust-item"><span className="trust-item-icon">↩️</span> Easy cancellation</div>
+        <div className="trust-item"><span className="trust-item-icon">🌐</span> 50+ airlines</div>
+      </div>
+
+      {/* Manage booking strip */}
+      <div className="manage-strip">
+        <div>
+          <h3>Already booked?</h3>
+          <p>Manage your booking, download ticket, or check web check-in status</p>
+        </div>
+        <div className="manage-strip-actions">
+          <a href="/manage" className="manage-btn manage-btn-primary">📋 Manage Booking</a>
+          <a href="/checkin" className="manage-btn manage-btn-outline">✈ Web Check-in</a>
+          <a href="/status" className="manage-btn manage-btn-outline">🔍 Flight Status</a>
+        </div>
+      </div>
+
+      {/* Deals section */}
+      <section className="home-shell deal-cards-section" style={{ paddingTop: 48 }}>
+        <div className="section-heading-row">
+          <div>
+            <div className="section-kicker">Today&apos;s deals</div>
+            <h2 className="home-title">Hot fares, live prices</h2>
+          </div>
+          <a href="#flight-search" className="text-link">Search all routes →</a>
+        </div>
+        <div className="deal-cards-grid">
+          {DEAL_ROUTES.map((r) => (
+            <a
+              key={`${r.from}-${r.to}`}
+              href={`/search?origin=${r.from}&destination=${r.to}&departureDate=${new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)}&adults=1&cabinClass=ECONOMY&tripType=ONEWAY`}
+              className="deal-card"
+            >
+              <div className="deal-card-route">{r.label}</div>
+              <div className="deal-card-price">{r.price}</div>
+              <div className="deal-card-note">{r.note}</div>
+            </a>
+          ))}
+        </div>
       </section>
 
       <section className="home-shell">
@@ -34,6 +100,20 @@ export default function HomePage() {
           <a href="#flight-search" className="text-link">Custom search →</a>
         </div>
         <PopularRoutes routes={[]} />
+      </section>
+
+      {/* Airline partners */}
+      <section className="home-shell airline-logos-section" style={{ paddingTop: 0 }}>
+        <div className="section-kicker">Our airline partners</div>
+        <h2 className="home-title">Flights from 50+ airlines</h2>
+        <div className="airline-logos-grid">
+          {AIRLINE_LOGOS.map((a) => (
+            <div key={a.code} className="airline-logo-chip">
+              <span className="airline-logo-icon">{a.icon}</span>
+              {a.name}
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="home-shell benefits-section">
@@ -74,6 +154,12 @@ export default function HomePage() {
           <a href="https://wa.me/" aria-label="Continue on WhatsApp">Continue on WhatsApp <span>→</span></a>
         </div>
       </section>
+
+      {/* Floating WhatsApp */}
+      <a href="https://wa.me/" className="wa-float" aria-label="Chat on WhatsApp">
+        <span className="wa-float-icon">💬</span>
+        <span className="wa-float-label">Need help?</span>
+      </a>
     </main>
   );
 }

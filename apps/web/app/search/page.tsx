@@ -5,8 +5,8 @@ type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
   returnDate?: string; adults?: string; children?: string; infants?: string;
   cabinClass?: string; tripType?: string; currency?: "INR" | "AED" | "USD"; all?: string;
-  sort?: "price" | "duration" | "departure"; stops?: string;
-  refundable?: string; baggage?: string;
+  sort?: "price" | "duration" | "departure" | "best"; stops?: string;
+  refundable?: string; baggage?: string; airlines?: string; depBand?: string;
 };
 
 type SearchResult = {
@@ -85,50 +85,127 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   const allQuery = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
   allQuery.set("all", "1");
 
+  const sortParam = params.sort ?? "best";
+
+  const sortTabs: { key: string; label: string }[] = [
+    { key: "best",      label: "Best" },
+    { key: "price",     label: "Cheapest" },
+    { key: "duration",  label: "Fastest" },
+    { key: "departure", label: "Earliest" },
+  ];
+
+  const adults  = Math.min(9, Math.max(1, parseInt(params.adults  ?? "1") || 1));
+  const children = parseInt(params.children ?? "0") || 0;
+  const infants  = parseInt(params.infants  ?? "0") || 0;
+
   return (
     <main className="page-container" style={{ paddingTop: 16 }}>
-      <div style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: "clamp(18px,4vw,24px)", fontWeight: 800, margin: "0 0 4px" }}>{params.origin} → {params.destination}</h1>
-        <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
-          {params.departureDate} · {params.adults ?? 1} adult · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}{requestedCurrency ? ` · ${requestedCurrency}` : ""}
-        </p>
+      {/* Sticky search header */}
+      <div className="search-page-header">
+        <div>
+          <h1 style={{ margin: 0, fontSize: "clamp(15px,3vw,18px)", fontWeight: 800, color: "#0f172a" }}>
+            {params.origin} → {params.destination}
+          </h1>
+          <p className="results-meta">
+            {params.departureDate} · {adults} adult{adults > 1 ? "s" : ""} · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}
+            {requestedCurrency ? ` · ${requestedCurrency}` : ""}
+          </p>
+        </div>
+        <a href="/" className="search-page-modify-link">✏ Modify search</a>
       </div>
 
-      <SearchResultControls
-        origin={params.origin ?? ""}
-        destination={params.destination ?? ""}
-        departureDate={params.departureDate ?? new Date().toISOString().slice(0, 10)}
-      />
+      <div className="search-results-layout">
+        {/* Filter sidebar */}
+        <SearchResultControls
+          origin={params.origin ?? ""}
+          destination={params.destination ?? ""}
+          departureDate={params.departureDate ?? new Date().toISOString().slice(0, 10)}
+          fares={allFares}
+        />
 
-      {result?.isIndicative && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13 }}>⚠️ {result.disclaimer}</div>}
+        {/* Results column */}
+        <div>
+          {result?.isIndicative && (
+            <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 13 }}>
+              ⚠️ {result.disclaimer}
+            </div>
+          )}
 
-      {filteredFares.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
-          <div style={{ fontSize: 44, marginBottom: 14 }}>✈️</div>
-          <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>{filteredFares.length === 0 && (result.apiError || failingSuppliers.length > 0) ? "No flights available right now" : "No flights found"}</p>
-          <p style={{ margin: "0 0 24px" }}>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
-          <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search Again</a>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {params.all !== "1" && <div style={{ fontSize: 13, color: "#475569", fontWeight: 700, marginBottom: 2 }}>Recommended for you</div>}
-          {displayFares.map((fare, i) => <FareCard key={`${fare.id ?? i}-${i}`} fare={fare} requestedCurrency={requestedCurrency} adults={Math.min(9, Math.max(1, parseInt(params.adults ?? "1") || 1))} children={parseInt(params.children ?? "0") || 0} infants={parseInt(params.infants ?? "0") || 0} />)}
-          {params.all !== "1" && filteredFares.length > displayFares.length && (
-            <a href={`/search?${allQuery.toString()}`} style={{ textAlign: "center", padding: 14, border: "1px solid #cbd5e1", borderRadius: 12, color: "#0f172a", textDecoration: "none", fontWeight: 800 }}>
-              View all {filteredFares.length} flights
-            </a>
+          {/* Sort tabs */}
+          {filteredFares.length > 0 && (
+            <div className="sort-tabs" role="tablist" aria-label="Sort results">
+              {sortTabs.map(({ key, label }) => {
+                const href = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
+                href.set("sort", key);
+                href.set("all", "1");
+                return (
+                  <a
+                    key={key}
+                    role="tab"
+                    aria-selected={sortParam === key}
+                    className={`sort-tab${sortParam === key ? " active" : ""}`}
+                    href={`/search?${href.toString()}`}
+                  >
+                    {label}
+                  </a>
+                );
+              })}
+              <span className="results-count-badge" style={{ marginLeft: "auto", alignSelf: "center" }}>{filteredFares.length} flights</span>
+            </div>
+          )}
+
+          {filteredFares.length === 0 ? (
+            <div className="no-results">
+              <div className="no-results-icon">✈️</div>
+              <h2>{result.apiError || failingSuppliers.length > 0 ? "No flights available right now" : "No flights found"}</h2>
+              <p>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
+              <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search again</a>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {params.all !== "1" && (
+                <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 700, marginBottom: 2 }}>Recommended for you</div>
+              )}
+              {displayFares.map((fare, i) => (
+                <FareCard
+                  key={`${fare.id ?? i}-${i}`}
+                  fare={fare}
+                  requestedCurrency={requestedCurrency}
+                  adults={adults}
+                  children={children}
+                  infants={infants}
+                />
+              ))}
+              {params.all !== "1" && filteredFares.length > displayFares.length && (
+                <a
+                  href={`/search?${allQuery.toString()}`}
+                  style={{ textAlign: "center", padding: 14, border: "1.5px solid #e2e8f0", borderRadius: 14, color: "#0f172a", textDecoration: "none", fontWeight: 800, background: "#fff", fontSize: 14 }}
+                >
+                  View all {filteredFares.length} flights →
+                </a>
+              )}
+            </div>
           )}
         </div>
-      )}
+      </div>
     </main>
   );
 }
 
 function filterAndSortFares(fares: any[], params: SearchParams): any[] {
+  const airlineFilter = (params.airlines ?? "").split(",").filter(Boolean);
   const filtered = fares.filter((fare) => {
     if (params.stops === "0" && Number(fare.stops ?? 0) !== 0) return false;
+    if (params.stops === "1" && Number(fare.stops ?? 0) > 1) return false;
     if (params.refundable === "1" && !fare.isRefundable) return false;
     if (params.baggage === "1" && !fare.baggage?.checked) return false;
+    if (airlineFilter.length > 0 && !airlineFilter.includes(fare.airlineName)) return false;
+    if (params.depBand) {
+      const dep = new Date(fare.departureTime);
+      const hour = dep.getHours();
+      const [start, end] = params.depBand.split("–").map(Number);
+      if (hour < start || hour >= end) return false;
+    }
     return true;
   });
 
@@ -201,40 +278,118 @@ function FareCard({ fare, requestedCurrency, adults, children = 0, infants = 0 }
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const fmtDate = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
   const fareCurrency = String(fare.currency || requestedCurrency || "INR").toUpperCase();
   const price = Number(fare.displayPrice ?? fare.totalFare ?? 0);
   const currencyDiffers = Boolean(requestedCurrency && fareCurrency !== requestedCurrency);
   const isBookable = Boolean(fare.isBookable && fare.supplier !== "GOOGLE_SERP");
+  const durationH = Math.floor(fare.duration / 60);
+  const durationM = fare.duration % 60;
+  const airlineCode = (fare.flightNumber ?? "").slice(0, 2).toUpperCase();
+  const arrNextDay = dep.getUTCDate() !== arr.getUTCDate();
+
+  const badgeColor = fare.__badge === "Best overall" ? "#E31E24" : fare.__badge === "Lowest fare" ? "#0f172a" : "#0369a1";
 
   return (
-    <div className="fare-card" style={{ position: "relative", borderColor: fare.__badge ? "#fecaca" : undefined }}>
-      {fare.__badge && <span style={{ position: "absolute", top: -9, left: 14, background: fare.__badge === "Best overall" ? "#E31E24" : "#0f172a", color: "white", borderRadius: 20, padding: "3px 9px", fontSize: 10, fontWeight: 800 }}>{fare.__badge}</span>}
-      <div className="fare-card-airline-col">
-        <div className="fare-card-airline">{fare.airlineName}</div>
-        <div className="fare-card-flight">{fare.flightNumber}</div>
+    <div className="fare-card-v2" style={{ position: "relative" }}>
+      {fare.__badge && (
+        <div style={{ position: "absolute", top: -1, left: 14, background: badgeColor, color: "#fff", borderRadius: "0 0 8px 8px", padding: "2px 10px", fontSize: 10, fontWeight: 800, zIndex: 1 }}>
+          {fare.__badge}
+        </div>
+      )}
+
+      <div className="fare-card-v2-main" style={fare.__badge ? { paddingTop: 22 } : {}}>
+        {/* Airline */}
+        <div className="fare-card-v2-airline">
+          <div className="fare-card-v2-airline-logo">{airlineCode}</div>
+          <div className="fare-card-v2-airline-name">{fare.airlineName}</div>
+          <div className="fare-card-v2-flight-num">{fare.flightNumber}</div>
+        </div>
+
+        {/* Times & duration bar */}
+        <div className="fare-card-v2-times">
+          <div className="fare-card-v2-time-row">
+            <div>
+              <div className="fare-card-v2-time">{fmt(dep)}</div>
+              <div className="fare-card-v2-airport">{fare.origin}</div>
+            </div>
+            <div className="fare-card-v2-duration-bar">
+              <div className="fare-card-v2-duration">{durationH}h {durationM}m</div>
+              <div className="fare-card-v2-line" />
+              <div className={`fare-card-v2-stops-label${fare.stops === 0 ? " nonstop" : ""}`}>
+                {fare.stops === 0 ? "Nonstop" : `${fare.stops} stop${fare.stops > 1 ? "s" : ""}`}
+              </div>
+            </div>
+            <div>
+              <div className="fare-card-v2-time">
+                {fmt(arr)}
+                {arrNextDay && <sup style={{ fontSize: 10, color: "#f59e0b", marginLeft: 2 }}>+1</sup>}
+              </div>
+              <div className="fare-card-v2-airport">{fare.destination}</div>
+            </div>
+          </div>
+          {fare.layoverAirports?.length > 0 && (
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Via {fare.layoverAirports.join(" · ")}</div>
+          )}
+        </div>
+
+        {/* Tags */}
+        <div className="fare-card-v2-tags">
+          {fare.isRefundable && <span className="fare-card-v2-tag tag-refundable">✓ Refundable</span>}
+          {fare.baggage?.checked && <span className="fare-card-v2-tag tag-baggage">🧳 {fare.baggage.checked}</span>}
+          {fare.seatsLeft > 0 && fare.seatsLeft <= 5 && (
+            <span className="fare-card-v2-tag tag-seats">🔥 {fare.seatsLeft} left</span>
+          )}
+        </div>
+
+        {/* Price + book */}
+        <div className="fare-card-v2-price-col">
+          <div className="fare-card-v2-price">{formatMoney(price, fareCurrency)}</div>
+          <div className="fare-card-v2-price-note">
+            {fareCurrency}{currencyDiffers ? " · supplier" : ""}
+            {!fare.isBookable && " · indicative"}
+          </div>
+          {isBookable ? (
+            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants)} className="fare-card-v2-book">
+              Book Now
+            </a>
+          ) : (
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>Not bookable online</span>
+          )}
+        </div>
       </div>
-      <div className="fare-card-times-col">
-        <div className="fare-card-times">{fmt(dep)} → {fmt(arr)}</div>
-        <div className="fare-card-stops">{fare.stops === 0 ? "Nonstop" : `${fare.stops} stop${fare.stops > 1 ? "s" : ""}`} · {Math.floor(fare.duration / 60)}h {fare.duration % 60}m</div>
+
+      {/* Expand row */}
+      <div className="fare-card-v2-expand-row">
+        <span style={{ fontSize: 11, color: "#94a3b8" }}>
+          {fmtDate(dep)} · {fare.supplier ?? ""}
+        </span>
+        <details style={{ display: "inline" }}>
+          <summary className="fare-card-v2-expand-btn" style={{ listStyle: "none", cursor: "pointer" }}>
+            Details ▾
+          </summary>
+        </details>
       </div>
-      <div className="fare-card-info-col">
-        <div style={{ fontSize: 12, color: fare.isRefundable ? "#059669" : "#9ca3af" }}>{fare.isRefundable ? "✓ Refundable" : "Non-refundable"}</div>
-        {fare.baggage?.cabin && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Cabin: {fare.baggage.cabin}</div>}
-        {fare.baggage?.checked && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Check-in: {fare.baggage.checked}</div>}
-        {fare.layoverAirports?.length > 0 && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>Via {fare.layoverAirports.join(", ")}</div>}
-      </div>
-      <div className="fare-card-price-col">
-        <div className="fare-card-price">{formatMoney(price, fareCurrency)}</div>
-        <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{fareCurrency}{currencyDiffers ? " · supplier currency" : ""}</div>
-        {!fare.isBookable && <div style={{ fontSize: 11, color: "#9ca3af" }}>Indicative price</div>}
-        {isBookable && (
-          <a
-            href={buildBookUrl(fare, fareCurrency, price, adults, children, infants)}
-            className="fare-card-book-btn"
-            style={{ display: "block", marginTop: 8, textAlign: "center", textDecoration: "none", WebkitTapHighlightColor: "transparent" as any }}
-          >
-            Book Now
-          </a>
+
+      {/* Expanded detail */}
+      <div className="fare-card-v2-detail" style={{ display: "none" }} id={`detail-${fare.id}`}>
+        <div className="fare-card-v2-detail-item">
+          <label>Cabin baggage</label>
+          <span>{fare.baggage?.cabin ?? "—"}</span>
+        </div>
+        <div className="fare-card-v2-detail-item">
+          <label>Check-in baggage</label>
+          <span>{fare.baggage?.checked ?? "—"}</span>
+        </div>
+        <div className="fare-card-v2-detail-item">
+          <label>Refundable</label>
+          <span>{fare.isRefundable ? "Yes" : "No"}</span>
+        </div>
+        {fare.fareClass && (
+          <div className="fare-card-v2-detail-item">
+            <label>Fare class</label>
+            <span>{fare.fareClass}</span>
+          </div>
         )}
       </div>
     </div>
