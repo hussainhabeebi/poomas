@@ -70,7 +70,12 @@ export class TripjackClient {
           : res.status === 429
             ? "Rate limit exceeded"
             : "Upstream request failed";
-      throw new SupplierError("TRIPJACK", res.status, safeMessage);
+      // Keep the upstream detail on the error for Admin supplier logs; the
+      // customer-facing message stays generic.
+      throw Object.assign(new SupplierError("TRIPJACK", res.status, safeMessage), {
+        endpoint: path,
+        responseSnippet: text.slice(0, 800),
+      });
     }
 
     return res.json() as Promise<T>;

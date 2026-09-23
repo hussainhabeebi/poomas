@@ -28,6 +28,34 @@ export interface SearchResult {
   usedSuppliers:  ("RIYA" | "TRIPJACK" | "GOOGLE_SERP" | "DUFFEL")[];
   isIndicative:   boolean;   // true if results came from SERP (non-bookable)
   errors:         Record<string, string>;
+  // Diagnostic detail per supplier for operator logs (never shown to customers).
+  diagnostics?:   Record<string, SupplierDiagnostic>;
+}
+
+export interface SupplierDiagnostic {
+  ok:               boolean;
+  fareCount:        number;
+  durationMs:       number;
+  endpoint?:        string;
+  httpStatus?:      number;
+  errorCode?:       string;
+  errorMessage?:    string;
+  responseSnippet?: string;
+}
+
+function diagnosticFromError(err: unknown, durationMs: number): SupplierDiagnostic {
+  const e = (err ?? {}) as { message?: string; statusCode?: number; code?: string; endpoint?: string; responseSnippet?: string };
+  const message = e.message ?? String(err);
+  return {
+    ok:              false,
+    fareCount:       0,
+    durationMs,
+    endpoint:        e.endpoint,
+    httpStatus:      typeof e.statusCode === "number" ? e.statusCode : undefined,
+    errorCode:       e.code ?? (typeof e.statusCode === "number" ? `HTTP_${e.statusCode}` : /timed out/i.test(message) ? "TIMEOUT" : "SEARCH_FAILED"),
+    errorMessage:    message,
+    responseSnippet: e.responseSnippet,
+  };
 }
 
 // Creates an adapter instance from config.
@@ -131,16 +159,21 @@ export async function searchFares(
   const allFares: NormalizedFare[]                   = [];
   const usedSuppliers: SearchResult["usedSuppliers"] = [];
   const errors: Record<string, string>               = {};
+  const diagnostics: Record<string, SupplierDiagnostic> = {};
 
   // Run SERP concurrently with bookable suppliers (whenever it has credentials)
   const serpFaresPromise = serpConfig
     ? (async () => {
+        const startedAt = Date.now();
         try {
           const adapter = buildAdapter(serpConfig, platform);
-          return await searchWithTimeout(adapter, params, serpConfig.timeoutMs, 1);
+          const fares = await searchWithTimeout(adapter, params, serpConfig.timeoutMs, 1);
+          diagnostics["GOOGLE_SERP"] = { ok: true, fareCount: fares.length, durationMs: Date.now() - startedAt };
+          return fares;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           errors["GOOGLE_SERP"] = msg;
+          diagnostics["GOOGLE_SERP"] = diagnosticFromError(err, Date.now() - startedAt);
           console.error(`[search] GOOGLE_SERP failed: ${msg}`);
           return [] as NormalizedFare[];
         }
@@ -150,9 +183,16 @@ export async function searchFares(
   // All bookable suppliers run in parallel — one failure must not block the others
   const settled = await Promise.allSettled(
     bookableConfigs.map(async (config) => {
-      const adapter = buildAdapter(config, platform);
-      const fares   = await searchWithTimeout(adapter, params, config.timeoutMs, config.maxRetries);
-      return { supplier: config.name, fares };
+      const startedAt = Date.now();
+      try {
+        const adapter = buildAdapter(config, platform);
+        const fares   = await searchWithTimeout(adapter, params, config.timeoutMs, config.maxRetries);
+        diagnostics[config.name] = { ok: true, fareCount: fares.length, durationMs: Date.now() - startedAt };
+        return { supplier: config.name, fares };
+      } catch (err) {
+        diagnostics[config.name] = diagnosticFromError(err, Date.now() - startedAt);
+        throw err;
+      }
     }),
   );
 
@@ -187,10 +227,11 @@ export async function searchFares(
         usedSuppliers,
         isIndicative: serpOnly.length > 0,
         errors,
+        diagnostics,
       };
     }
 
-    return { fares: deduped, usedSuppliers, isIndicative: false, errors };
+    return { fares: deduped, usedSuppliers, isIndicative: false, errors, diagnostics };
   }
 
   // ── No bookable results — use SERP (parallel results already in hand, or retry) ──
@@ -200,6 +241,7 @@ export async function searchFares(
       usedSuppliers: ["GOOGLE_SERP"],
       isIndicative:  true,
       errors,
+      diagnostics,
     };
   }
 
@@ -210,7 +252,7 @@ export async function searchFares(
     // SERP ran but returned 0 fares — already captured above
   }
 
-  return { fares: [], usedSuppliers: [], isIndicative: false, errors };
+  return { fares: [], usedSuppliers: [], isIndicative: false, errors, diagnostics };
 }
 
 // Gets the right bookable adapter for post-search operations (hold, book, cancel)

@@ -21,13 +21,19 @@ export class TripjackAdapter implements SupplierAdapter {
     const status = response.status as { success?: boolean; statusMessage?: string } | undefined;
     if (status?.success === false) {
       console.error("[tripjack-search] rejected:", JSON.stringify({ status, keys: Object.keys(response) }));
-      throw new Error(`TripJack rejected the flight search request: ${status?.statusMessage ?? "unknown reason"}`);
+      throw Object.assign(
+        new Error(`TripJack rejected the flight search request: ${status?.statusMessage ?? "unknown reason"}`),
+        { code: "SEARCH_REJECTED", responseSnippet: safeSnippet(response) },
+      );
     }
 
     const searchResult = response.searchResult as { tripInfos?: Record<string, unknown[]> } | undefined;
     if (!searchResult?.tripInfos) {
       console.error("[tripjack-search] unrecognized response structure:", JSON.stringify({ topKeys: Object.keys(response), hasSearchResult: !!response.searchResult }));
-      throw new Error("TripJack returned an unrecognized flight-search response");
+      throw Object.assign(
+        new Error("TripJack returned an unrecognized flight-search response"),
+        { code: "SEARCH_INVALID_RESPONSE", responseSnippet: safeSnippet(response) },
+      );
     }
 
     // TripJack keys one-way results as "ONWARD" in v2, but some proxy/API versions
@@ -160,4 +166,8 @@ export class TripjackAdapter implements SupplierAdapter {
       status:       raw.amendmentId ? "CANCELLATION_REQUESTED" : String((raw.status as any)?.statusMessage ?? ""),
     };
   }
+}
+
+function safeSnippet(value: unknown): string {
+  try { return JSON.stringify(value).slice(0, 800); } catch { return ""; }
 }
