@@ -18,6 +18,7 @@ type SearchResult = {
   credentialAvailability?: Record<string, boolean>;
   supplierErrors?: Record<string, string>;
   apiError?: string;
+  searchId?: string;
 };
 
 const CURRENCY_LOCALES: Record<string, string> = {
@@ -58,6 +59,7 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
     if (!res.ok) {
       return {
         fares: [], isIndicative: false,
+        searchId: data && "searchId" in data ? (data as SearchResult).searchId : undefined,
         apiError: (data && "error" in data ? data.error : undefined) ?? `${res.status} ${res.statusText}${raw ? ` — ${raw.slice(0, 180)}` : ""}`,
       };
     }
@@ -160,6 +162,9 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
               <h2>{result.apiError || failingSuppliers.length > 0 ? "No flights available right now" : "No flights found"}</h2>
               <p>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
               <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search again</a>
+              {(result.apiError || failingSuppliers.length > 0) && result.searchId && (
+                <p style={{ marginTop: 12, fontSize: 11, color: "#94a3b8" }}>Reference: {result.searchId.slice(0, 8)}</p>
+              )}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

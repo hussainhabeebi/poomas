@@ -3,7 +3,7 @@ import { supplierApiLogs } from "@poomas/db/schema";
 
 export interface SupplierCallLog {
   tenantId:       string;
-  supplier:       "TRIPJACK" | "RIYA";
+  supplier:       "TRIPJACK" | "RIYA" | "DUFFEL" | "GOOGLE_SERP";
   endpoint:       string;
   httpStatus?:    number;
   level:          "INFO" | "WARN" | "ERROR";

@@ -1,5 +1,9 @@
 // Payment gateway integration — Razorpay (INR) and Nomod (AED/USD)
 
+// Only Nomod accepts new payments. Razorpay code stays for refunds and webhooks
+// on payments taken before the switch; flip this to re-enable it for checkout.
+export const RAZORPAY_ENABLED = false;
+
 export interface GatewayOrderResult {
   gateway:     "RAZORPAY" | "NOMOD";
   orderId:     string;

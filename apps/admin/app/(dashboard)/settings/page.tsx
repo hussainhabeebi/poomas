@@ -123,48 +123,8 @@ function PaymentSettings() {
 
   return (
     <form onSubmit={save}>
-      <div style={{ marginBottom: 16 }}>
-        <Label>Default Gateway</Label>
-        <select value={s.defaultGateway}
-          onChange={(e) => setS((p) => ({ ...p, defaultGateway: e.target.value as "RAZORPAY" | "NOMOD" }))}
-          style={inputStyle}>
-          <option value="RAZORPAY">Razorpay (Cards / UPI / Net Banking)</option>
-          <option value="NOMOD">NoMod Pay</option>
-        </select>
-      </div>
-
-      {/* Razorpay */}
-      <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
-        <Toggle label="Enable Razorpay" description="Cards, UPI, Net Banking, Wallets — embedded checkout"
-          checked={s.razorpay.enabled} onChange={(v) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, enabled: v } }))} color="#2563eb" />
-        {s.razorpay.enabled && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <Label>Key ID</Label>
-              <input type="text" placeholder="rzp_live_..." value={s.razorpay.keyId}
-                onChange={(e) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, keyId: e.target.value } }))}
-                style={inputStyle} />
-              <Hint>Public key — shown to client for checkout.js</Hint>
-            </div>
-            <div>
-              <Label>Key Secret</Label>
-              <input type="password" placeholder="••••••••••••" value={s.razorpay.keySecret}
-                onChange={(e) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, keySecret: e.target.value } }))}
-                style={inputStyle} />
-              <Hint>Leave blank to keep existing secret</Hint>
-            </div>
-            <div style={{ gridColumn: "span 2" }}>
-              <Label>Webhook Secret</Label>
-              <input type="password" placeholder="••••••••••••" value={s.razorpay.webhookSecret}
-                onChange={(e) => setS((p) => ({ ...p, razorpay: { ...p.razorpay, webhookSecret: e.target.value } }))}
-                style={inputStyle} />
-              <Hint>
-                Set webhook URL in Razorpay dashboard: <code style={codeStyle}>https://api.flypoomas.com/webhooks/razorpay</code>
-                · Events: payment.captured, payment.failed
-              </Hint>
-            </div>
-          </div>
-        )}
+      <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: 8, background: "rgba(124,58,237,.12)", border: "1px solid #5b21b6", color: "#c4b5fd", fontSize: 13 }}>
+        Nomod is the only active payment gateway. Razorpay is disabled for new payments; refunds on earlier Razorpay payments still work.
       </div>
 
       {/* Nomod */}
@@ -505,7 +465,7 @@ export default function SettingsPage() {
         Payment gateways, WhatsApp messaging, and e-ticket delivery configuration.
       </p>
 
-      <Section color="#E31E24" title="Payment Gateways" badge="Razorpay · NoMod">
+      <Section color="#E31E24" title="Payment Gateways" badge="NoMod">
         <PaymentSettings />
       </Section>
 
@@ -524,9 +484,6 @@ export default function SettingsPage() {
         </h2>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {[
-            ["RAZORPAY_KEY_ID",        "Razorpay live key ID (public, shown to checkout.js)"],
-            ["RAZORPAY_KEY_SECRET",     "Razorpay key secret (server-side signature verification)"],
-            ["RAZORPAY_WEBHOOK_SECRET", "Razorpay webhook signing secret"],
             ["NOMOD_API_KEY",           "NoMod API key"],
             ["NOMOD_API_SECRET",        "NoMod API secret"],
             ["NOMOD_WEBHOOK_SECRET",    "NoMod webhook signing secret"],

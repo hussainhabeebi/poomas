@@ -27,6 +27,7 @@ const LEVEL_COLOR: Record<string, string> = {
 const ENDPOINT_LABEL: Record<string, string> = {
   "/fms/v1/review":               "Fare Review",
   "/oms/v1/air/book":             "Book",
+  "flight-search":                "Flight Search",
   "/air-search-all/v2":           "Search",
   "/fms/v2/farerule":             "Fare Rules",
   "/oms/v1/booking-details":      "PNR Status",
@@ -116,6 +117,8 @@ export default async function SupplierLogsPage({
           <option value="">All suppliers</option>
           <option value="TRIPJACK">TRIPJACK</option>
           <option value="RIYA">RIYA</option>
+          <option value="DUFFEL">DUFFEL</option>
+          <option value="GOOGLE_SERP">GOOGLE_SERP</option>
         </select>
         <select name="level" defaultValue={sp.level ?? ""} style={sel}>
           <option value="">All levels</option>

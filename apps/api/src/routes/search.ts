@@ -1,8 +1,9 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { searchFares, type SupplierConfig, type PlatformCredentials } from "@poomas/suppliers";
+import { searchFares, type SupplierConfig, type PlatformCredentials, type SupplierDiagnostic } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
+import { logSupplierCall } from "../lib/supplier-logger.js";
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -148,10 +149,82 @@ export async function resolveFlightSuppliers(env: Env, tenant: Variables["tenant
   return { platformCredentials, supplierConfigs };
 }
 
+type LoggableSupplier = "TRIPJACK" | "RIYA" | "DUFFEL" | "GOOGLE_SERP";
+
+// Writes failed / empty flight searches to supplier_api_logs so they show up in
+// Admin → Supplier Logs. Successful searches are not logged to keep volume low.
+function logSearchOutcome(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  tenantId: string,
+  searchId: string,
+  params: z.infer<typeof searchSchema> & { currency?: string },
+  enabledSuppliers: string[],
+  diagnostics: Record<string, SupplierDiagnostic>,
+) {
+  const db = c.get("db");
+  const requestSummary = {
+    origin: params.origin, destination: params.destination, departureDate: params.departureDate,
+    returnDate: params.returnDate, tripType: params.tripType, cabinClass: params.cabinClass,
+    pax: { adults: params.adults, children: params.children, infants: params.infants },
+    currency: params.currency, enabledSuppliers,
+  };
+  const writes: Promise<void>[] = [];
+
+  if (enabledSuppliers.length === 0) {
+    writes.push(logSupplierCall(db, {
+      tenantId, supplier: "TRIPJACK", endpoint: "flight-search", level: "ERROR", requestId: searchId,
+      requestSummary, errorCode: "NO_SUPPLIER_ENABLED",
+      errorMessage: "No flight supplier is enabled for this tenant (check Admin → Integrations TripJack toggle and TRIPJACK_API_BASE_URL / API key / proxy key secrets).",
+    }));
+  }
+
+  for (const [supplier, d] of Object.entries(diagnostics)) {
+    if (d.ok && d.fareCount > 0) continue;
+    writes.push(logSupplierCall(db, {
+      tenantId,
+      supplier:        supplier as LoggableSupplier,
+      endpoint:        "flight-search",
+      level:           d.ok ? "WARN" : "ERROR",
+      httpStatus:      d.httpStatus,
+      requestId:       searchId,
+      requestSummary:  { ...requestSummary, ...(d.endpoint ? { upstreamPath: d.endpoint } : {}) },
+      responseSnippet: d.responseSnippet,
+      errorCode:       d.ok ? "NO_RESULTS" : d.errorCode,
+      errorMessage:    d.ok ? "Supplier responded successfully but returned 0 flights for this route/date." : d.errorMessage,
+      durationMs:      d.durationMs,
+    }));
+  }
+
+  if (writes.length) c.executionCtx.waitUntil(Promise.all(writes));
+}
+
 export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   const params = c.req.valid("json");
+  const tenantId = c.get("tenantId");
+  const searchId = crypto.randomUUID();
+  try {
+    return await runSearch(c, params, searchId);
+  } catch (err) {
+    // Unexpected crash (config/KV/DB/code bug) — surface it in Admin logs, not just Worker logs.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[search] ${searchId} failed:`, err);
+    c.executionCtx.waitUntil(logSupplierCall(c.get("db"), {
+      tenantId, supplier: "TRIPJACK", endpoint: "flight-search", level: "ERROR", requestId: searchId,
+      requestSummary: { origin: params.origin, destination: params.destination, departureDate: params.departureDate },
+      errorCode: "SEARCH_CRASHED", errorMessage: message,
+      responseSnippet: err instanceof Error ? err.stack?.slice(0, 800) : undefined,
+    }));
+    return c.json({ error: "Flight search failed", searchId }, 500);
+  }
+});
+
+async function runSearch(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  params: z.infer<typeof searchSchema>,
+  searchId: string,
+) {
   const tenant = c.get("tenant");
   const db = c.get("db");
   const tenantId = c.get("tenantId");
@@ -198,7 +271,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
       supplierErrors?: Record<string, string>;
     } | null;
     if (cached && Array.isArray(cached.fares) && cached.fares.length > 0 && !cached.supplierErrors) {
-      return c.json({ ...cached, fromCache: true });
+      return c.json({ ...cached, fromCache: true, searchId });
     }
   } catch (err) {
     console.error("[search] fare cache read unavailable; continuing live", err);
@@ -227,8 +300,11 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     console.error("[search] markup unavailable; returning raw supplier prices", err);
   }
 
+  logSearchOutcome(c, tenantId, searchId, { ...params, currency }, availableSuppliers, result.diagnostics ?? {});
+
   const hasErrors = Object.keys(result.errors).length > 0;
   const response = {
+    searchId,
     fares: pricedFares,
     usedSuppliers: result.usedSuppliers,
     availableSuppliers,
@@ -254,7 +330,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   })());
 
   return c.json(response);
-});
+}
 
 // Safe operational status: exposes only booleans/names, never secret values.
 searchRoutes.get("/status", async (c) => {
