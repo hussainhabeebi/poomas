@@ -47,6 +47,8 @@ function platformCredentialsFromEnv(env: Env): PlatformCredentials {
   };
 }
 
+const TRIPJACK_SEARCH_TIMEOUT_MS = 28_000;
+
 const TEMPORARILY_DISABLED_SUPPLIERS = new Set<string>(["RIYA", "DUFFEL", "GOOGLE_SERP"]);
 
 function supplierConfigsForTenant(tenant: Variables["tenant"], platformCredentials: PlatformCredentials): SupplierConfig[] {
@@ -144,6 +146,12 @@ export async function resolveFlightSuppliers(env: Env, tenant: Variables["tenant
         maxRetries: 0,
       });
     }
+  }
+
+  // TripJack international searches regularly take 15–25s and the gateway allows
+  // 45s, so never cut TripJack off earlier than this, whatever the DB row says.
+  for (const config of supplierConfigs) {
+    if (config.name === "TRIPJACK") config.timeoutMs = Math.max(config.timeoutMs || 0, TRIPJACK_SEARCH_TIMEOUT_MS);
   }
 
   return { platformCredentials, supplierConfigs };
