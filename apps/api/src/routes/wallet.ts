@@ -5,6 +5,7 @@ import { HTTPException } from "hono/http-exception";
 import { walletAccounts, walletTransactions } from "@poomas/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { RAZORPAY_ENABLED } from "../lib/payment-gateway.js";
 
 export const walletRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -82,7 +83,7 @@ walletRoutes.post("/topup", zValidator("json", topupSchema), async (c) => {
   const tenant     = c.get("tenant");
 
   // Auto-detect gateway from tenant currency
-  const gateway = tenant.defaultCurrency === "INR" ? "RAZORPAY" : "NOMOD";
+  const gateway = RAZORPAY_ENABLED && tenant.defaultCurrency === "INR" ? "RAZORPAY" : "NOMOD";
 
   await c.env.BOOKING_QUEUE.send({
     type:     "WALLET_TOPUP_INITIATE",

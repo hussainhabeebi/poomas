@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import type { Env, Variables } from "../../types.js";
+import { RAZORPAY_ENABLED } from "../../lib/payment-gateway.js";
 
 export const settingsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -47,7 +48,7 @@ const paymentsSchema = z.object({
     allowTabby:    z.boolean().default(true),
     allowTamara:   z.boolean().default(true),
   }).optional(),
-  defaultGateway: z.enum(["RAZORPAY", "NOMOD"]).default("RAZORPAY"),
+  defaultGateway: z.enum(["RAZORPAY", "NOMOD"]).default("NOMOD"),
 });
 
 settingsAdminRoutes.get("/payments", async (c) => {
@@ -109,6 +110,11 @@ settingsAdminRoutes.put("/payments", zValidator("json", paymentsSchema), async (
       allowTamara:   body.nomod.allowTamara,
     } : (existing as any)?.nomod,
   };
+  // Nomod is the only gateway accepting new payments.
+  if (!RAZORPAY_ENABLED) {
+    merged.defaultGateway = "NOMOD";
+    if (merged.razorpay) merged.razorpay = { ...merged.razorpay, enabled: false };
+  }
 
   await saveSettings(c.env, tenantId, "payments", merged);
   return c.json({ ok: true });

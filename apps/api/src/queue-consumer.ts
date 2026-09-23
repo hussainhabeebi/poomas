@@ -9,7 +9,7 @@ import {
 } from "@poomas/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
-import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, createRefundNomod } from "./lib/payment-gateway.js";
+import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, createRefundNomod, RAZORPAY_ENABLED } from "./lib/payment-gateway.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
 
@@ -175,7 +175,7 @@ async function handleInitiatePayment(
   } | null;
 
   // Fall back to platform-level credentials if tenant hasn't set own
-  const useRazorpay = currency === "INR";
+  const useRazorpay = RAZORPAY_ENABLED && currency === "INR";
   let gatewayResult;
 
   if (useRazorpay) {

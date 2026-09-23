@@ -10,6 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { bookings, payments } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { RAZORPAY_ENABLED } from "../lib/payment-gateway.js";
 
 export const paymentRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -39,7 +40,7 @@ async function getTenantPaymentSettings(env: Env, tenantId: string) {
 paymentRoutes.get("/config", async (c) => {
   const tenantId = c.get("tenantId");
   const settings = await getTenantPaymentSettings(c.env, tenantId);
-  const razorpayConfigured = Boolean(settings?.razorpay?.enabled && (settings.razorpay.keyId || c.env.RAZORPAY_KEY_ID));
+  const razorpayConfigured = RAZORPAY_ENABLED && Boolean(settings?.razorpay?.enabled && (settings.razorpay.keyId || c.env.RAZORPAY_KEY_ID));
   const nomodConfigured = Boolean(settings?.nomod?.enabled && (settings.nomod.apiKey || c.env.NOMOD_API_KEY));
   const preferred = settings?.defaultGateway === "NOMOD" && nomodConfigured
     ? "NOMOD"
@@ -51,7 +52,7 @@ paymentRoutes.get("/config", async (c) => {
 
 const checkoutSchema = z.object({
   bookingId: z.string(),
-  gateway:   z.enum(["RAZORPAY", "NOMOD"]).default("RAZORPAY"),
+  gateway:   z.enum(["RAZORPAY", "NOMOD"]).default("NOMOD"),
   currency:  z.enum(["INR", "AED", "USD"]).optional(),
 });
 
@@ -84,6 +85,10 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
   const settings   = await getTenantPaymentSettings(c.env, tenantId);
   const amountFull = parseFloat(booking.totalAmount);
   const cur        = currency ?? booking.currency;
+
+  if (gateway === "RAZORPAY" && !RAZORPAY_ENABLED) {
+    throw new HTTPException(400, { message: "Razorpay is disabled; pay with Nomod" });
+  }
 
   if (gateway === "RAZORPAY") {
     const { keyId, keySecret } = resolvePaymentKeys(c.env, settings, "RAZORPAY") as { keyId: string; keySecret: string };
