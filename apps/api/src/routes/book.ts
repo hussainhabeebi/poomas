@@ -9,6 +9,7 @@ import { getBookableAdapter, TripjackClient } from "@poomas/suppliers";
 import { normalizeBookingResponse } from "../lib/booking-response.js";
 import { resolveFlightSuppliers } from "./search.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
+import { signToken } from "./checkout.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import type { Env, Variables } from "../types.js";
 
@@ -177,12 +178,21 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       return c.json({ errorCode: "BOOKING_SAVE_FAILED", requestId }, 500);
     }
 
+    // Short-lived checkout token so the browser can start the Nomod payment for
+    // this booking only (/api/payments/checkout accepts it via X-Checkout-Token).
+    const now = Math.floor(Date.now() / 1000);
+    const checkoutToken = await signToken(
+      { sub: pendingBooking!.id, tenantId, iat: now, exp: now + 20 * 60 },
+      c.env.JWT_SECRET,
+    );
+
     return c.json({
       success:         true,
       bookingId:       pendingBooking!.id,
       amount:          reviewPaymentAmount ?? body.totalFare,
       currency:        body.currency,
       requiresPayment: true,
+      checkoutToken,
       requestId,
     }, 201);
   }

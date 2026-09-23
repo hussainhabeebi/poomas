@@ -62,6 +62,8 @@ export default function BookPage() {
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [bookingUncertain, setBookingUncertain] = useState(false);
+  // Booking saved as PAYMENT_PENDING; retrying only restarts the payment, never re-books.
+  const [pendingPayment, setPendingPayment] = useState<{ bookingId: string; checkoutToken: string } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
@@ -193,12 +195,63 @@ export default function BookPage() {
   const t = (s?: string) =>
     s ? new Date(s).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "--:--";
 
+  async function startNomodPayment(bookingId: string, checkoutToken: string) {
+    const res = await fetch(`${apiUrl}/api/payments/checkout`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas", "X-Checkout-Token": checkoutToken },
+      body:    JSON.stringify({ bookingId, gateway: "NOMOD" }),
+    }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) as { paymentUrl?: string; error?: string } : {};
+    if (!res?.ok || !data.paymentUrl) {
+      throw new Error(`Your booking is saved but the payment page couldn't open${data.error ? ` (${data.error})` : ""}. You have not been charged — tap the button to try the payment again.`);
+    }
+    window.location.assign(data.paymentUrl);
+  }
+
+  function saveTravellerDetails() {
+    if (!saveDetails || !token) return;
+    for (const p of passengers) {
+      if (!p.firstName || !p.lastName) continue;
+      const existing = savedPassengers.find(
+        (s) => s.firstName.toLowerCase() === p.firstName.trim().toLowerCase() &&
+               s.lastName.toLowerCase()  === p.lastName.trim().toLowerCase(),
+      );
+      if (!existing) {
+        fetch(`${apiUrl}/api/profile/passengers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-tenant-slug": "poomas" },
+          body: JSON.stringify({
+            firstName:      p.firstName.trim(),
+            lastName:       p.lastName.trim(),
+            dob:            p.dob || undefined,
+            gender:         p.gender,
+            nationality:    p.nationality.toUpperCase().slice(0, 2) || undefined,
+            passportNumber: p.passportNumber.trim() || undefined,
+            passportExpiry: p.passportExpiry || undefined,
+            isDefault:      savedPassengers.length === 0,
+          }),
+        }).catch(() => {});
+      }
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!fare || submitting || fareExpired || bookingUncertain) return;
     if (!reviewing) { setReviewing(true); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     setError("");
     setSubmitting(true);
+    if (pendingPayment) {
+      try {
+        await startNomodPayment(pendingPayment.bookingId, pendingPayment.checkoutToken);
+      } catch (x: any) {
+        setError(x?.message ?? "The payment page couldn't open. Please try again.");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     try {
       const res = await fetch(`${apiUrl}/api/book`, {
         method:  "POST",
@@ -236,38 +289,23 @@ export default function BookPage() {
         if (d.errorCode === "BOOKING_STATUS_UNKNOWN" || !d.errorCode && res.status >= 500) setBookingUncertain(true);
         throw new Error(bookingError(d, res.status));
       }
+      // Pay-first flow (TripJack): the fare is reviewed and the booking saved as
+      // PAYMENT_PENDING; the airline booking is made after Nomod confirms payment.
+      if (d.success === true && d.requiresPayment === true && typeof d.bookingId === "string") {
+        saveTravellerDetails();
+        if (typeof d.checkoutToken !== "string" || !d.checkoutToken) {
+          throw new Error("Your booking is saved but the payment page couldn't open. You have not been charged; please contact support.");
+        }
+        setPendingPayment({ bookingId: d.bookingId, checkoutToken: d.checkoutToken });
+        await startNomodPayment(d.bookingId, d.checkoutToken);
+        return;
+      }
       if (d.success !== true || typeof d.bookingReference !== "string" || !d.bookingReference) {
         setBookingUncertain(true);
         throw new Error(bookingError({ errorCode: "BOOKING_STATUS_UNKNOWN" }, 502));
       }
 
-      // Save traveller details if opted in
-      if (saveDetails && token) {
-        for (const p of passengers) {
-          if (!p.firstName || !p.lastName) continue;
-          const existing = savedPassengers.find(
-            (s) => s.firstName.toLowerCase() === p.firstName.trim().toLowerCase() &&
-                   s.lastName.toLowerCase()  === p.lastName.trim().toLowerCase(),
-          );
-          if (!existing) {
-            fetch(`${apiUrl}/api/profile/passengers`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-tenant-slug": "poomas" },
-              body: JSON.stringify({
-                firstName:      p.firstName.trim(),
-                lastName:       p.lastName.trim(),
-                dob:            p.dob || undefined,
-                gender:         p.gender,
-                nationality:    p.nationality.toUpperCase().slice(0, 2) || undefined,
-                passportNumber: p.passportNumber.trim() || undefined,
-                passportExpiry: p.passportExpiry || undefined,
-                isDefault:      savedPassengers.length === 0,
-              }),
-            }).catch(() => {});
-          }
-        }
-      }
-
+      saveTravellerDetails();
       setConfirmation(d);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (x: any) {
@@ -479,7 +517,7 @@ export default function BookPage() {
             <b>{fare ? money.format(fare.totalFare) : "—"}</b>
           </div>
           <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
-            {submitting ? "Submitting booking…" : bookingUncertain ? "Contact support to check status" : reviewing ? "Confirm booking" : "Review booking"}
+            {submitting ? (pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}
           </button>
         </div>
       </form>
