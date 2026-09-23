@@ -50,7 +50,8 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
         ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(25_000),
+      // Must outlast the API's 28s TripJack search budget.
+      signal: AbortSignal.timeout(40_000),
     });
 
     const raw = await res.text();
