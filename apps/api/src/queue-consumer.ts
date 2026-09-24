@@ -11,6 +11,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
+import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
 
@@ -383,12 +384,22 @@ async function handlePaymentCaptured(
 
   // Build platform credentials from env so the queue worker can reach suppliers
   // even when they are configured only via env vars and not in the DB.
+  // Raw TripJack exchanges (review / book / booking-details) for certification logs.
+  const collector = collectExchanges();
+  const flightMeta = (booking.flightData ?? {}) as Record<string, unknown>;
+  const saveLogs = () => persistExchanges(env, db, booking.tenantId, collector.exchanges.splice(0), {
+    bookingId: booking.id, searchId: typeof flightMeta.searchId === "string" ? flightMeta.searchId : null,
+  });
+  for (const cfg of supplierConfigs) {
+    if (cfg.name === "TRIPJACK" && cfg.credentials) cfg.credentials = { ...cfg.credentials, recorder: collector.recorder } as any;
+  }
+
   const platformCredentials = {
     ...(env.RIYA_API_KEY && env.RIYA_API_BASE_URL
       ? { RIYA: { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } }
       : {}),
     ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
-      ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY } }
+      ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY, recorder: collector.recorder } }
       : {}),
   };
 
@@ -415,7 +426,8 @@ async function handlePaymentCaptured(
     const fareId = (flightData.id as string) ?? booking.supplierSessionId ?? "";
     if (!fareId) throw new Error(`TripJack booking ${booking.id}: no fare ID to review`);
     if (!adapter.revalidate) throw new Error("TripJack adapter missing revalidate");
-    const reviewed = await adapter.revalidate(fareId);
+    let reviewed;
+    try { reviewed = await adapter.revalidate(fareId); } catch (err) { await saveLogs(); throw err; }
     tripjackHoldId = reviewed.bookingId;
     // Persist so retries don't call review again
     await db.update(bookings)
@@ -447,6 +459,7 @@ async function handlePaymentCaptured(
       })),
     });
   } catch (err) {
+    await saveLogs();
     console.error(`Supplier book() failed for booking ${booking.id}:`, err);
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
@@ -456,6 +469,7 @@ async function handlePaymentCaptured(
   }
 
   if (!bookResult.success) {
+    await saveLogs();
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
@@ -472,6 +486,25 @@ async function handlePaymentCaptured(
     supplierBookingRef: bookResult.bookingRef,
     updatedAt:         new Date(),
   }).where(eq(bookings.id, booking.id));
+
+  // Fetch booking details from TripJack right after ticketing: completes the
+  // certification log trail and fills PNR / ticket numbers if the book response lacked them.
+  if (booking.supplier === "TRIPJACK" && bookResult.bookingRef && adapter.getPNRStatus) {
+    try {
+      const details = await adapter.getPNRStatus(bookResult.bookingRef);
+      const tickets = details.passengers.map((p) => p.ticketNumber).filter(Boolean);
+      if ((!bookResult.pnr && details.pnr) || (!bookResult.ticketNumbers?.length && tickets.length)) {
+        await db.update(bookings).set({
+          ...(!bookResult.pnr && details.pnr ? { pnr: details.pnr } : {}),
+          ...(!bookResult.ticketNumbers?.length && tickets.length ? { ticketNumbers: tickets } : {}),
+          updatedAt: new Date(),
+        }).where(eq(bookings.id, booking.id));
+      }
+    } catch (err) {
+      console.error(`[booking-details] ${booking.id}:`, err);
+    }
+  }
+  await saveLogs();
 
   // Update payment record with gateway payment id
   await db.update(payments).set({

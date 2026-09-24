@@ -6,7 +6,8 @@
 // ever paid until TripJack reports the amendment as successful.
 
 import type { Context } from "hono";
-import { TripjackClient } from "@poomas/suppliers";
+import { TripjackClient, type ExchangeRecorder } from "@poomas/suppliers";
+import { persistExchanges, persistInBackground } from "./api-exchanges.js";
 import { bookings, bookingPassengers, payments, bookingAmendments } from "@poomas/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
@@ -23,10 +24,15 @@ const ITINERARY_TTL = 300;           // seconds the live itinerary is cached in 
 const STATUS_RECHECK_MS = 60_000;    // min gap between TripJack amendment status checks
 export const QUOTE_TTL = 600;        // a cancellation quote is valid for 10 minutes
 
-export async function tripjackClientFor(c: Ctx) {
+// With a bookingId, every raw request/response is stored against that booking
+// (certification logs).
+export async function tripjackClientFor(c: Ctx, bookingId?: string) {
   const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), c.get("tenantId"));
   const cfg = supplierConfigs.find((s) => s.name === "TRIPJACK");
-  return new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(cfg?.credentials ?? {}) });
+  const recorder: ExchangeRecorder | undefined = bookingId
+    ? (x) => persistInBackground(c, persistExchanges(c.env, c.get("db"), c.get("tenantId"), [x], { bookingId }))
+    : undefined;
+  return new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(cfg?.credentials ?? {}), recorder });
 }
 
 export async function loadTrip(db: Variables["db"], tenantId: string, bookingId: string) {
@@ -72,7 +78,7 @@ export async function liveItinerary(c: Ctx, booking: Booking): Promise<Itinerary
     if (cached) return cached;
   } catch {}
   try {
-    const client = await tripjackClientFor(c);
+    const client = await tripjackClientFor(c, booking.id);
     const raw = await client.pnrStatus(booking.supplierBookingRef) as any;
     const itin = parseBookingDetails(raw);
     try { await c.env.SESSIONS_KV.put(key, JSON.stringify(itin), { expirationTtl: ITINERARY_TTL }); } catch {}
@@ -204,7 +210,7 @@ export async function syncCancellation(c: Ctx, amendment: Amendment): Promise<Am
   const db = c.get("db");
   let raw: any;
   try {
-    raw = await (await tripjackClientFor(c)).amendmentDetails(amendment.supplierAmendmentId);
+    raw = await (await tripjackClientFor(c, amendment.bookingId)).amendmentDetails(amendment.supplierAmendmentId);
   } catch (err) {
     console.error(`[cancel] amendment-details failed for ${amendment.id}`, err);
     await db.update(bookingAmendments).set({ lastCheckedAt: new Date() }).where(eq(bookingAmendments.id, amendment.id));

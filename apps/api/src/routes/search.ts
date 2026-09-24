@@ -5,6 +5,7 @@ import { searchFares, type SupplierConfig, type PlatformCredentials, type Suppli
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
 import { getAedRate } from "../lib/fx.js";
+import { collectExchanges, persistExchanges, persistInBackground } from "../lib/api-exchanges.js";
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -280,17 +281,21 @@ async function runSearch(
       supplierErrors?: Record<string, string>;
     } | null;
     if (cached && Array.isArray(cached.fares) && cached.fares.length > 0 && !cached.supplierErrors) {
-      return c.json({ ...cached, fromCache: true, searchId });
+      // Keep the original live search's id so a booking links to its TripJack logs.
+      return c.json({ ...cached, fromCache: true, searchId: (cached as { searchId?: string }).searchId ?? searchId });
     }
   } catch (err) {
     console.error("[search] fare cache read unavailable; continuing live", err);
   }
 
+  // Capture the raw TripJack exchange(s) for this search (certification logs).
+  const collector = collectExchanges();
   const result = await searchFares(
     { ...params, currency },
-    supplierConfigs,
-    { platformCredentials },
+    supplierConfigs.map((s) => s.name === "TRIPJACK" && s.credentials ? { ...s, credentials: { ...s.credentials, recorder: collector.recorder } } : s),
+    { platformCredentials: { ...platformCredentials, ...(platformCredentials.TRIPJACK ? { TRIPJACK: { ...platformCredentials.TRIPJACK, recorder: collector.recorder } as typeof platformCredentials.TRIPJACK } : {}) } },
   );
+  persistInBackground(c, persistExchanges(c.env, db, tenantId, collector.exchanges, { searchId }));
 
   // Markup is optional for availability. If DB/schema/rule loading fails, return the
   // supplier fare unchanged rather than converting a healthy flight search into HTTP 500.

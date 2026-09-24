@@ -1,7 +1,9 @@
+import { SERVER_API, SERVER_TOKEN } from "../../../lib/api";
+
 async function getTenants() {
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/tenants`, {
-      headers: { Authorization: `Bearer ${process.env.ADMIN_API_TOKEN ?? ""}` },
+    const res = await fetch(`${SERVER_API}/api/admin/tenants`, {
+      headers: { Authorization: `Bearer ${SERVER_TOKEN || process.env.ADMIN_API_TOKEN || ""}` },
       cache: "no-store",
     });
     if (res.ok) return res.json() as Promise<Array<{

@@ -51,8 +51,8 @@ export default async function FinancePage() {
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>
             Review and process cancellation refunds awaiting approval.
           </p>
-          <a href="/finance/refunds" style={{ color: "#E31E24", fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
-            View Pending Refunds →
+          <a href="/cancellations" style={{ color: "#E31E24", fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
+            View Cancellations & Refunds →
           </a>
         </div>
 
@@ -61,9 +61,7 @@ export default async function FinancePage() {
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>
             Monthly invoices sent to tenants for platform usage.
           </p>
-          <a href="/finance/invoices" style={{ color: "#6366f1", fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
-            View Invoices →
-          </a>
+          <span style={{ color: "#64748b", fontSize: 13, fontWeight: 600 }}>Not set up yet</span>
         </div>
 
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
@@ -71,9 +69,7 @@ export default async function FinancePage() {
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>
             Agent commission ledger and payout schedules.
           </p>
-          <a href="/finance/commissions" style={{ color: "#16a34a", fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
-            View Commissions →
-          </a>
+          <span style={{ color: "#64748b", fontSize: 13, fontWeight: 600 }}>Not set up yet</span>
         </div>
 
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
@@ -81,7 +77,7 @@ export default async function FinancePage() {
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>
             Agent wallet topup requests and gateway reconciliation.
           </p>
-          <a href="/finance/wallets" style={{ color: "#0ea5e9", fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
+          <a href="/customer-wallets" style={{ color: "#0ea5e9", fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
             View Wallets →
           </a>
         </div>

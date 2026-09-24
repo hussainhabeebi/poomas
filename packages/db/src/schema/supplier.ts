@@ -153,3 +153,22 @@ export const leadvyneConfigs = pgTable("leadvyne_configs", {
 }, (t) => ({
   tenantEnvIdx: uniqueIndex("leadvyne_configs_tenant_env_idx").on(t.tenantId, t.environment),
 }));
+
+// Raw supplier API exchanges (request + response files in R2) for certification logs.
+export const supplierExchanges = pgTable("supplier_exchanges", {
+  id:          text("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId:    text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  bookingId:   text("booking_id"),
+  searchId:    text("search_id"),
+  requestId:   text("request_id"),
+  supplier:    text("supplier").notNull(),
+  endpoint:    text("endpoint").notNull(),
+  url:         text("url").notNull(),
+  httpStatus:  integer("http_status"),
+  durationMs:  integer("duration_ms"),
+  error:       text("error"),
+  requestKey:  text("request_key").notNull(),
+  responseKey: text("response_key"),
+  startedAt:   timestamp("started_at", { withTimezone: true }).notNull(),
+  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

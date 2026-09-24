@@ -96,7 +96,7 @@ customerTripRoutes.post("/:id/cancel/quote", async (c) => {
 
   let raw: any;
   try {
-    raw = await (await tripjackClientFor(c)).amendmentCharges(trip.booking.supplierBookingRef!);
+    raw = await (await tripjackClientFor(c, trip.booking.id)).amendmentCharges(trip.booking.supplierBookingRef!);
   } catch (err: any) {
     logCancellationCall(c, { endpoint: "/oms/v1/air/amendment/amendment-charges", level: "ERROR", bookingId: trip.booking.id, errorMessage: err?.message, errorCode: "CHARGES_FAILED" });
     return c.json({ error: "We couldn't fetch the cancellation charges right now. Please try again in a few minutes, or ask our team to cancel for you.", supportSuggested: true }, 502);
@@ -137,7 +137,7 @@ customerTripRoutes.post("/:id/cancel", zValidator("json", z.object({ confirm: z.
 
   let raw: any;
   try {
-    raw = await (await tripjackClientFor(c)).submitCancellation(booking.supplierBookingRef!, `Customer cancellation via website (${booking.id.slice(0, 8)})`);
+    raw = await (await tripjackClientFor(c, booking.id)).submitCancellation(booking.supplierBookingRef!, `Customer cancellation via website (${booking.id.slice(0, 8)})`);
   } catch (err: any) {
     const httpStatus = typeof err?.statusCode === "number" ? err.statusCode : undefined;
     logCancellationCall(c, { endpoint: "/oms/v1/air/amendment/submit-amendment", level: "ERROR", bookingId: booking.id, errorMessage: err?.message, errorCode: httpStatus ? `HTTP_${httpStatus}` : "SUBMIT_UNKNOWN" });

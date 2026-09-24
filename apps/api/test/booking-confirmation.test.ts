@@ -40,7 +40,7 @@ test("untrusted supplier messages and references are not exposed", () => {
 test("confirm route distinguishes review, submission and persistence failures", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
-  const input = { fareId: "fare-1", supplier: "TRIPJACK", passengers: [{ type: "ADULT", firstName: "Test", lastName: "Customer" }],
+  const input = { fareId: "fare-1", supplier: "TRIPJACK", passengers: [{ type: "ADULT", firstName: "Arun", lastName: "Kumar" }],
     contactEmail: "test@example.com", contactPhone: "+919999999999", origin: "COK", destination: "BLR", departureDate: "2026-09-26", totalFare: 250 };
   const env = { TRIPJACK_API_KEY: "test", TRIPJACK_API_BASE_URL: "https://gateway.example", TENANT_CACHE_KV: { get: async () => null } };
   async function request(saveFails = false) {
