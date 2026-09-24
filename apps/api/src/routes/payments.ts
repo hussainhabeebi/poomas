@@ -10,6 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { bookings, payments } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { issueTripToken } from "./trips.js";
 import { RAZORPAY_ENABLED } from "../lib/payment-gateway.js";
 import { convertAmount, getAedRate } from "../lib/fx.js";
 
@@ -319,9 +320,14 @@ paymentRoutes.get("/:bookingId", async (c) => {
     .where(eq(payments.bookingId, bookingId))
     .limit(1);
 
+  // Once paid, hand the browser a read-only trip token so it can move on to the
+  // itinerary confirmation page (the checkout token expires after 20 minutes).
+  const paid = ["SUCCESS", "REFUNDED", "PARTIAL_REFUND"].includes(payment?.status ?? "");
+  const tripToken = paid ? await issueTripToken(c, bookingId) : undefined;
+
   // Booking progress lets the payment-result page show "ticketed + PNR" once ready.
   return c.json({
-    bookingId, payment: payment ?? null,
+    bookingId, payment: payment ?? null, tripToken,
     booking: { status: booking.status, pnr: booking.pnr, hasAccount: Boolean(booking.userId) },
   });
 });
