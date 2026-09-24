@@ -36,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <nav className="site-nav">
             <a href="/search?origin=CCJ&destination=DXB&departureDate=2026-08-25&adults=1&cabinClass=ECONOMY&tripType=ONEWAY" className="nav-link">Flights</a>
             <a href="/hotels" className="nav-link">Hotels</a>
+            <a href="/trips" className="nav-link">My Trips</a>
             <a href="/wallet" className="nav-link">Wallet</a>
           </nav>
         </header>

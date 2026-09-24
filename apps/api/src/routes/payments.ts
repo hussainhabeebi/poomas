@@ -272,9 +272,12 @@ paymentRoutes.get("/:bookingId", async (c) => {
   const db        = c.get("db");
   const tenantId  = c.get("tenantId");
   const bookingId = c.req.param("bookingId");
+  if (c.get("userRole") === "CHECKOUT" && c.get("checkoutBookingId") !== bookingId) {
+    throw new HTTPException(403, { message: "Checkout session does not match this booking" });
+  }
 
   const [booking] = await db
-    .select({ id: bookings.id })
+    .select({ id: bookings.id, status: bookings.status, pnr: bookings.pnr, userId: bookings.userId })
     .from(bookings)
     .where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, tenantId)))
     .limit(1);
@@ -296,5 +299,9 @@ paymentRoutes.get("/:bookingId", async (c) => {
     .where(eq(payments.bookingId, bookingId))
     .limit(1);
 
-  return c.json({ bookingId, payment: payment ?? null });
+  // Booking progress lets the payment-result page show "ticketed + PNR" once ready.
+  return c.json({
+    bookingId, payment: payment ?? null,
+    booking: { status: booking.status, pnr: booking.pnr, hasAccount: Boolean(booking.userId) },
+  });
 });

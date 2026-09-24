@@ -21,6 +21,8 @@ function NomodPaymentResult() {
   const [status, setStatus] = useState<"checking" | "success" | "pending" | "failed">(
     result === "failed" ? "failed" : "checking",
   );
+  // After payment: the airline booking is made in the background; follow it to the PNR.
+  const [booking, setBooking] = useState<{ status?: string; pnr?: string | null; hasAccount?: boolean } | null>(null);
 
   useEffect(() => {
     if (!bookingId || !token || result === "failed") return;
@@ -34,9 +36,13 @@ function NomodPaymentResult() {
           headers: { "x-tenant-slug": "poomas", "X-Checkout-Token": token },
           cache: "no-store",
         });
-        const data = await res.json() as { payment?: { status?: string } };
-        if (data.payment?.status === "SUCCESS") {
+        const data = await res.json() as { payment?: { status?: string }; booking?: { status?: string; pnr?: string | null; hasAccount?: boolean } };
+        if (data.booking) setBooking(data.booking);
+        const ticketingDone = ["CONFIRMED", "TICKETED", "PAYMENT_FAILED", "REFUNDED", "CANCELLED"].includes(data.booking?.status ?? "");
+        if (data.payment?.status === "SUCCESS" || data.payment?.status === "REFUNDED") {
           setStatus("success");
+          // Keep following the booking for ~2 minutes until ticketing finishes.
+          if (!ticketingDone && attempts < 60) timer = setTimeout(check, 3000);
           return;
         }
       } catch {}
@@ -54,6 +60,9 @@ function NomodPaymentResult() {
 
   const successful = status === "success";
   const failed = status === "failed";
+  const ticketed = ["CONFIRMED", "TICKETED"].includes(booking?.status ?? "");
+  const bookingFailed = successful && booking?.status === "PAYMENT_FAILED";
+  const tripHref = booking?.hasAccount ? `/trips/${bookingId}` : "/trips/find";
 
   return (
     <main style={{ minHeight: "100vh", background: "#f8fafc", display: "grid", placeItems: "center", padding: 20 }}>
@@ -62,16 +71,25 @@ function NomodPaymentResult() {
           {successful ? "✓" : failed ? "×" : "…"}
         </div>
         <h1 style={{ margin: "0 0 9px", color: "#0f172a", fontSize: 24 }}>
-          {successful ? "Payment confirmed" : failed ? "Payment was not completed" : "Confirming your payment"}
+          {ticketed ? "Booking confirmed" : bookingFailed ? "Booking could not be completed" : successful ? "Payment confirmed" : failed ? "Payment was not completed" : "Confirming your payment"}
         </h1>
         <p style={{ margin: "0 0 22px", color: "#64748b", lineHeight: 1.55, fontSize: 14 }}>
-          {successful
-            ? "Your payment has been received. We are processing the booking and will send the ticket after confirmation."
+          {ticketed
+            ? `Your ticket is issued${booking?.pnr ? ` — PNR ${booking.pnr}` : ""}. The e-ticket is on its way to your email.`
+            : bookingFailed
+              ? "The airline couldn't confirm this booking. Your payment is being refunded automatically (wallet payments return to your wallet)."
+            : successful
+            ? "Your payment has been received. We're confirming your seat with the airline — this usually takes under a minute."
             : failed
               ? "No charge was confirmed. You can return to checkout and try again."
               : "Nomod has returned you to POOMAS. Keep this page open while we verify the payment securely."}
         </p>
-        {successful ? (
+        {ticketed || bookingFailed ? (
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            <a href={tripHref} style={button}>View booking</a>
+            <a href="/" style={{ ...button, background: "#fff", color: "#0f172a", border: "1.5px solid #e2e8f0" }}>Back to home</a>
+          </div>
+        ) : successful ? (
           <a href="/" style={button}>Back to home</a>
         ) : (
           <a href={token ? `/checkout/${token}` : "/"} style={button}>{failed ? "Try payment again" : "Return to checkout"}</a>
