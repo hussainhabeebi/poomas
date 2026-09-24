@@ -82,6 +82,8 @@ export const bookings = pgTable("bookings", {
 
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // Set once the ₹50 customer booking bonus is credited (guards against double credit)
+  walletBonusCreditedAt: timestamp("wallet_bonus_credited_at", { withTimezone: true }),
 }, (t) => ({
   tenantStatusIdx: index("bookings_tenant_status_idx").on(t.tenantId, t.status),
   tenantAgentIdx:  index("bookings_tenant_agent_idx").on(t.tenantId, t.agentId),

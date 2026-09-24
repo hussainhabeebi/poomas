@@ -10,6 +10,7 @@ import { normalizeBookingResponse } from "../lib/booking-response.js";
 import { resolveFlightSuppliers } from "./search.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
 import { signToken } from "./checkout.js";
+import { optionalCustomerId } from "../lib/optional-customer.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import type { Env, Variables } from "../types.js";
 
@@ -49,6 +50,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   const tenantId = c.get("tenantId");
   const tenant   = c.get("tenant");
   const requestId = crypto.randomUUID();
+  const customerId = await optionalCustomerId(c);
 
   const { platformCredentials: platformCreds, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
 
@@ -137,6 +139,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     try {
       [pendingBooking] = await db.insert(bookings).values({
         tenantId,
+        userId:             customerId,
         channel:            "B2C_WEB",
         status:             "PAYMENT_PENDING",
         tripType:           "ONEWAY",
@@ -271,6 +274,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   try {
   [booking] = await db.insert(bookings).values({
     tenantId,
+    userId:             customerId,
     channel:            "B2C_WEB",
     status:             result.status === "CONFIRMED" || result.status === "TICKETED" ? "CONFIRMED" : "HELD",
     tripType:           "ONEWAY",

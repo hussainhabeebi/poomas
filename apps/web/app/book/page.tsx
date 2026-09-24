@@ -64,6 +64,8 @@ export default function BookPage() {
   const [bookingUncertain, setBookingUncertain] = useState(false);
   // Booking saved as PAYMENT_PENDING; retrying only restarts the payment, never re-books.
   const [pendingPayment, setPendingPayment] = useState<{ bookingId: string; checkoutToken: string } | null>(null);
+  // Offered when a signed-in customer's wallet covers the whole (INR) fare.
+  const [walletOffer, setWalletOffer] = useState<{ amount: number; balance: number } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
@@ -208,6 +210,39 @@ export default function BookPage() {
     window.location.assign(data.paymentUrl);
   }
 
+  // Wallet can pay only when it covers the full INR fare; otherwise Nomod is used.
+  async function walletCovering(amount: number, currency: string): Promise<number | null> {
+    if (!token || currency !== "INR") return null;
+    try {
+      const res = await fetch(`${apiUrl}/api/profile/wallet`, {
+        headers: { "x-tenant-slug": "poomas", Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      const w = await res.json() as { balance?: number };
+      return typeof w.balance === "number" && w.balance >= amount ? w.balance : null;
+    } catch { return null; }
+  }
+
+  async function payWithWallet() {
+    if (!pendingPayment || submitting) return;
+    setSubmitting(true); setError("");
+    try {
+      const res = await fetch(`${apiUrl}/api/profile/wallet/pay`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ bookingId: pendingPayment.bookingId }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Wallet payment failed. You have not been charged.");
+      const q = new URLSearchParams({ bookingId: pendingPayment.bookingId, token: pendingPayment.checkoutToken, result: "success" });
+      window.location.assign(`/checkout/payment-result?${q}`);
+    } catch (x: any) {
+      setError(x?.message ?? "Wallet payment failed. You have not been charged.");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setSubmitting(false);
+    }
+  }
+
   function saveTravellerDetails() {
     if (!saveDetails || !token) return;
     for (const p of passengers) {
@@ -242,6 +277,7 @@ export default function BookPage() {
     setError("");
     setSubmitting(true);
     if (pendingPayment) {
+      if (walletOffer) { setSubmitting(false); return; }
       try {
         await startNomodPayment(pendingPayment.bookingId, pendingPayment.checkoutToken);
       } catch (x: any) {
@@ -255,7 +291,7 @@ export default function BookPage() {
     try {
       const res = await fetch(`${apiUrl}/api/book`, {
         method:  "POST",
-        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           fareId:        fare.fareId,
           supplier:      fare.supplier,
@@ -297,6 +333,13 @@ export default function BookPage() {
           throw new Error("Your booking is saved but the payment page couldn't open. You have not been charged; please contact support.");
         }
         setPendingPayment({ bookingId: d.bookingId, checkoutToken: d.checkoutToken });
+        const amount = Number(d.amount ?? fare.totalFare);
+        const balance = await walletCovering(amount, String(d.currency ?? fare.currency));
+        if (balance !== null) {
+          setWalletOffer({ amount, balance });
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          return;
+        }
         await startNomodPayment(d.bookingId, d.checkoutToken);
         return;
       }
@@ -361,6 +404,29 @@ export default function BookPage() {
       )}
 
       {error && <div className="err"><b>Couldn't continue</b><span>{error}</span></div>}
+      {walletOffer && pendingPayment && (
+        <div style={{ background: "#fff", border: "1.5px solid #fecaca", borderRadius: 14, padding: 16, margin: "0 0 14px" }}>
+          <b style={{ display: "block", fontSize: 16, marginBottom: 4 }}>Choose how to pay</b>
+          <span style={{ display: "block", color: "#64748b", fontSize: 13, marginBottom: 12 }}>
+            Your booking is saved. Wallet balance ₹{walletOffer.balance.toLocaleString("en-IN")} covers this fare of ₹{walletOffer.amount.toLocaleString("en-IN")}.
+          </span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={payWithWallet} disabled={submitting}
+              style={{ flex: "1 1 180px", background: "#E31E24", color: "#fff", border: 0, borderRadius: 10, padding: "12px 14px", fontWeight: 800, cursor: "pointer", opacity: submitting ? .7 : 1 }}>
+              {submitting ? "Paying…" : `Pay ₹${walletOffer.amount.toLocaleString("en-IN")} from wallet`}
+            </button>
+            <button type="button" disabled={submitting}
+              onClick={async () => {
+                setSubmitting(true); setError("");
+                try { await startNomodPayment(pendingPayment.bookingId, pendingPayment.checkoutToken); }
+                catch (x: any) { setError(x?.message ?? "The payment page couldn't open."); setSubmitting(false); }
+              }}
+              style={{ flex: "1 1 180px", background: "#fff", color: "#0f172a", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", fontWeight: 800, cursor: "pointer" }}>
+              Pay with card (Nomod)
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Login banner — shown when not logged in */}
       {!token && !reviewing && (

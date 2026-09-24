@@ -4,6 +4,7 @@ import {
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenant.js";
 import { agents } from "./agent.js";
+import { users } from "./user.js";
 import { bookings } from "./booking.js";
 import {
   currencyEnum, paymentGatewayEnum, paymentStatusEnum, walletTxTypeEnum,
@@ -38,6 +39,7 @@ export const walletAccounts = pgTable("wallet_accounts", {
   id:       text("id").primaryKey().default(sql`gen_random_uuid()`),
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   agentId:  text("agent_id").references(() => agents.id),
+  userId:   text("user_id").references(() => users.id, { onDelete: "cascade" }),  // customer wallet
 
   currency:        currencyEnum("currency").notNull(),
   balance:         decimal("balance",      { precision: 14, scale: 2 }).notNull().default("0"),
@@ -48,6 +50,26 @@ export const walletAccounts = pgTable("wallet_accounts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   agentIdx: uniqueIndex("wallet_accounts_agent_id_idx").on(t.agentId),
+  userIdx:  uniqueIndex("wallet_accounts_user_id_idx").on(t.userId),
+}));
+
+// Customer-to-customer balance sharing: the amount leaves the creator's wallet
+// when the code is created and lands in the redeemer's wallet on redemption.
+export const walletCoupons = pgTable("wallet_coupons", {
+  id:              text("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId:        text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  code:            text("code").notNull(),
+  amount:          decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  currency:        currencyEnum("currency").notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  walletAccountId: text("wallet_account_id").notNull().references(() => walletAccounts.id),
+  status:          text("status").notNull().default("ACTIVE"),  // ACTIVE | REDEEMED | CANCELLED | EXPIRED
+  redeemedByUserId: text("redeemed_by_user_id").references(() => users.id),
+  redeemedAt:      timestamp("redeemed_at", { withTimezone: true }),
+  expiresAt:       timestamp("expires_at",  { withTimezone: true }).notNull(),
+  createdAt:       timestamp("created_at",  { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  codeIdx:    uniqueIndex("wallet_coupons_tenant_code_idx").on(t.tenantId, t.code),
 }));
 
 export const walletTransactions = pgTable("wallet_transactions", {
