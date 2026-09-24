@@ -48,7 +48,7 @@ export default function AccountPage() {
         <section style={card}>
           <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>Your account</h1>
           <p style={{ color: "#64748b", margin: "0 0 16px" }}>Sign in to manage your profile, saved travellers, trips and wallet.</p>
-          <div style={{ display: "flex", gap: 10 }}><a href="/login" style={btn}>Sign in</a><a href="/signup?next=/account" style={btn2}>Create account</a></div>
+          <div style={{ display: "flex", gap: 10 }}><a href="/login?next=/account" style={btn}>Sign in</a><a href="/signup?next=/account" style={btn2}>Create account</a></div>
         </section>
       </main>
     );

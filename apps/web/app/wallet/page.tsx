@@ -110,7 +110,7 @@ export default function WalletPage() {
           <p style={{ color: "#64748b", margin: "0 0 18px" }}>Sign in to see your balance. Every confirmed booking earns you ₹50, and you can pay for flights with your wallet.</p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a href="/signup?next=/wallet" style={primaryBtn}>Create account</a>
-            <a href="/login" style={secondaryBtn}>Sign in</a>
+            <a href="/login?next=/wallet" style={secondaryBtn}>Sign in</a>
           </div>
         </section>
       </main>
