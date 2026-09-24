@@ -1415,7 +1415,6 @@ html { scroll-behavior: smooth; }
 
 /* Phase 1: homepage presentation only. Shared public-page controls retain their rules. */
 .home-account-link { display: none; }
-.home-phase1 .hero-photo-img { animation: none; }
 .site-nav .nav-link-active { color: #b91c1c; font-weight: 700; }
 
 @media (min-width: 1024px) {
@@ -1464,21 +1463,9 @@ html { scroll-behavior: smooth; }
     color: #0f172a;
   }
 
-  .home-phase1 .hero-photo {
-    min-height: 390px;
-    padding: 54px 24px 112px;
-    align-items: center;
-  }
-  .home-phase1 .hero-shade {
-    background: linear-gradient(90deg, rgba(8, 20, 39, .88) 0%, rgba(8, 20, 39, .68) 48%, rgba(8, 20, 39, .26) 100%);
-  }
-  .home-phase1 .hero-copy { width: min(1440px, 100%); }
-  .home-phase1 .hero-copy .hero-title { max-width: 850px; font-size: clamp(40px, 4.3vw, 60px); }
-  .home-phase1 .hero-copy .hero-subtitle { margin-bottom: 20px; font-size: 18px; }
-  .home-phase1 .hero-badge { margin-bottom: 14px; }
   .home-phase1 .search-overlap {
     max-width: 1440px;
-    margin-top: -98px;
+    margin-top: -84px;
     padding: 0 24px 24px;
   }
   .home-phase1 .home-shell:not(.search-overlap) {

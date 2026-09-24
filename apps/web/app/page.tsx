@@ -50,7 +50,7 @@ const AIRLINE_LOGOS = [
 export default function HomePage() {
   return (
     <main className="home-phase1">
-      <HeroBanner />
+      <HeroBanner banners={[]} />
       <section id="flight-search" className="home-shell search-overlap">
         <div className="section-kicker">Live flight search</div>
         <SearchWidget />
