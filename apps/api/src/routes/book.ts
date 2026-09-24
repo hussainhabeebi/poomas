@@ -125,11 +125,14 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         durationMs: Date.now() - reviewStart });
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
-      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+      // waitUntil: a bare promise can be cancelled once the response is sent.
+      runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+        httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
         level: "ERROR", requestId: err?.requestId ?? requestId,
-        requestSummary: { fareId: body.fareId },
-        errorCode: err?.code, errorMessage: err?.message,
-        durationMs: Date.now() - reviewStart });
+        requestSummary: { fareId: body.fareId, supplierErrorCodes: err?.supplierErrorCodes },
+        errorCode: err?.code,
+        errorMessage: err?.supplierMessage ? `${err.message} — TripJack: ${err.supplierMessage}` : err?.message,
+        durationMs: Date.now() - reviewStart }));
       return c.json({ error: err?.code === "FARE_EXPIRED" ? "This fare is no longer available." : "We couldn't confirm availability. Your details are still here.",
         errorCode: err?.code === "FARE_EXPIRED" ? "FARE_EXPIRED" : "FARE_REVIEW_FAILED",
         diagnosticCode: err?.code, requestId: err?.requestId ?? requestId }, err?.code === "FARE_EXPIRED" ? 409 : 503);
@@ -375,4 +378,10 @@ async function customerPrice(
     console.error("[book] markup unavailable; charging supplier amount", err);
     return supplierAmount;
   }
+}
+
+// Keeps background work alive after the response when a Worker execution
+// context exists (always in production); falls back to a detached promise.
+function runInBackground(c: { executionCtx: { waitUntil(p: Promise<unknown>): void } }, work: Promise<unknown>) {
+  try { c.executionCtx.waitUntil(work); } catch { void work; }
 }

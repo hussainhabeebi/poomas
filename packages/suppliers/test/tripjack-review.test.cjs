@@ -49,6 +49,15 @@ test('TripJack review contract and safe error handling', async (t) => {
     await assert.rejects(client.validateFare('price-1'), (err) => err.code === 'REVIEW_ROUTE_UNAVAILABLE');
   });
 
+  await t.test('TripJack 404 error body means the fare is gone', async () => {
+    global.fetch = async () => Response.json({ status: { success: false, httpStatus: 404 }, errors: [{ errCode: '2502', message: 'Invalid price id' }] }, { status: 404 });
+    await assert.rejects(client.validateFare('price-1'), (err) => {
+      assert.equal(err.code, 'FARE_EXPIRED');
+      assert.match(err.supplierMessage, /Invalid price id/);
+      return true;
+    });
+  });
+
   await t.test('explicit supplier fare expiry is preserved', async () => {
     global.fetch = async () => Response.json({ status: { success: false, statusMessage: 'Fare has expired' } });
     await assert.rejects(client.validateFare('price-1'), /Fare has expired/);
