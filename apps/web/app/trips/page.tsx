@@ -30,7 +30,7 @@ export default function TripsPage() {
           <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>My Trips</h1>
           <p style={{ color: "#64748b", margin: "0 0 18px" }}>Sign in to see your bookings, download e-tickets and cancel online.</p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <a href="/login" style={primaryBtn}>Sign in</a>
+            <a href="/login?next=/trips" style={primaryBtn}>Sign in</a>
             <a href="/signup?next=/trips" style={secondaryBtn}>Create account</a>
           </div>
           <p style={{ margin: "18px 0 0", fontSize: 14, color: "#64748b" }}>

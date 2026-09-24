@@ -1,6 +1,5 @@
 "use client";
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 
 type ChatMsg = {
   id: number;
@@ -11,12 +10,17 @@ type ChatMsg = {
 
 type Step = "email" | "password" | "loading" | "done";
 
+// Where to go after signing in: the page that sent the customer here (?next=/trips), else their account.
+function afterLoginPath() {
+  const next = new URLSearchParams(window.location.search).get("next");
+  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/account";
+}
+
 function now() {
   return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
 export default function LoginPage() {
-  const router = useRouter();
 
   const [messages, setMessages] = useState<ChatMsg[]>([
     { id: 1, from: "bot", text: "Hi! 👋 Welcome to POOMAS Travel.", time: now() },
@@ -83,11 +87,11 @@ export default function LoginPage() {
 
         if (res.ok) {
           const { token } = (await res.json()) as { token: string };
-          document.cookie = `poomas_token=${token}; Path=/; SameSite=Lax; Secure`;
+          document.cookie = `poomas_token=${token}; Path=/; SameSite=Lax; Secure; Max-Age=86400`;
           setStep("done");
           await botSay("Welcome back! ✈️ You're all set.", 300);
-          await botSay("Taking you to the homepage…", 400);
-          setTimeout(() => router.push("/"), 1400);
+          await botSay(afterLoginPath() === "/account" ? "Opening your account…" : "Taking you back…", 400);
+          setTimeout(() => window.location.assign(afterLoginPath()), 900);
         } else {
           const data = (await res.json()) as { error?: string };
           setStep("email");
@@ -283,7 +287,6 @@ export default function LoginPage() {
 
 /* Desktop form reused independently */
 function DesktopLoginForm() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [error, setError] = useState("");
@@ -302,8 +305,8 @@ function DesktopLoginForm() {
       });
       if (res.ok) {
         const { token } = (await res.json()) as { token: string };
-        document.cookie = `poomas_token=${token}; Path=/; SameSite=Lax; Secure`;
-        router.push("/");
+        document.cookie = `poomas_token=${token}; Path=/; SameSite=Lax; Secure; Max-Age=86400`;
+        window.location.assign(afterLoginPath());
       } else {
         const data = (await res.json()) as { error?: string };
         setError(data.error ?? "Login failed");
