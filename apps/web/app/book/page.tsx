@@ -274,10 +274,11 @@ export default function BookPage() {
     e.preventDefault();
     if (!fare || submitting || fareExpired || bookingUncertain) return;
     if (!reviewing) { setReviewing(true); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    // The main button pays from the wallet while the wallet choice is showing.
+    if (pendingPayment && walletOffer) { await payWithWallet(); return; }
     setError("");
     setSubmitting(true);
     if (pendingPayment) {
-      if (walletOffer) { setSubmitting(false); return; }
       try {
         await startNomodPayment(pendingPayment.bookingId, pendingPayment.checkoutToken);
       } catch (x: any) {
@@ -583,7 +584,7 @@ export default function BookPage() {
             <b>{fare ? money.format(fare.totalFare) : "—"}</b>
           </div>
           <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
-            {submitting ? (pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}
+            {submitting ? (walletOffer ? "Paying from wallet…" : pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : walletOffer ? `Pay ₹${walletOffer.amount.toLocaleString("en-IN")} from wallet` : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}
           </button>
         </div>
       </form>

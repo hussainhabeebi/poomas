@@ -12,6 +12,7 @@ import { logSupplierCall } from "../lib/supplier-logger.js";
 import { signToken } from "./checkout.js";
 import { optionalCustomerId } from "../lib/optional-customer.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
+import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 
 const passengerSchema = z.object({
@@ -67,6 +68,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   let bookingSessionId = body.fareId;
   let tripjackClient: TripjackClient | undefined;
   let reviewPaymentAmount: number | undefined;
+  let reviewAirline: string | undefined;
   if (body.supplier === "TRIPJACK") {
     const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
     const client = new TripjackClient({
@@ -82,6 +84,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       // review.result is already raw.data (unwrapped by validateFare).
       // TF is at results[0].totalPriceInfo or results[0].fareGroups[0].totalPriceInfo.
       const rr = review.result as any;
+      reviewAirline = findAirlineCode(rr);
       // TripJack review: response uses either "results" or "tripInfos" at the top level
       // depending on the API version / proxy. Try both.
       const rFirstResult = rr?.results?.[0] ?? rr?.tripInfos?.[0];
@@ -135,6 +138,15 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // Safe payment flow: save booking as PAYMENT_PENDING and let the frontend
     // call /api/payments/checkout to get a payment URL. The actual TripJack
     // book() call happens in the queue consumer after payment is captured.
+    // Customer pays TripJack's reviewed fare plus the tenant markup (the same rules
+    // search used for the displayed price). TripJack itself is paid the net fare.
+    const supplierAmount = reviewPaymentAmount ?? body.totalFare;
+    const customerAmount = await customerPrice(db, tenantId, supplierAmount, {
+      origin: body.origin.toUpperCase(), destination: body.destination.toUpperCase(),
+      supplier: body.supplier, airline: reviewAirline ?? "",
+    });
+    const markupAmount = Math.max(0, Math.round((customerAmount - supplierAmount) * 100) / 100);
+
     let pendingBooking: typeof bookings.$inferSelect | undefined;
     try {
       [pendingBooking] = await db.insert(bookings).values({
@@ -151,9 +163,10 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
         childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
         infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
-        baseFare:           String(reviewPaymentAmount ?? body.totalFare),
+        baseFare:           String(supplierAmount),
         taxes:              "0",
-        totalAmount:        String(reviewPaymentAmount ?? body.totalFare),
+        markup:             String(markupAmount),
+        totalAmount:        String(supplierAmount + markupAmount),
         currency:           body.currency,
         supplier:           body.supplier,
         supplierBookingRef: bookingSessionId,
@@ -192,7 +205,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     return c.json({
       success:         true,
       bookingId:       pendingBooking!.id,
-      amount:          reviewPaymentAmount ?? body.totalFare,
+      amount:          supplierAmount + markupAmount,
       currency:        body.currency,
       requiresPayment: true,
       checkoutToken,
@@ -333,3 +346,33 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     status:           result.status,
   }, 201);
 });
+
+// First airline code in a TripJack review response (tripInfos[].sI[].fD.aI.code).
+function findAirlineCode(value: unknown, depth = 0): string | undefined {
+  if (!value || typeof value !== "object" || depth > 8) return undefined;
+  const code = (value as any)?.fD?.aI?.code;
+  if (typeof code === "string" && code) return code;
+  for (const v of Object.values(value as Record<string, unknown>)) {
+    const found = findAirlineCode(v, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+// Applies the tenant's markup rules to the supplier amount. If rules can't be
+// loaded the supplier amount is used, matching search's fallback.
+async function customerPrice(
+  db: Variables["db"], tenantId: string, supplierAmount: number,
+  fare: { origin: string; destination: string; supplier: string; airline: string },
+): Promise<number> {
+  try {
+    const { applyMarkup } = await import("../lib/markup.js");
+    const { markupRules } = await import("@poomas/db/schema");
+    const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+    const priced = applyMarkup({ ...fare, cabinClass: "ECONOMY", totalFare: supplierAmount } as any, rules);
+    return Math.round(Math.max(priced, supplierAmount) * 100) / 100;
+  } catch (err) {
+    console.error("[book] markup unavailable; charging supplier amount", err);
+    return supplierAmount;
+  }
+}
