@@ -4,6 +4,7 @@ import { z } from "zod";
 import { searchFares, type SupplierConfig, type PlatformCredentials, type SupplierDiagnostic } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
+import { getAedRate } from "../lib/fx.js";
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -339,6 +340,12 @@ async function runSearch(
 
   return c.json(response);
 }
+
+// Display/payment conversion rate (INR per 1 AED) set by admin; null = AED payment off.
+searchRoutes.get("/fx", async (c) => {
+  const aedRate = await getAedRate(c.env, c.get("tenantId"));
+  return c.json({ base: "INR", rates: { AED: aedRate } }, 200, { "Cache-Control": "public, max-age=300" });
+});
 
 // Safe operational status: exposes only booleans/names, never secret values.
 searchRoutes.get("/status", async (c) => {

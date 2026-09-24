@@ -258,7 +258,7 @@ export async function settleRefund(
   if (amendment.status !== "SUCCESS" || !allowed.includes(amendment.refundStatus)) return null;
 
   const [booking] = await db.select({ userId: bookings.userId }).from(bookings).where(eq(bookings.id, amendment.bookingId)).limit(1);
-  const [paid] = await db.select({ gateway: payments.gateway, gatewayPaymentId: payments.gatewayPaymentId })
+  const [paid] = await db.select({ gateway: payments.gateway, gatewayPaymentId: payments.gatewayPaymentId, amount: payments.amount, currency: payments.currency })
     .from(payments).where(and(eq(payments.bookingId, amendment.bookingId), eq(payments.status, "SUCCESS"))).limit(1);
   const method = originalRefundMethod(paid, Boolean(booking?.userId));
 
@@ -295,8 +295,10 @@ export async function settleRefund(
   if (method === "NOMOD") {
     const apiKey = await resolveNomodApiKey(env, claimed.tenantId);
     if (!apiKey) return finish({ refundStatus: "MANUAL_REQUIRED", refundError: "Nomod API key is not configured; refund from the Nomod dashboard." });
-    const outcome = await refundNomodCharge(apiKey, paid!.gatewayPaymentId!, amount, `Cancellation of booking ${claimed.bookingId.slice(0, 8)}`);
-    if (outcome.ok) return done(`nomod:${outcome.refundId}`);
+    // The charge may be in another currency (e.g. AED): refund the same share of what was actually charged.
+    const chargeAmount = roundMoney(amount * Number(paid!.amount) / Number(claimed.amountPaid));
+    const outcome = await refundNomodCharge(apiKey, paid!.gatewayPaymentId!, chargeAmount, `Cancellation of booking ${claimed.bookingId.slice(0, 8)}`);
+    if (outcome.ok) return done(`nomod:${outcome.refundId}${paid!.currency !== claimed.currency ? ` (${paid!.currency} ${chargeAmount.toFixed(2)})` : ""}`);
     console.error(`[refund] Nomod refund for ${claimed.bookingId}:`, outcome.error);
     return outcome.definite
       ? finish({ refundStatus: "FAILED", refundError: `Nomod HTTP ${outcome.httpStatus}: ${outcome.error}` })

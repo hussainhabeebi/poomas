@@ -279,7 +279,7 @@ async function triggerAutoRefund(
   }
 
   const [payment] = await db
-    .select({ gateway: payments.gateway, gatewayOrderId: payments.gatewayOrderId })
+    .select({ gateway: payments.gateway, gatewayOrderId: payments.gatewayOrderId, amount: payments.amount, currency: payments.currency })
     .from(payments)
     .where(eq(payments.bookingId, bookingId))
     .limit(1);
@@ -313,14 +313,16 @@ async function triggerAutoRefund(
         console.error("[autoRefund] Nomod API key not configured; refund manually from the Nomod dashboard");
         return;
       }
-      const outcome = await refundNomodCharge(apiKey, gatewayPaymentId, amount, "Booking could not be ticketed");
+      // Refund the full charge in the currency it was taken in (may be AED).
+      const chargeAmount = Number(payment.amount);
+      const outcome = await refundNomodCharge(apiKey, gatewayPaymentId, chargeAmount, "Booking could not be ticketed");
       if (!outcome.ok) {
         console.error(`[autoRefund] Nomod refund for booking ${bookingId} not confirmed: ${outcome.error}`);
         return;
       }
       await db.update(payments).set({
         status:           "REFUNDED",
-        refundedAmount:   amount.toFixed(2),
+        refundedAmount:   chargeAmount.toFixed(2),
         refundGatewayRef: `nomod:${outcome.refundId}`,
         refundCompletedAt: new Date(),
         updatedAt:        new Date(),
