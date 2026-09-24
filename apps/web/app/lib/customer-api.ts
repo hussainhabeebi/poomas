@@ -72,3 +72,16 @@ export const STATUS_LABEL: Record<string, { label: string; color: string; bg: st
   REFUND_PENDING:  { label: "Refund pending",     color: "#92400e", bg: "#fef3c7" },
   REFUNDED:        { label: "Cancelled · refunded", color: "#475569", bg: "#f1f5f9" },
 };
+
+// Fetches a document with auth and saves it as a file (e.g. the itinerary).
+export async function downloadFile(path: string, mode: "customer" | "guest", filename: string) {
+  const html = await apiCall<string>(path, { auth: mode, headers: { Accept: "text/html" } });
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}

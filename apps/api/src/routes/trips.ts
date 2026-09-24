@@ -2,6 +2,7 @@
 //   GET  /                     list my bookings
 //   GET  /:id                  trip detail (+ live TripJack itinerary, cancellation status)
 //   GET  /:id/eticket          e-ticket HTML
+//   GET  /:id/itinerary        itinerary HTML download (live TripJack booking details)
 //   POST /:id/eticket/send     resend e-ticket by email/WhatsApp
 //   POST /:id/cancel/quote     TripJack cancellation charges → refund estimate
 //   POST /:id/cancel           submit cancellation (needs a fresh quote)
@@ -10,6 +11,7 @@
 //   POST /lookup               { reference (PNR / booking ref), email } → short-lived trip token
 //   GET  /view                 X-Trip-Token → trip detail (read-only)
 //   GET  /eticket              X-Trip-Token → e-ticket HTML
+//   GET  /itinerary            X-Trip-Token → itinerary HTML download
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
@@ -18,6 +20,7 @@ import { HTTPException } from "hono/http-exception";
 import { bookings, bookingAmendments } from "@poomas/db/schema";
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { itineraryFileName, renderItineraryHtml } from "../lib/itinerary.js";
 import { signToken, verifyToken } from "./checkout.js";
 import {
   QUOTE_TTL, buildQuote, cancellationBlocker, liveItinerary, loadTrip, logCancellationCall, originalRefundMethod,
@@ -72,6 +75,11 @@ customerTripRoutes.get("/:id", async (c) => {
 customerTripRoutes.get("/:id/eticket", async (c) => {
   const trip = await ownTrip(c, c.req.param("id"));
   return eticketResponse(c, trip.booking);
+});
+
+customerTripRoutes.get("/:id/itinerary", async (c) => {
+  const trip = await ownTrip(c, c.req.param("id"));
+  return itineraryResponse(c, trip);
 });
 
 customerTripRoutes.post("/:id/eticket/send", async (c) => {
@@ -174,9 +182,40 @@ async function eticketResponse(c: any, booking: typeof bookings.$inferSelect) {
   return c.body(await obj.text(), 200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store" });
 }
 
+// Itinerary as a downloadable HTML file, read live from TripJack booking details.
+async function itineraryResponse(c: any, trip: NonNullable<Awaited<ReturnType<typeof loadTrip>>>) {
+  const booking = trip.booking;
+  if (!["CONFIRMED", "TICKETED"].includes(booking.status)) {
+    throw new HTTPException(409, { message: "The itinerary is available once the airline confirms the booking" });
+  }
+  const itinerary = await liveItinerary(c, booking, { fresh: true });
+  if (!itinerary?.segments.length) {
+    throw new HTTPException(503, { message: "The airline's itinerary isn't available yet. Please try again in a minute." });
+  }
+  if (!itinerary.travellers.length) {
+    itinerary.travellers = trip.passengers.map((p) => ({ name: `${p.firstName} ${p.lastName}`, type: p.type }));
+  }
+  const data = {
+    bookingId: booking.id, pnr: booking.pnr ?? itinerary.pnr ?? null, status: booking.status, bookedAt: booking.createdAt,
+    origin: booking.origin, destination: booking.destination, totalAmount: Number(booking.totalAmount), currency: booking.currency,
+    contactEmail: booking.contactEmail, contactPhone: booking.contactPhone, itinerary,
+  };
+  return c.body(renderItineraryHtml(data), 200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${itineraryFileName(data)}"`,
+    "Cache-Control": "private, no-store",
+  });
+}
+
 // ── Guests (find booking with PNR / reference + email) ───────────────────────
 
 const TRIP_TOKEN_TTL = 2 * 60 * 60;
+
+// Read-only trip access for the booking's own browser (issued after payment).
+export async function issueTripToken(c: any, bookingId: string) {
+  const now = Math.floor(Date.now() / 1000);
+  return signToken({ sub: bookingId, tenantId: c.get("tenantId"), scope: "trip", iat: now, exp: now + TRIP_TOKEN_TTL }, c.env.JWT_SECRET);
+}
 export const guestTripRoutes: App = new Hono();
 
 guestTripRoutes.post("/lookup", zValidator("json", z.object({
@@ -191,8 +230,7 @@ guestTripRoutes.post("/lookup", zValidator("json", z.object({
     or(eq(sql`upper(${bookings.pnr})`, ref), eq(sql`upper(${bookings.supplierBookingRef})`, ref), eq(sql`upper(${bookings.id})`, ref)),
   )).orderBy(desc(bookings.createdAt)).limit(1);
   if (!booking) throw new HTTPException(404, { message: "We couldn't find a booking with that reference and email." });
-  const now = Math.floor(Date.now() / 1000);
-  const token = await signToken({ sub: booking.id, tenantId: c.get("tenantId"), scope: "trip", iat: now, exp: now + TRIP_TOKEN_TTL }, c.env.JWT_SECRET);
+  const token = await issueTripToken(c, booking.id);
   return c.json({ token, bookingId: booking.id, expiresIn: TRIP_TOKEN_TTL });
 });
 
@@ -215,5 +253,7 @@ guestTripRoutes.get("/view", async (c) => {
 });
 
 guestTripRoutes.get("/eticket", async (c) => eticketResponse(c, (await guestTrip(c)).booking));
+
+guestTripRoutes.get("/itinerary", async (c) => itineraryResponse(c, await guestTrip(c)));
 
 export { guestTrip };

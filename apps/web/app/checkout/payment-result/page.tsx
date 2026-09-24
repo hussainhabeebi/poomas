@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { saveGuestToken } from "../../lib/customer-api";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
@@ -36,8 +37,16 @@ function NomodPaymentResult() {
           headers: { "x-tenant-slug": "poomas", "X-Checkout-Token": token },
           cache: "no-store",
         });
-        const data = await res.json() as { payment?: { status?: string }; booking?: { status?: string; pnr?: string | null; hasAccount?: boolean } };
+        const data = await res.json() as { payment?: { status?: string }; tripToken?: string; booking?: { status?: string; pnr?: string | null; hasAccount?: boolean } };
         if (data.booking) setBooking(data.booking);
+        // Paid: continue on the itinerary confirmation page, which waits for the
+        // airline booking and downloads the itinerary.
+        if (data.payment?.status === "SUCCESS" && data.tripToken) {
+          setStatus("success");
+          saveGuestToken(data.tripToken);
+          window.location.replace("/trips/itinerary");
+          return;
+        }
         const ticketingDone = ["CONFIRMED", "TICKETED", "PAYMENT_FAILED", "REFUNDED", "CANCELLED"].includes(data.booking?.status ?? "");
         if (data.payment?.status === "SUCCESS" || data.payment?.status === "REFUNDED") {
           setStatus("success");

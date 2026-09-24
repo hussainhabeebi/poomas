@@ -68,15 +68,19 @@ export interface Itinerary {
   travellers: { name: string; type?: string; pnr?: string; ticketNumber?: string }[];
 }
 
-export async function liveItinerary(c: Ctx, booking: Booking): Promise<Itinerary | null> {
+// `fresh` skips the KV cache (used for downloads, so ticket numbers issued a
+// moment ago are included).
+export async function liveItinerary(c: Ctx, booking: Booking, opts: { fresh?: boolean } = {}): Promise<Itinerary | null> {
   if (booking.supplier !== "TRIPJACK" || !booking.supplierBookingRef || !["CONFIRMED", "TICKETED", "CANCELLED", "REFUNDED"].includes(booking.status)) {
     return null;
   }
   const key = `trip_itin:${booking.id}`;
-  try {
-    const cached = await c.env.SESSIONS_KV.get(key, "json") as Itinerary | null;
-    if (cached) return cached;
-  } catch {}
+  if (!opts.fresh) {
+    try {
+      const cached = await c.env.SESSIONS_KV.get(key, "json") as Itinerary | null;
+      if (cached) return cached;
+    } catch {}
+  }
   try {
     const client = await tripjackClientFor(c, booking.id);
     const raw = await client.pnrStatus(booking.supplierBookingRef) as any;
