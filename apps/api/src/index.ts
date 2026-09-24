@@ -26,6 +26,7 @@ import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
 import { partnerRoutes }       from "./routes/partner.js";
 import { profileRoutes }       from "./routes/profile.js";
+import { customerWalletRoutes } from "./routes/customer-wallet.js";
 
 export { TenantRateLimiter };
 
@@ -81,6 +82,7 @@ app.route("/api/agents",   agentRoutes);
 app.route("/api/wallet",   walletRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/admin",    adminRoutes);
+app.route("/api/profile/wallet", customerWalletRoutes);
 app.route("/api/profile",  profileRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

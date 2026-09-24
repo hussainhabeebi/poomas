@@ -11,6 +11,7 @@ import { settingsAdminRoutes }      from "./settings.js";
 import { integrationsAdminRoutes } from "./integrations.js";
 import { apiKeysAdminRoutes }      from "./api-keys.js";
 import { supplierLogsAdminRoutes } from "./supplier-logs.js";
+import { customerWalletsAdminRoutes } from "./customer-wallets.js";
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -33,6 +34,7 @@ adminRoutes.route("/settings",      settingsAdminRoutes);
 adminRoutes.route("/integrations",  integrationsAdminRoutes);
 adminRoutes.route("/api-keys",       apiKeysAdminRoutes);
 adminRoutes.route("/supplier-logs",  supplierLogsAdminRoutes);
+adminRoutes.route("/customer-wallets", customerWalletsAdminRoutes);
 
 // Platform-level dashboard stats (SUPER_ADMIN only)
 adminRoutes.get("/dashboard", async (c) => {

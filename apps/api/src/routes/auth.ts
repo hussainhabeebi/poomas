@@ -4,7 +4,7 @@ import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { SignJWT } from "jose";
 import { users, userSessions } from "@poomas/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { socialAuthRoutes } from "./social-auth.js";
 
@@ -58,13 +58,60 @@ authRoutes.post("/register", zValidator("json", registerSchema), async (c) => {
   return c.json({ ok: true }, 201);
 });
 
+// Customer (B2C) self sign-up. Returns the same scoped customer token as social sign-in.
+const customerRegisterSchema = z.object({
+  name:     z.string().trim().min(2).max(100),
+  email:    z.string().trim().toLowerCase().email(),
+  phone:    z.string().trim().min(8).max(20).optional(),
+  password: z.string().min(8).max(200),
+});
+
+authRoutes.post("/customer/register", zValidator("json", customerRegisterSchema), async (c) => {
+  const body     = c.req.valid("json");
+  const db       = c.get("db");
+  const tenantId = c.get("tenantId");
+
+  const [existing] = await db.select({ id: users.id }).from(users)
+    .where(and(eq(users.email, body.email), eq(users.tenantId, tenantId))).limit(1);
+  if (existing) throw new HTTPException(409, { message: "An account with this email already exists. Please sign in." });
+  if (body.phone) {
+    const [phoneTaken] = await db.select({ id: users.id }).from(users)
+      .where(and(eq(users.phone, body.phone), eq(users.tenantId, tenantId))).limit(1);
+    if (phoneTaken) throw new HTTPException(409, { message: "This phone number is already registered. Please sign in." });
+  }
+
+  const [user] = await db.insert(users).values({
+    tenantId,
+    name:          body.name,
+    email:         body.email,
+    phone:         body.phone ?? null,
+    passwordHash:  await pbkdf2HashPassword(body.password),
+    role:          "CUSTOMER",
+    isActive:      true,
+    emailVerified: false,
+  }).onConflictDoNothing().returning();
+  if (!user) throw new HTTPException(409, { message: "An account with this email already exists. Please sign in." });
+
+  return c.json({ ...(await issueCustomerToken(c.env, db, user.id, tenantId)), customer: { name: user.name, email: user.email } }, 201);
+});
+
+async function issueCustomerToken(env: Env, db: Variables["db"], userId: string, tenantId: string) {
+  const sessionId = crypto.randomUUID();
+  const token = await new SignJWT({ userId, tenantId, role: "CUSTOMER", scope: "customer-profile", sessionId })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("24h")
+    .sign(new TextEncoder().encode(env.JWT_SECRET));
+  await env.SESSIONS_KV.put(`session:${userId}`, JSON.stringify({ userId, tenantId, role: "CUSTOMER", sessionId }), { expirationTtl: 86400 });
+  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
+  return { token, expiresIn: 86400, role: "CUSTOMER" as const };
+}
+
 authRoutes.post("/login", zValidator("json", loginSchema), async (c) => {
   const body     = c.req.valid("json");
   const db       = c.get("db");
   const tenantId = c.get("tenantId");
 
   const whereClause = body.email
-    ? and(eq(users.email, body.email), eq(users.tenantId, tenantId))
+    ? and(eq(sql`lower(${users.email})`, body.email.trim().toLowerCase()), eq(users.tenantId, tenantId))
     : and(eq(users.phone, body.phone!),  eq(users.tenantId, tenantId));
 
   const [user] = await db.select().from(users).where(whereClause).limit(1);
@@ -86,6 +133,11 @@ authRoutes.post("/login", zValidator("json", loginSchema), async (c) => {
     await c.env.SESSIONS_KV.delete(otpKey);
   } else {
     throw new HTTPException(401, { message: "Password or OTP required" });
+  }
+
+  // Customers get the scoped customer token (profile + wallet only), not a staff token.
+  if (user.role === "CUSTOMER") {
+    return c.json(await issueCustomerToken(c.env, db, user.id, tenantId));
   }
 
   const secret = new TextEncoder().encode(c.env.JWT_SECRET);

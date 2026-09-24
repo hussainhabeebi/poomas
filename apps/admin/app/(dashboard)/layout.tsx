@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/agents",       label: "Agents",        icon: "👥" },
   { href: "/suppliers",    label: "Suppliers",     icon: "🔌" },
   { href: "/finance",      label: "Finance",       icon: "💰" },
+  { href: "/customer-wallets", label: "Wallets",   icon: "👛" },
   { href: "/integrations", label: "Integrations",  icon: "⚙️" },
   { href: "/api-keys",     label: "API Keys",      icon: "🔑" },
   { href: "/settings",     label: "Settings",      icon: "🔧" },

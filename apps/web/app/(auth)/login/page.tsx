@@ -155,6 +155,9 @@ export default function LoginPage() {
           </svg>
           Messages are end-to-end encrypted
         </div>
+        <a href="/signup" style={{ display: "block", textAlign: "center", fontSize: 13, fontWeight: 600, color: "#075E54", padding: "6px 0", background: "#fff" }}>
+          New here? Create an account and earn ₹50 on every booking →
+        </a>
 
         {/* Messages */}
         <div className="wa-messages">
@@ -269,6 +272,9 @@ export default function LoginPage() {
             Sign in to POOMAS
           </h1>
           <DesktopLoginForm />
+          <p style={{ textAlign: "center", marginTop: 18, fontSize: 14, color: "#64748b" }}>
+            New to POOMAS? <a href="/signup" style={{ color: "#E31E24", fontWeight: 700 }}>Create an account</a>
+          </p>
         </div>
       </div>
     </>

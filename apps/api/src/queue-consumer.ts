@@ -10,6 +10,7 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, createRefundNomod, RAZORPAY_ENABLED } from "./lib/payment-gateway.js";
+import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
 
@@ -232,6 +233,38 @@ async function handleInitiatePayment(
 
 // ── AUTO-REFUND ───────────────────────────────────────────────────
 
+// Refund a customer wallet payment. The payment row is flipped SUCCESS → REFUNDED
+// atomically first, so a retried queue message can't refund twice. Agent wallet
+// payments (no customer debit on record) are left unchanged.
+async function refundCustomerWalletPayment(db: ReturnType<typeof createDb>, bookingId: string): Promise<void> {
+  const [debit] = await db
+    .select({ walletAccountId: walletTransactions.walletAccountId, amount: walletTransactions.amount })
+    .from(walletTransactions)
+    .innerJoin(walletAccounts, eq(walletAccounts.id, walletTransactions.walletAccountId))
+    .where(and(
+      eq(walletTransactions.bookingId, bookingId),
+      eq(walletTransactions.type, "BOOKING_DEBIT"),
+      sql`${walletAccounts.userId} IS NOT NULL`,
+    ))
+    .limit(1);
+  if (!debit) return;
+
+  const [claimed] = await db.update(payments)
+    .set({ status: "REFUNDED", refundCompletedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(payments.bookingId, bookingId), eq(payments.gateway, "WALLET"), eq(payments.status, "SUCCESS")))
+    .returning({ id: payments.id });
+  if (!claimed) return;
+
+  try {
+    await creditWallet(db, debit.walletAccountId, Number(debit.amount), "REFUND_CREDIT", {
+      bookingId, note: `Refund: booking ${bookingId.slice(0, 8)} could not be ticketed`,
+    });
+    console.info(`[autoRefund] wallet refund issued for booking ${bookingId}`);
+  } catch (err) {
+    console.error(`[autoRefund] wallet refund failed for booking ${bookingId}:`, err);
+  }
+}
+
 async function triggerAutoRefund(
   db: ReturnType<typeof createDb>,
   env: Env,
@@ -239,8 +272,11 @@ async function triggerAutoRefund(
   gatewayPaymentId: string,
   amount: number,
 ): Promise<void> {
-  // Skip wallet payments — no gateway to refund
-  if (gatewayPaymentId.startsWith("wallet_")) return;
+  // Customer wallet payments go back to the customer's wallet.
+  if (gatewayPaymentId.startsWith("wallet_")) {
+    await refundCustomerWalletPayment(db, bookingId);
+    return;
+  }
 
   const [payment] = await db
     .select({ gateway: payments.gateway, gatewayOrderId: payments.gatewayOrderId })
@@ -436,6 +472,14 @@ async function handlePaymentCaptured(
     status:           "SUCCESS",
     updatedAt:        new Date(),
   }).where(eq(payments.gatewayOrderId, data.orderId));
+
+  // ₹50 wallet bonus for signed-in customers, once per confirmed booking.
+  // Never let a bonus problem fail (and retry) an already-ticketed booking.
+  try {
+    if (await creditBookingBonus(db, booking.id)) console.info(`[wallet-bonus] credited for booking ${booking.id}`);
+  } catch (err) {
+    console.error(`[wallet-bonus] booking ${booking.id}:`, err);
+  }
 
   // Generate e-ticket HTML
   const [tenantRow] = await db

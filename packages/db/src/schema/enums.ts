@@ -83,6 +83,11 @@ export const walletTxTypeEnum = pgEnum("wallet_tx_type", [
   "ADJUSTMENT",
   "COMMISSION_CREDIT",
   "SUBSCRIPTION_DEBIT",
+  "BOOKING_BONUS",
+  "ADMIN_CREDIT",
+  "COUPON_DEBIT",
+  "COUPON_CREDIT",
+  "COUPON_REFUND",
 ]);
 
 export const cabinClassEnum = pgEnum("cabin_class", [
