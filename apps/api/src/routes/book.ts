@@ -14,6 +14,8 @@ import { optionalCustomerId } from "../lib/optional-customer.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
+import { collectExchanges, persistExchanges, persistInBackground, type ExchangeCollector } from "../lib/api-exchanges.js";
+import { passengerNameProblem } from "../lib/passenger-names.js";
 
 const passengerSchema = z.object({
   type:            z.enum(["ADULT", "CHILD", "INFANT"]),
@@ -25,6 +27,11 @@ const passengerSchema = z.object({
   passportNumber:  z.string().optional(),
   passportExpiry:  z.string().optional(),
   passportCountry: z.string().max(2).optional(),
+}).superRefine((p, ctx) => {
+  for (const [field, label] of [["firstName", "First name"], ["lastName", "Last name"]] as const) {
+    const problem = passengerNameProblem(p[field], label);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: problem });
+  }
 });
 
 const directBookSchema = z.object({
@@ -39,18 +46,38 @@ const directBookSchema = z.object({
   departureDate: z.string().date(),
   totalFare:     z.number().positive(),
   currency:      z.enum(["INR", "AED", "USD"]).default("INR"),
+  searchId:      z.string().uuid().optional(),   // links the booking to its search's TripJack logs
 });
 
 export const bookDirectRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+// Capture every raw TripJack exchange made while booking and store it against the
+// booking (or the request, if no booking was created) for certification logs.
+bookDirectRoutes.use("/", async (c, next) => {
+  const collector = collectExchanges();
+  (c as any).set("exchanges", collector);
+  await next();
+  persistInBackground(c, persistExchanges(c.env, c.get("db"), c.get("tenantId"), collector.exchanges, {
+    bookingId: (c as any).get("exchangeBookingId") ?? null,
+    searchId: (c as any).get("exchangeSearchId") ?? null,
+    requestId: (c as any).get("exchangeRequestId") ?? null,
+  }));
+});
+
 bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
-  if (!result.success) return c.json({ errorCode: "BOOKING_DETAILS_INVALID" }, 400);
+  if (!result.success) {
+    const nameIssue = result.error.issues.find((i) => i.path.includes("firstName") || i.path.includes("lastName"));
+    return c.json({ errorCode: "BOOKING_DETAILS_INVALID", ...(nameIssue ? { error: nameIssue.message } : {}) }, 400);
+  }
 }), async (c) => {
   const body     = c.req.valid("json");
   const db       = c.get("db");
   const tenantId = c.get("tenantId");
   const tenant   = c.get("tenant");
   const requestId = crypto.randomUUID();
+  const exchanges = (c as any).get("exchanges") as ExchangeCollector | undefined;
+  (c as any).set("exchangeRequestId", requestId);
+  if (body.searchId) (c as any).set("exchangeSearchId", body.searchId);
   const customerId = await optionalCustomerId(c);
 
   const { platformCredentials: platformCreds, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
@@ -72,6 +99,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   if (body.supplier === "TRIPJACK") {
     const tripjackConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
     const client = new TripjackClient({
+      recorder: exchanges?.recorder,
       ...(platformCreds.TRIPJACK ?? {}),
       ...(tripjackConfig?.credentials ?? {}),
     });
@@ -162,7 +190,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         origin:             body.origin.toUpperCase(),
         destination:        body.destination.toUpperCase(),
         departureDate:      new Date(body.departureDate),
-        flightData:         { id: body.fareId },
+        flightData:         { id: body.fareId, ...(body.searchId ? { searchId: body.searchId } : {}) },
         adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
         childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
         infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
@@ -176,6 +204,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         contactEmail:       body.contactEmail,
         contactPhone:       body.contactPhone,
       }).returning();
+      (c as any).set("exchangeBookingId", pendingBooking?.id);
 
       await db.insert(bookingPassengers).values(
         body.passengers.map((p) => ({
@@ -298,7 +327,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     origin:             body.origin.toUpperCase(),
     destination:        body.destination.toUpperCase(),
     departureDate:      new Date(body.departureDate),
-    flightData:         {},
+    flightData:         { id: body.fareId, ...(body.searchId ? { searchId: body.searchId } : {}) },
     adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
     childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
     infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,
@@ -312,6 +341,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     contactEmail:       body.contactEmail,
     contactPhone:       body.contactPhone,
   }).returning();
+  (c as any).set("exchangeBookingId", booking?.id);
 
   const bookingId = booking.id;
   await db.insert(bookingPassengers).values(

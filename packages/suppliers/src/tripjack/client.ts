@@ -4,7 +4,27 @@ import { SupplierError } from "../riya/client.js";
 import { reviewFailure, TripjackReviewError } from "./review-error.js";
 
 
+// One HTTP exchange with TripJack, captured verbatim for certification logs:
+// the exact URL, headers (including the apikey) and body sent, and the exact
+// response text received. Nothing is redacted or re-serialised.
+export interface SupplierExchange {
+  supplier:        "TRIPJACK";
+  endpoint:        string;
+  url:             string;
+  method:          "POST";
+  requestHeaders:  Record<string, string>;
+  requestBody:     string;
+  status:          number | null;          // null = no HTTP response (network error / timeout)
+  responseHeaders: Record<string, string>;
+  responseBody:    string | null;          // raw text exactly as received
+  error?:          string;
+  startedAt:       string;
+  durationMs:      number;
+}
+export type ExchangeRecorder = (exchange: SupplierExchange) => void;
+
 export class TripjackClient {
+  private recorder?: ExchangeRecorder;
   private baseUrl: string;
   private omsBaseUrl: string;  // separate base for /oms/ paths when proxy only covers /fms/
   private apiKey:  string;
@@ -15,6 +35,13 @@ export class TripjackClient {
     this.omsBaseUrl = ((creds.omsBaseUrl as string) ?? process.env.TRIPJACK_OMS_BASE_URL ?? "").replace(/\/$/, "");
     this.apiKey     = (creds.apiKey   as string) ?? process.env.TRIPJACK_API_KEY      ?? "";
     this.proxyKey   = (creds.proxyKey as string) ?? process.env.TRIPJACK_PROXY_KEY ?? "";
+    this.recorder   = typeof creds.recorder === "function" ? creds.recorder as ExchangeRecorder : undefined;
+  }
+
+  setRecorder(recorder: ExchangeRecorder | undefined) { this.recorder = recorder; }
+
+  private record(x: SupplierExchange) {
+    try { this.recorder?.(x); } catch (err) { console.error("[tripjack] exchange recorder failed", err); }
   }
 
   private async request<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -27,19 +54,37 @@ export class TripjackClient {
       throw new Error("TripJack is enabled but its gateway or API credentials are missing");
     }
 
-    const res = await fetch(`${base}${path}`, {
-      method:  "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.apiKey ? { "apikey": this.apiKey } : {}),
-        ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
-      },
-      body: JSON.stringify(body),
-      signal,
+    const url = `${base}${path}`;
+    const requestHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(this.apiKey ? { "apikey": this.apiKey } : {}),
+      ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
+    };
+    const requestBody = JSON.stringify(body);
+    const startedAt = new Date();
+    const exchange = (status: number | null, responseHeaders: Record<string, string>, responseBody: string | null, error?: string): SupplierExchange => ({
+      supplier: "TRIPJACK", endpoint: path, url, method: "POST", requestHeaders, requestBody,
+      status, responseHeaders, responseBody, error, startedAt: startedAt.toISOString(), durationMs: Date.now() - startedAt.getTime(),
     });
 
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "POST", headers: requestHeaders, body: requestBody, signal });
+    } catch (err) {
+      this.record(exchange(null, {}, null, err instanceof Error ? `${err.name}: ${err.message}` : String(err)));
+      throw err;
+    }
+    // Read the body once as raw text so the log holds exactly what TripJack sent.
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (err) {
+      this.record(exchange(res.status, Object.fromEntries(res.headers), null, err instanceof Error ? `${err.name}: ${err.message}` : String(err)));
+      throw err;
+    }
+    this.record(exchange(res.status, Object.fromEntries(res.headers), text));
+
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
       if (path === "/fms/v1/review") {
         let detail: unknown = null;
         try { detail = JSON.parse(text); } catch { /* Route/proxy HTML is not fare expiry. */ }
@@ -78,7 +123,7 @@ export class TripjackClient {
       });
     }
 
-    return res.json() as Promise<T>;
+    return JSON.parse(text) as T;
   }
 
   // ── Flights ─────────────────────────────────────────────────────

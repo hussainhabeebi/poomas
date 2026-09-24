@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
+import { passengerNameProblem } from "./passenger-names";
 
 type Passenger = {
   type: "ADULT" | "CHILD" | "INFANT";
@@ -300,6 +301,11 @@ export default function BookPage() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!fare || submitting || fareExpired || bookingUncertain) return;
+    // Names must be real (no TBA / Test) — the airline and TripJack reject placeholders.
+    for (const [i, p] of passengers.entries()) {
+      const problem = passengerNameProblem(p.firstName, "First name") ?? passengerNameProblem(p.lastName, "Last name");
+      if (problem) { setError(`Traveller ${i + 1}: ${problem}`); setReviewing(false); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    }
     if (!reviewing) { setReviewing(true); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     // The main button pays from the wallet while the wallet choice is showing.
     if (pendingPayment && walletOffer) { await payWithWallet(); return; }
@@ -330,6 +336,7 @@ export default function BookPage() {
           departureDate: fare.departureTime.slice(0, 10),
           totalFare:     fare.totalFare,
           currency:      fare.currency,
+          ...(new URLSearchParams(window.location.search).get("sid") ? { searchId: new URLSearchParams(window.location.search).get("sid") } : {}),
           passengers:    passengers.map((p) => ({
             ...p,
             firstName:      p.firstName.trim(),

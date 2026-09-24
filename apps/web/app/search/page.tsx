@@ -202,6 +202,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                   fare={fare}
                   requestedCurrency={requestedCurrency}
                   aedRate={aedRate}
+                  searchId={result.searchId}
                   adults={adults}
                   children={children}
                   infants={infants}
@@ -282,7 +283,7 @@ function formatMoney(amount: number, currency: string): string {
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
 }
 
-function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number, children = 0, infants = 0, payCurrency?: string): string {
+function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number, children = 0, infants = 0, payCurrency?: string, searchId?: string): string {
   const p = new URLSearchParams({
     fareId:   fare.id ?? "",
     adults:   String(adults),
@@ -303,10 +304,11 @@ function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: nu
     bag:      fare.baggage?.checked ?? "15 KG",
   });
   if (payCurrency) p.set("pc", payCurrency);
+  if (searchId) p.set("sid", searchId);   // links the booking to this search's TripJack logs
   return `/book?${p.toString()}`;
 }
 
-function FareCard({ fare, requestedCurrency, aedRate, adults, children = 0, infants = 0 }: { fare: any; requestedCurrency: string | null; aedRate: number | null; adults: number; children?: number; infants?: number }) {
+function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children = 0, infants = 0 }: { fare: any; requestedCurrency: string | null; aedRate: number | null; searchId?: string; adults: number; children?: number; infants?: number }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -383,7 +385,7 @@ function FareCard({ fare, requestedCurrency, aedRate, adults, children = 0, infa
             {!fare.isBookable && " · indicative"}
           </div>
           {isBookable ? (
-            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined)} className="fare-card-v2-book">
+            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined, searchId)} className="fare-card-v2-book">
               Book Now
             </a>
           ) : (
