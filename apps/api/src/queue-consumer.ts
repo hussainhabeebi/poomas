@@ -9,7 +9,7 @@ import {
 } from "@poomas/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
-import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, createRefundNomod, RAZORPAY_ENABLED } from "./lib/payment-gateway.js";
+import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
@@ -279,7 +279,7 @@ async function triggerAutoRefund(
   }
 
   const [payment] = await db
-    .select({ gateway: payments.gateway, gatewayOrderId: payments.gatewayOrderId })
+    .select({ gateway: payments.gateway, gatewayOrderId: payments.gatewayOrderId, amount: payments.amount, currency: payments.currency })
     .from(payments)
     .where(eq(payments.bookingId, bookingId))
     .limit(1);
@@ -307,21 +307,27 @@ async function triggerAutoRefund(
       }).where(eq(payments.bookingId, bookingId));
       console.info(`[autoRefund] Razorpay refund ${refundId} issued for booking ${bookingId}`);
     } else if (payment.gateway === "NOMOD") {
-      const apiKey    = env.NOMOD_API_KEY;
-      const apiSecret = env.NOMOD_API_SECRET;
-      if (!apiKey || !apiSecret) {
-        console.error("[autoRefund] Nomod credentials not configured");
+      const [bk] = await db.select({ tenantId: bookings.tenantId }).from(bookings).where(eq(bookings.id, bookingId)).limit(1);
+      const apiKey = bk ? await resolveNomodApiKey(env, bk.tenantId) : env.NOMOD_API_KEY;
+      if (!apiKey) {
+        console.error("[autoRefund] Nomod API key not configured; refund manually from the Nomod dashboard");
         return;
       }
-      const { refundId } = await createRefundNomod(
-        { apiKey, apiSecret },
-        { paymentId: gatewayPaymentId, amount, reason: "booking_failed" },
-      );
+      // Refund the full charge in the currency it was taken in (may be AED).
+      const chargeAmount = Number(payment.amount);
+      const outcome = await refundNomodCharge(apiKey, gatewayPaymentId, chargeAmount, "Booking could not be ticketed");
+      if (!outcome.ok) {
+        console.error(`[autoRefund] Nomod refund for booking ${bookingId} not confirmed: ${outcome.error}`);
+        return;
+      }
       await db.update(payments).set({
-        status:    "REFUNDED",
-        updatedAt: new Date(),
+        status:           "REFUNDED",
+        refundedAmount:   chargeAmount.toFixed(2),
+        refundGatewayRef: `nomod:${outcome.refundId}`,
+        refundCompletedAt: new Date(),
+        updatedAt:        new Date(),
       }).where(eq(payments.bookingId, bookingId));
-      console.info(`[autoRefund] Nomod refund ${refundId} issued for booking ${bookingId}`);
+      console.info(`[autoRefund] Nomod refund ${outcome.refundId} issued for booking ${bookingId}`);
     }
   } catch (refundErr) {
     // Refund failure must never swallow the original booking failure — log and continue

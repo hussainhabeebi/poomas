@@ -11,6 +11,7 @@ import { bookings, payments } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { RAZORPAY_ENABLED } from "../lib/payment-gateway.js";
+import { convertAmount, getAedRate } from "../lib/fx.js";
 
 export const paymentRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -45,7 +46,12 @@ paymentRoutes.get("/config", async (c) => {
   const preferred = settings?.defaultGateway === "NOMOD" && nomodConfigured
     ? "NOMOD"
     : razorpayConfigured ? "RAZORPAY" : nomodConfigured ? "NOMOD" : null;
-  return c.json({ defaultGateway: preferred, gateways: { RAZORPAY: razorpayConfigured, NOMOD: nomodConfigured } });
+  const aedRate = await getAedRate(c.env, tenantId);
+  return c.json({
+    defaultGateway: preferred, gateways: { RAZORPAY: razorpayConfigured, NOMOD: nomodConfigured },
+    // Card payments can be made in INR, or in AED at the admin-set rate (INR per 1 AED).
+    currencies: { INR: true, AED: Boolean(nomodConfigured && aedRate) }, aedRate,
+  });
 });
 
 // ── POST /api/payments/checkout ───────────────────────────────────────────────
@@ -83,11 +89,25 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
   }
 
   const settings   = await getTenantPaymentSettings(c.env, tenantId);
-  const amountFull = parseFloat(booking.totalAmount);
   const cur        = currency ?? booking.currency;
+  // Charge in the customer's chosen currency: convert the booking amount (the
+  // booking itself stays in its own currency). Never send one currency's amount
+  // labelled as another.
+  const aedRate    = cur === booking.currency ? null : await getAedRate(c.env, tenantId);
+  const converted  = convertAmount(parseFloat(booking.totalAmount), booking.currency, cur, aedRate);
+  if (converted === null) {
+    throw new HTTPException(400, { message: `Payment in ${cur} isn't available for this booking. Please pay in ${booking.currency}.` });
+  }
+  const amountFull = converted;
+  const fx = cur === booking.currency ? undefined
+    : { bookingAmount: Number(booking.totalAmount), bookingCurrency: booking.currency, rate: aedRate, rateUnit: `${booking.currency} per 1 ${cur}` };
 
   if (gateway === "RAZORPAY" && !RAZORPAY_ENABLED) {
     throw new HTTPException(400, { message: "Razorpay is disabled; pay with Nomod" });
+  }
+
+  if (gateway === "RAZORPAY" && cur !== booking.currency) {
+    throw new HTTPException(400, { message: "Currency conversion is only available for Nomod payments" });
   }
 
   if (gateway === "RAZORPAY") {
@@ -175,10 +195,10 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
       amount: String(amountFull),
       currency: cur as "INR" | "AED" | "USD",
       status: "PENDING",
-      gatewayResponse: { linkId: link.id, linkUrl: link.url },
+      gatewayResponse: { linkId: link.id, linkUrl: link.url, ...(fx ? { fx } : {}) },
     });
 
-    return c.json({ paymentUrl: link.url, orderId: link.id, amount: Number(link.amount ?? amount), currency: link.currency ?? cur });
+    return c.json({ paymentUrl: link.url, orderId: link.id, amount: Number(link.amount ?? amount), currency: link.currency ?? cur, ...(fx ? { fx } : {}) });
   }
 
   throw new HTTPException(400, { message: "Unsupported gateway" });
@@ -272,9 +292,12 @@ paymentRoutes.get("/:bookingId", async (c) => {
   const db        = c.get("db");
   const tenantId  = c.get("tenantId");
   const bookingId = c.req.param("bookingId");
+  if (c.get("userRole") === "CHECKOUT" && c.get("checkoutBookingId") !== bookingId) {
+    throw new HTTPException(403, { message: "Checkout session does not match this booking" });
+  }
 
   const [booking] = await db
-    .select({ id: bookings.id })
+    .select({ id: bookings.id, status: bookings.status, pnr: bookings.pnr, userId: bookings.userId })
     .from(bookings)
     .where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, tenantId)))
     .limit(1);
@@ -296,5 +319,9 @@ paymentRoutes.get("/:bookingId", async (c) => {
     .where(eq(payments.bookingId, bookingId))
     .limit(1);
 
-  return c.json({ bookingId, payment: payment ?? null });
+  // Booking progress lets the payment-result page show "ticketed + PNR" once ready.
+  return c.json({
+    bookingId, payment: payment ?? null,
+    booking: { status: booking.status, pnr: booking.pnr, hasAccount: Boolean(booking.userId) },
+  });
 });

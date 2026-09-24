@@ -153,3 +153,46 @@ export const reissueRequests = pgTable("reissue_requests", {
   processedAt:   timestamp("processed_at",   { withTimezone: true }),
   processedById: text("processed_by_id"),
 });
+
+// Post-booking changes requested with the supplier (currently TripJack cancellations).
+export const bookingAmendments = pgTable("booking_amendments", {
+  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  bookingId: text("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
+  userId:    text("user_id").references(() => users.id),
+  type:      text("type").notNull().default("CANCELLATION"),
+  status:    text("status").notNull().default("SUBMITTED"),  // SUBMITTED | PROCESSING | SUCCESS | REJECTED | FAILED
+  supplier:  text("supplier").notNull().default("TRIPJACK"),
+  supplierAmendmentId: text("supplier_amendment_id"),
+  supplierStatus:      text("supplier_status"),
+  amountPaid:      decimal("amount_paid",      { precision: 14, scale: 2 }).notNull(),
+  supplierCharges: decimal("supplier_charges", { precision: 14, scale: 2 }),
+  refundAmount:    decimal("refund_amount",    { precision: 14, scale: 2 }),
+  currency:        currencyEnum("currency").notNull(),
+  refundMethod:    text("refund_method").notNull().default("WALLET"),  // original payment method: WALLET | NOMOD | MANUAL
+  refundStatus:    text("refund_status").notNull().default("PENDING"), // PENDING | PROCESSING | DONE | FAILED | MANUAL_REQUIRED
+  refundReference: text("refund_reference"),
+  refundError:     text("refund_error"),
+  refundedAt:      timestamp("refunded_at", { withTimezone: true }),
+  quote:                jsonb("quote"),
+  lastSupplierResponse: jsonb("last_supplier_response"),
+  adminNote:     text("admin_note"),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const supportRequests = pgTable("support_requests", {
+  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId:    text("user_id").references(() => users.id),
+  bookingId: text("booking_id").references(() => bookings.id, { onDelete: "set null" }),
+  type:      text("type").notNull(),     // DATE_CHANGE | ADD_BAGGAGE | MEAL_SEAT | NAME_CORRECTION | CANCELLATION_HELP | OTHER
+  message:   text("message").notNull(),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  status:    text("status").notNull().default("OPEN"),  // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  adminNote: text("admin_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -193,6 +193,23 @@ export class TripjackClient {
     });
   }
 
+  // Cancellation charges quote for a whole booking (no change is made).
+  async amendmentCharges(bookingId: string) {
+    return this.request<any>("/oms/v1/air/amendment/amendment-charges", {
+      bookingId, type: "CANCELLATION", remarks: "Charges check before customer cancellation",
+    }, AbortSignal.timeout(20000));
+  }
+
+  async submitCancellation(bookingId: string, remarks: string) {
+    return this.request<any>("/oms/v1/air/amendment/submit-amendment", {
+      bookingId, type: "CANCELLATION", remarks,
+    }, AbortSignal.timeout(20000));
+  }
+
+  async amendmentDetails(amendmentId: string) {
+    return this.request<any>("/oms/v1/air/amendment/amendment-details", { amendmentId }, AbortSignal.timeout(15000));
+  }
+
   async cancel(bookingRef: string) {
     return this.request("/oms/v1/air/amendment/submit-amendment", {
       bookingId: bookingRef,

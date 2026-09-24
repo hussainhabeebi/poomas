@@ -27,6 +27,23 @@ const CURRENCY_LOCALES: Record<string, string> = {
 
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
+// Admin-set INR→AED rate (INR per 1 AED); null when AED payment isn't offered.
+async function fetchAedRate(): Promise<number | null> {
+  try {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
+    const res = await fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" }, next: { revalidate: 300 } });
+    const data = await res.json() as { rates?: { AED?: number | null } };
+    const rate = Number(data.rates?.AED);
+    return Number.isFinite(rate) && rate > 0 ? rate : null;
+  } catch { return null; }
+}
+
+// Price in the currency the customer chose (rounded up like the payment API).
+function inChosenCurrency(price: number, fareCurrency: string, chosen: string | null, aedRate: number | null) {
+  if (chosen === "AED" && fareCurrency === "INR" && aedRate) return { amount: Math.ceil((price / aedRate) * 100 - 1e-9) / 100, currency: "AED", converted: true };
+  return { amount: price, currency: fareCurrency, converted: false };
+}
+
 async function searchFlights(params: SearchParams, sessionId: string | null): Promise<SearchResult> {
   try {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
@@ -75,7 +92,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   let sessionId: string | null = null;
   try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
 
-  const result = await searchFlights(params, sessionId);
+  const [result, aedRate] = await Promise.all([searchFlights(params, sessionId), fetchAedRate()]);
   const requestedCurrency = params.currency ?? null;
   const failingSuppliers = Object.keys(result.supplierErrors ?? {});
   const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
@@ -177,6 +194,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                   key={`${fare.id ?? i}-${i}`}
                   fare={fare}
                   requestedCurrency={requestedCurrency}
+                  aedRate={aedRate}
                   adults={adults}
                   children={children}
                   infants={infants}
@@ -257,7 +275,7 @@ function formatMoney(amount: number, currency: string): string {
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
 }
 
-function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number, children = 0, infants = 0): string {
+function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number, children = 0, infants = 0, payCurrency?: string): string {
   const p = new URLSearchParams({
     fareId:   fare.id ?? "",
     adults:   String(adults),
@@ -277,17 +295,19 @@ function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: nu
     ref:      fare.isRefundable ? "1" : "0",
     bag:      fare.baggage?.checked ?? "15 KG",
   });
+  if (payCurrency) p.set("pc", payCurrency);
   return `/book?${p.toString()}`;
 }
 
-function FareCard({ fare, requestedCurrency, adults, children = 0, infants = 0 }: { fare: any; requestedCurrency: string | null; adults: number; children?: number; infants?: number }) {
+function FareCard({ fare, requestedCurrency, aedRate, adults, children = 0, infants = 0 }: { fare: any; requestedCurrency: string | null; aedRate: number | null; adults: number; children?: number; infants?: number }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
   const fmtDate = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
   const fareCurrency = String(fare.currency || requestedCurrency || "INR").toUpperCase();
   const price = Number(fare.displayPrice ?? fare.totalFare ?? 0);
-  const currencyDiffers = Boolean(requestedCurrency && fareCurrency !== requestedCurrency);
+  const shown = inChosenCurrency(price, fareCurrency, requestedCurrency, aedRate);
+  const currencyDiffers = Boolean(requestedCurrency && shown.currency !== requestedCurrency);
   const isBookable = Boolean(fare.isBookable && fare.supplier !== "GOOGLE_SERP");
   const durationH = Math.floor(fare.duration / 60);
   const durationM = fare.duration % 60;
@@ -350,13 +370,13 @@ function FareCard({ fare, requestedCurrency, adults, children = 0, infants = 0 }
 
         {/* Price + book */}
         <div className="fare-card-v2-price-col">
-          <div className="fare-card-v2-price">{formatMoney(price, fareCurrency)}</div>
+          <div className="fare-card-v2-price">{formatMoney(shown.amount, shown.currency)}</div>
           <div className="fare-card-v2-price-note">
-            {fareCurrency}{currencyDiffers ? " · supplier" : ""}
+            {shown.converted ? `≈ ${formatMoney(price, fareCurrency)}` : `${fareCurrency}${currencyDiffers ? " · supplier" : ""}`}
             {!fare.isBookable && " · indicative"}
           </div>
           {isBookable ? (
-            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants)} className="fare-card-v2-book">
+            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined)} className="fare-card-v2-book">
               Book Now
             </a>
           ) : (

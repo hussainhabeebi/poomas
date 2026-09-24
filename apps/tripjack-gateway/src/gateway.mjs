@@ -15,6 +15,8 @@ export const ROUTES = new Map([
   ["/oms/v1/air/book", "/oms/v1/air/book"],
   ["/oms/v1/booking-details", "/oms/v1/booking-details"],
   ["/oms/v1/air/amendment/submit-amendment", "/oms/v1/air/amendment/submit-amendment"],
+  ["/oms/v1/air/amendment/amendment-charges", "/oms/v1/air/amendment/amendment-charges"],
+  ["/oms/v1/air/amendment/amendment-details", "/oms/v1/air/amendment/amendment-details"],
   // Legacy paths kept for backwards compatibility
   ["/air-fare-detail/v2", "/fms/v2/farerule"],
   ["/air-book/v2", "/oms/v1/air/book"],

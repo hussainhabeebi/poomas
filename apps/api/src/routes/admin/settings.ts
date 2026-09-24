@@ -47,6 +47,8 @@ const paymentsSchema = z.object({
     environment:   z.enum(["sandbox", "production"]).default("production"),
     allowTabby:    z.boolean().default(true),
     allowTamara:   z.boolean().default(true),
+    // INR per 1 AED, used to charge AED to customers who choose AED. Empty/null = AED payment off.
+    aedRate:       z.number().positive().max(1000).nullable().optional(),
   }).optional(),
   defaultGateway: z.enum(["RAZORPAY", "NOMOD"]).default("NOMOD"),
 });
@@ -108,6 +110,7 @@ settingsAdminRoutes.put("/payments", zValidator("json", paymentsSchema), async (
       environment:   body.nomod.environment,
       allowTabby:    body.nomod.allowTabby,
       allowTamara:   body.nomod.allowTamara,
+      aedRate:       body.nomod.aedRate === undefined ? (existing as any)?.nomod?.aedRate ?? null : body.nomod.aedRate,
     } : (existing as any)?.nomod,
   };
   // Nomod is the only gateway accepting new payments.

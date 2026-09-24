@@ -66,6 +66,9 @@ export default function BookPage() {
   const [pendingPayment, setPendingPayment] = useState<{ bookingId: string; checkoutToken: string } | null>(null);
   // Offered when a signed-in customer's wallet covers the whole (INR) fare.
   const [walletOffer, setWalletOffer] = useState<{ amount: number; balance: number } | null>(null);
+  // Card payment currency: INR, or AED at the admin-set rate (INR per 1 AED).
+  const [payCurrency, setPayCurrency] = useState<"INR" | "AED">("INR");
+  const [aedRate, setAedRate] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
@@ -112,6 +115,21 @@ export default function BookPage() {
       cabinChecked:  q.get("bag") ?? "15 KG",
     });
 
+    // Offer AED when the admin has set a rate; start with the customer's chosen currency.
+    let wanted = q.get("pc");
+    if (!wanted) { try { wanted = localStorage.getItem("pref_currency"); } catch {} }
+    if ((q.get("cur") ?? "INR") === "INR") {
+      fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" } })
+        .then((r) => r.json())
+        .then((d: { rates?: { AED?: number | null } }) => {
+          const rate = Number(d.rates?.AED);
+          if (Number.isFinite(rate) && rate > 0) {
+            setAedRate(rate);
+            if (wanted === "AED") setPayCurrency("AED");
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
@@ -191,6 +209,15 @@ export default function BookPage() {
     } catch { return new Intl.NumberFormat("en"); }
   }, [fare?.currency]);
 
+  // Amount shown in the chosen card currency (rounded up like the payment API).
+  const shownTotal = (inr: number) => {
+    if (payCurrency === "AED" && aedRate && fare?.currency === "INR") {
+      const aed = Math.ceil((inr / aedRate) * 100 - 1e-9) / 100;
+      return `AED ${aed.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    return money.format(inr);
+  };
+
   const upd = (i: number, k: keyof Passenger, v: string) =>
     setPassengers((p) => p.map((x, n) => n === i ? { ...x, [k]: v } : x));
 
@@ -201,7 +228,7 @@ export default function BookPage() {
     const res = await fetch(`${apiUrl}/api/payments/checkout`, {
       method:  "POST",
       headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas", "X-Checkout-Token": checkoutToken },
-      body:    JSON.stringify({ bookingId, gateway: "NOMOD" }),
+      body:    JSON.stringify({ bookingId, gateway: "NOMOD", ...(payCurrency === "AED" && aedRate ? { currency: "AED" } : {}) }),
     }).catch(() => null);
     const data = res ? await res.json().catch(() => ({})) as { paymentUrl?: string; error?: string } : {};
     if (!res?.ok || !data.paymentUrl) {
@@ -469,8 +496,20 @@ export default function BookPage() {
         <section className="card flight">
           <div className="fh">
             <div><b>{fare.airlineName}</b><span>{fare.flightNumber}</span></div>
-            <strong>{money.format(fare.totalFare)}</strong>
+            <strong>{shownTotal(fare.totalFare)}</strong>
           </div>
+          {aedRate && fare.currency === "INR" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
+              <span style={{ color: "#64748b" }}>Pay by card in</span>
+              {(["INR", "AED"] as const).map((cur) => (
+                <button key={cur} type="button" onClick={() => setPayCurrency(cur)} disabled={submitting}
+                  style={{ border: `1.5px solid ${payCurrency === cur ? "#E31E24" : "#e2e8f0"}`, background: payCurrency === cur ? "#fff1f2" : "#fff", color: "#0f172a", borderRadius: 20, padding: "4px 12px", fontWeight: 700, cursor: "pointer" }}>
+                  {cur === "INR" ? "₹ INR" : "AED"}
+                </button>
+              ))}
+              {payCurrency === "AED" && <span style={{ color: "#64748b" }}>≈ {money.format(fare.totalFare)} · 1 AED = ₹{aedRate}</span>}
+            </div>
+          )}
           <div className="route">
             <div><b>{t(fare.departureTime)}</b><span>{fare.origin}</span></div>
             <div className="plane">✈</div>
@@ -581,7 +620,7 @@ export default function BookPage() {
         <div className="pay">
           <div>
             <span>Total</span>
-            <b>{fare ? money.format(fare.totalFare) : "—"}</b>
+            <b>{fare ? shownTotal(fare.totalFare) : "—"}</b>
           </div>
           <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
             {submitting ? (walletOffer ? "Paying from wallet…" : pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : walletOffer ? `Pay ₹${walletOffer.amount.toLocaleString("en-IN")} from wallet` : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}

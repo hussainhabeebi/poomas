@@ -251,7 +251,7 @@ authRoutes.post("/otp/request", zValidator("json", otpSchema), async (c) => {
   return c.json({ ok: true, message: "OTP sent if account exists" });
 });
 
-async function pbkdf2HashPassword(password: string): Promise<string> {
+export async function pbkdf2HashPassword(password: string): Promise<string> {
   const iterations = 100_000;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await pbkdf2Hash(password, salt, iterations);
@@ -259,7 +259,7 @@ async function pbkdf2HashPassword(password: string): Promise<string> {
 }
 
 // Password hashing/verification using Web Crypto (PBKDF2 — no native argon2 on CF Workers)
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   // Hash format: pbkdf2:sha256:<iterations>:<salt_hex>:<hash_hex>
   const parts = hash.split(":");
   if (parts.length !== 5 || parts[0] !== "pbkdf2") return false;

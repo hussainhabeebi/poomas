@@ -75,7 +75,7 @@ function PaymentSettings() {
   const [s, setS] = useState({
     defaultGateway: "NOMOD" as "RAZORPAY" | "NOMOD",
     razorpay: { enabled: false, keyId: "", keySecret: "", webhookSecret: "" },
-    nomod:    { enabled: false, apiKey: "", apiSecret: "", webhookSecret: "", environment: "production" as "sandbox" | "production", allowTabby: true, allowTamara: true, configured: false },
+    nomod:    { enabled: false, apiKey: "", apiSecret: "", webhookSecret: "", environment: "production" as "sandbox" | "production", allowTabby: true, allowTamara: true, configured: false, aedRate: null as number | null },
   });
 
   useEffect(() => {
@@ -158,6 +158,18 @@ function PaymentSettings() {
                   <label style={checkStyle}><input type="checkbox" checked={s.nomod.allowTabby} onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, allowTabby: e.target.checked } }))} /> Tabby</label>
                   <label style={checkStyle}><input type="checkbox" checked={s.nomod.allowTamara} onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, allowTamara: e.target.checked } }))} /> Tamara</label>
                 </div>
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <Label>AED payment rate (INR per 1 AED)</Label>
+                <input type="number" min="1" step="0.0001" placeholder="e.g. 23.95 — leave empty to accept INR only"
+                  value={s.nomod.aedRate ?? ""}
+                  onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, aedRate: e.target.value === "" ? null : Number(e.target.value) } }))}
+                  style={inputStyle} />
+                <Hint>
+                  TripJack fares are in INR. Customers who choose AED pay the INR price ÷ this rate (rounded up), charged in AED on Nomod.
+                  Include any FX margin in the rate. Leave empty to disable AED payment.
+                  {s.nomod.aedRate ? ` Example: ₹10,000 → AED ${(Math.ceil((10000 / s.nomod.aedRate) * 100) / 100).toFixed(2)}.` : ""}
+                </Hint>
               </div>
               <div style={{ gridColumn: "span 2" }}>
                 <Label>Webhook Secret</Label>

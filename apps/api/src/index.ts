@@ -27,13 +27,15 @@ import { whatsappRoutes }      from "./routes/whatsapp.js";
 import { partnerRoutes }       from "./routes/partner.js";
 import { profileRoutes }       from "./routes/profile.js";
 import { customerWalletRoutes } from "./routes/customer-wallet.js";
+import { customerTripRoutes, guestTripRoutes } from "./routes/trips.js";
+import { customerAccountRoutes, customerSupportRoutes, createGuestSupportRequest } from "./routes/customer-account.js";
 
 export { TenantRateLimiter };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", logger());
 app.use("*", secureHeaders());
-app.use("*", cors({origin:(origin)=>origin,credentials:true,allowMethods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowHeaders:["Content-Type","Authorization","X-Tenant-ID","X-API-Key","x-tenant-slug","X-Session-ID","X-Channel","X-POOMAS-INTEGRATION-KEY","X-Checkout-Token"]}));
+app.use("*", cors({origin:(origin)=>origin,credentials:true,allowMethods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowHeaders:["Content-Type","Authorization","X-Tenant-ID","X-API-Key","x-tenant-slug","X-Session-ID","X-Channel","X-POOMAS-INTEGRATION-KEY","X-Checkout-Token","X-Trip-Token"]}));
 app.get("/health",(c)=>c.json({status:"ok",env:c.env.ENVIRONMENT,worker:"poomas-api",timestamp:new Date().toISOString()}));
 app.use("*", resolveTenant);
 app.use("/api/*", rateLimitMiddleware);
@@ -47,6 +49,9 @@ app.route("/api/duffel-sandbox", duffelSandboxRoutes);
 app.route("/api/book",           bookDirectRoutes);
 app.route("/api/integrations",   integrationRoutes);
 app.route("/api/partner/v1",    partnerRoutes);
+// Guest "find my booking" — authorised by a short-lived signed trip token.
+app.route("/api/trips",          guestTripRoutes);
+app.post("/api/trips/support",   createGuestSupportRequest);
 
 // Checkout token verification — validated by the signed JWT token itself
 app.route("/api/checkout",       checkoutRoutes);
@@ -83,6 +88,9 @@ app.route("/api/wallet",   walletRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/admin",    adminRoutes);
 app.route("/api/profile/wallet", customerWalletRoutes);
+app.route("/api/profile/trips",   customerTripRoutes);
+app.route("/api/profile/account", customerAccountRoutes);
+app.route("/api/profile/support", customerSupportRoutes);
 app.route("/api/profile",  profileRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
