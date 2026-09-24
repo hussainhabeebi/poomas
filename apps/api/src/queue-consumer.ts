@@ -426,7 +426,8 @@ async function handlePaymentCaptured(
       contactEmail:  booking.contactEmail ?? "",
       contactPhone:  booking.contactPhone ?? "",
       paymentRef:    data.gatewayPaymentId,
-      paymentAmount: Number(booking.totalAmount),
+      // TripJack must be paid its reviewed net fare; totalAmount includes our markup.
+      paymentAmount: Math.round((Number(booking.totalAmount) - Number(booking.markup ?? 0)) * 100) / 100,
       passengers: paxRows.map((p) => ({
         type:           p.passengerType as "ADULT" | "CHILD" | "INFANT",
         firstName:      p.firstName,
