@@ -126,7 +126,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
       // waitUntil: a bare promise can be cancelled once the response is sent.
-      c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+      runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
         httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
         level: "ERROR", requestId: err?.requestId ?? requestId,
         requestSummary: { fareId: body.fareId, supplierErrorCodes: err?.supplierErrorCodes },
@@ -378,4 +378,10 @@ async function customerPrice(
     console.error("[book] markup unavailable; charging supplier amount", err);
     return supplierAmount;
   }
+}
+
+// Keeps background work alive after the response when a Worker execution
+// context exists (always in production); falls back to a detached promise.
+function runInBackground(c: { executionCtx: { waitUntil(p: Promise<unknown>): void } }, work: Promise<unknown>) {
+  try { c.executionCtx.waitUntil(work); } catch { void work; }
 }
