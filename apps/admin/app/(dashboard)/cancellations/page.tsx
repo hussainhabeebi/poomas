@@ -5,12 +5,19 @@ import { API, apiHeaders } from "../../../lib/api";
 interface Row {
   id: string; status: string; supplierStatus: string | null; supplierAmendmentId: string | null;
   amountPaid: string; supplierCharges: string | null; refundAmount: string | null; currency: string;
-  refundMethod: string; refundedAt: string | null; adminNote: string | null; createdAt: string; lastCheckedAt: string | null;
+  refundMethod: string; refundStatus: string; refundReference: string | null; refundError: string | null;
+  refundedAt: string | null; adminNote: string | null; createdAt: string; lastCheckedAt: string | null;
   bookingId: string; pnr: string | null; origin: string; destination: string; departureDate: string | null;
   contactEmail: string | null; customerName: string | null;
 }
 
 const STATUS_COLOR: Record<string, string> = { SUBMITTED: "#fbbf24", PROCESSING: "#fbbf24", SUCCESS: "#4ade80", REJECTED: "#f87171", FAILED: "#f87171" };
+const REFUND_STATUS: Record<string, { label: string; color: string }> = {
+  PENDING: { label: "Refund pending", color: "#94a3b8" }, PROCESSING: { label: "Refund in progress", color: "#fbbf24" },
+  DONE: { label: "Refunded", color: "#4ade80" }, FAILED: { label: "Refund failed — retry or refund manually", color: "#f87171" },
+  MANUAL_REQUIRED: { label: "Refund manually (check provider first)", color: "#f87171" },
+};
+const METHOD: Record<string, string> = { WALLET: "wallet", NOMOD: "card via Nomod", MANUAL: "manual" };
 const money = (v: string | null, cur: string) => v === null ? "—" : `${cur === "INR" ? "₹" : cur + " "}${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 export default function CancellationsPage() {
@@ -41,7 +48,12 @@ export default function CancellationsPage() {
     } catch (e: any) { setError(e.message); } finally { setBusyId(""); }
   }
 
-  function resolve(r: Row, action: "MARK_SUCCESS" | "MARK_REJECTED" | "MARK_REFUNDED_MANUALLY") {
+  function resolve(r: Row, action: "MARK_SUCCESS" | "MARK_REJECTED" | "MARK_REFUNDED_MANUALLY" | "RETRY_REFUND") {
+    if (action === "RETRY_REFUND") {
+      if (!confirm(`Retry the ${METHOD[r.refundMethod] ?? r.refundMethod} refund of ${money(r.refundAmount, r.currency)}? Only do this if it was NOT already refunded in the provider's dashboard.`)) return;
+      act(r.id, "resolve", { action, note: "Admin retry" });
+      return;
+    }
     let refundAmount: number | undefined;
     if (action === "MARK_SUCCESS" || action === "MARK_REFUNDED_MANUALLY") {
       const v = prompt(action === "MARK_SUCCESS" ? "Refund amount confirmed by TripJack (₹):" : "Refund amount paid manually (₹, optional):", r.refundAmount ?? "");
@@ -58,7 +70,7 @@ export default function CancellationsPage() {
     <div>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", marginBottom: 8 }}>Cancellations</h1>
       <p style={{ color: "#64748b", fontSize: 14, marginBottom: 16 }}>
-        Customer cancellations submitted to TripJack. Status is re-checked when the customer opens the booking or when you press Refresh; successful cancellations refund the customer's wallet automatically.
+        Customer cancellations submitted to TripJack. Status is re-checked when the customer opens the booking or when you press Refresh. Successful cancellations are refunded automatically to the original payment method: wallet payments to the wallet, card payments through Nomod.
       </p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
         {["", "SUBMITTED", "PROCESSING", "SUCCESS", "REJECTED", "FAILED"].map((s) => (
@@ -82,19 +94,29 @@ export default function CancellationsPage() {
                 <span>Paid {money(r.amountPaid, r.currency)}</span>
                 <span>Charges {money(r.supplierCharges, r.currency)}</span>
                 <span>Refund {money(r.refundAmount, r.currency)}</span>
-                <span>{r.refundedAt ? `Refunded (${r.refundMethod.toLowerCase()}) ${new Date(r.refundedAt).toLocaleDateString("en-IN")}` : "Not refunded yet"}</span>
+                {r.status === "SUCCESS" && (
+                  <span style={{ color: REFUND_STATUS[r.refundStatus]?.color ?? "#94a3b8", fontWeight: 700 }}>
+                    {REFUND_STATUS[r.refundStatus]?.label ?? r.refundStatus} · {METHOD[r.refundMethod] ?? r.refundMethod}
+                    {r.refundedAt ? ` · ${new Date(r.refundedAt).toLocaleDateString("en-IN")}` : ""}
+                  </span>
+                )}
                 <span style={{ color: "#64748b" }}>Amendment {r.supplierAmendmentId ?? "—"}</span>
               </div>
+              {r.refundError && <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 6 }}>{r.refundError}</div>}
+              {r.refundReference && <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6, fontFamily: "monospace" }}>Refund ref {r.refundReference}</div>}
               {r.adminNote && <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8 }}>{r.adminNote}</div>}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {["SUBMITTED", "PROCESSING", "SUCCESS"].includes(r.status) && !r.refundedAt && (
+                {["SUBMITTED", "PROCESSING"].includes(r.status) && (
                   <button disabled={busyId === r.id} onClick={() => act(r.id, "refresh")} style={btn}>Refresh from TripJack</button>
                 )}
                 {["SUBMITTED", "PROCESSING"].includes(r.status) && <>
                   <button disabled={busyId === r.id} onClick={() => resolve(r, "MARK_SUCCESS")} style={btnGhost}>Mark cancelled + refund</button>
                   <button disabled={busyId === r.id} onClick={() => resolve(r, "MARK_REJECTED")} style={btnGhost}>Mark rejected</button>
                 </>}
-                {r.status === "SUCCESS" && !r.refundedAt && (
+                {r.status === "SUCCESS" && ["PENDING", "FAILED"].includes(r.refundStatus) && (
+                  <button disabled={busyId === r.id} onClick={() => resolve(r, "RETRY_REFUND")} style={btn}>Retry refund</button>
+                )}
+                {r.status === "SUCCESS" && ["PENDING", "FAILED", "MANUAL_REQUIRED"].includes(r.refundStatus) && (
                   <button disabled={busyId === r.id} onClick={() => resolve(r, "MARK_REFUNDED_MANUALLY")} style={btnGhost}>Mark refunded manually</button>
                 )}
                 <span style={{ color: "#64748b", fontSize: 11, alignSelf: "center", fontFamily: "monospace" }}>Booking {r.bookingId.slice(0, 8)}</span>

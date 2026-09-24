@@ -16,7 +16,12 @@ CREATE TABLE IF NOT EXISTS booking_amendments (
   supplier_charges      numeric(14, 2),                    -- airline + supplier cancellation charges
   refund_amount         numeric(14, 2),                    -- what the customer gets back
   currency              currency NOT NULL,
-  refund_method         text NOT NULL DEFAULT 'WALLET',    -- WALLET | MANUAL
+  -- Refund goes back to the original payment method: WALLET | NOMOD | MANUAL
+  refund_method         text NOT NULL DEFAULT 'WALLET',
+  -- PENDING → PROCESSING → DONE | FAILED (retryable) | MANUAL_REQUIRED (outcome unknown / no automatic route)
+  refund_status         text NOT NULL DEFAULT 'PENDING',
+  refund_reference      text,
+  refund_error          text,
   refunded_at           timestamptz,
   quote                 jsonb,
   last_supplier_response jsonb,

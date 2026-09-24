@@ -8,10 +8,11 @@
 import type { Context } from "hono";
 import { TripjackClient } from "@poomas/suppliers";
 import { bookings, bookingPassengers, payments, bookingAmendments } from "@poomas/db/schema";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { resolveFlightSuppliers } from "../routes/search.js";
 import { creditWallet, getOrCreateCustomerWallet, roundMoney } from "./customer-wallet.js";
+import { refundNomodCharge, resolveNomodApiKey } from "./payment-gateway.js";
 import { logSupplierCall } from "./supplier-logger.js";
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -38,8 +39,8 @@ export async function loadTrip(db: Variables["db"], tenantId: string, bookingId:
       firstName: bookingPassengers.firstName, lastName: bookingPassengers.lastName,
     }).from(bookingPassengers).where(eq(bookingPassengers.bookingId, bookingId)),
     db.select({
-      id: payments.id, gateway: payments.gateway, amount: payments.amount, currency: payments.currency,
-      status: payments.status, createdAt: payments.createdAt,
+      id: payments.id, gateway: payments.gateway, gatewayPaymentId: payments.gatewayPaymentId, amount: payments.amount,
+      currency: payments.currency, status: payments.status, createdAt: payments.createdAt,
     }).from(payments).where(eq(payments.bookingId, bookingId)),
     db.select().from(bookingAmendments).where(eq(bookingAmendments.bookingId, bookingId)).orderBy(desc(bookingAmendments.createdAt)),
   ]);
@@ -139,7 +140,9 @@ export interface CancellationQuote {
   serviceFee: number;       // our markup, non-refundable
   supplierFare: number;     // what TripJack was paid
   supplierCharges: number;  // airline + TripJack cancellation charges
-  refundAmount: number;     // what the customer gets back (to wallet)
+  refundAmount: number;     // what the customer gets back
+  refundMethod: RefundMethod;
+  refundTo: string;         // human description of where the refund goes
   createdAt: string;
 }
 
@@ -170,7 +173,7 @@ function num(v: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-export function buildQuote(booking: Booking, parsed: { charges: number; refund: number }): CancellationQuote {
+export function buildQuote(booking: Booking, parsed: { charges: number; refund: number }, refundMethod: RefundMethod): CancellationQuote {
   const amountPaid = Number(booking.totalAmount);
   const serviceFee = Number(booking.markup ?? 0);
   const supplierFare = roundMoney(amountPaid - serviceFee);
@@ -178,7 +181,8 @@ export function buildQuote(booking: Booking, parsed: { charges: number; refund: 
   const refundAmount = roundMoney(Math.min(Math.max(parsed.refund, 0), supplierFare));
   return {
     bookingId: booking.id, currency: booking.currency, amountPaid, serviceFee, supplierFare,
-    supplierCharges: roundMoney(parsed.charges), refundAmount, createdAt: new Date().toISOString(),
+    supplierCharges: roundMoney(parsed.charges), refundAmount, refundMethod, refundTo: REFUND_METHOD_LABEL[refundMethod],
+    createdAt: new Date().toISOString(),
   };
 }
 
@@ -193,7 +197,7 @@ export function mapAmendmentStatus(raw: any): { status: "PROCESSING" | "SUCCESS"
 // settles the refund when it succeeds. Safe to call from any page view.
 export async function syncCancellation(c: Ctx, amendment: Amendment): Promise<Amendment> {
   if (!["SUBMITTED", "PROCESSING"].includes(amendment.status) || !amendment.supplierAmendmentId) {
-    return amendment.status === "SUCCESS" && !amendment.refundedAt ? (await settleRefund(c.get("db"), amendment)) ?? amendment : amendment;
+    return amendment.status === "SUCCESS" && amendment.refundStatus === "PENDING" ? (await settleRefund(c.get("db"), c.env, amendment)) ?? amendment : amendment;
   }
   if (amendment.lastCheckedAt && Date.now() - amendment.lastCheckedAt.getTime() < STATUS_RECHECK_MS) return amendment;
 
@@ -220,32 +224,86 @@ export async function syncCancellation(c: Ctx, amendment: Amendment): Promise<Am
 
   if (mapped.status === "SUCCESS") {
     await db.update(bookings).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(bookings.id, amendment.bookingId));
-    return (await settleRefund(db, updated)) ?? updated;
+    return (await settleRefund(db, c.env, updated)) ?? updated;
   }
   return updated;
 }
 
-// Pays a successful cancellation's refund into the customer's wallet exactly once.
-export async function settleRefund(db: Variables["db"], amendment: Amendment): Promise<Amendment | null> {
-  if (amendment.status !== "SUCCESS" || amendment.refundedAt || amendment.refundMethod !== "WALLET" || !amendment.userId) return null;
-  const amount = Number(amendment.refundAmount ?? 0);
+type RefundMethod = "WALLET" | "NOMOD" | "MANUAL";
+
+// The refund goes back to how the booking was paid.
+export function originalRefundMethod(paid: { gateway: string; gatewayPaymentId?: string | null } | undefined, hasCustomer: boolean): RefundMethod {
+  if (paid?.gateway === "WALLET" && hasCustomer) return "WALLET";
+  if (paid?.gateway === "NOMOD" && paid.gatewayPaymentId) return "NOMOD";
+  return "MANUAL";
+}
+
+export const REFUND_METHOD_LABEL: Record<RefundMethod, string> = {
+  WALLET: "your POOMAS wallet (instant)",
+  NOMOD:  "your original card / payment method (usually 5–10 working days)",
+  MANUAL: "your original payment method (our team will process it)",
+};
+
+// Refunds a successful cancellation to the original payment method, once.
+// PENDING → PROCESSING (atomic claim) → DONE | FAILED | MANUAL_REQUIRED.
+// `retryFailed` lets an admin retry a FAILED refund; MANUAL_REQUIRED is never retried
+// automatically because the provider may already have paid it.
+export async function settleRefund(
+  db: Variables["db"],
+  env: Pick<Env, "TENANT_CACHE_KV" | "NOMOD_API_KEY">,
+  amendment: Amendment,
+  opts: { retryFailed?: boolean } = {},
+): Promise<Amendment | null> {
+  const allowed = opts.retryFailed ? ["PENDING", "FAILED"] : ["PENDING"];
+  if (amendment.status !== "SUCCESS" || !allowed.includes(amendment.refundStatus)) return null;
+
+  const [booking] = await db.select({ userId: bookings.userId }).from(bookings).where(eq(bookings.id, amendment.bookingId)).limit(1);
+  const [paid] = await db.select({ gateway: payments.gateway, gatewayPaymentId: payments.gatewayPaymentId })
+    .from(payments).where(and(eq(payments.bookingId, amendment.bookingId), eq(payments.status, "SUCCESS"))).limit(1);
+  const method = originalRefundMethod(paid, Boolean(booking?.userId));
+
   const [claimed] = await db.update(bookingAmendments)
-    .set({ refundedAt: new Date(), updatedAt: new Date() })
-    .where(and(eq(bookingAmendments.id, amendment.id), isNull(bookingAmendments.refundedAt), eq(bookingAmendments.status, "SUCCESS")))
+    .set({ refundStatus: "PROCESSING", refundMethod: method, refundError: null, updatedAt: new Date() })
+    .where(and(eq(bookingAmendments.id, amendment.id), eq(bookingAmendments.status, "SUCCESS"), inArray(bookingAmendments.refundStatus, allowed)))
     .returning();
   if (!claimed) return null;
-  if (amount > 0) {
-    const wallet = await getOrCreateCustomerWallet(db, amendment.tenantId, amendment.userId);
+
+  const amount = roundMoney(Math.min(Number(claimed.refundAmount ?? 0), Number(claimed.amountPaid)));
+  const finish = async (fields: Partial<typeof bookingAmendments.$inferInsert>) => {
+    const [row] = await db.update(bookingAmendments).set({ ...fields, updatedAt: new Date() }).where(eq(bookingAmendments.id, claimed.id)).returning();
+    return row;
+  };
+  const done = async (reference: string) => {
+    const paidTotal = Number(claimed.amountPaid);
+    await db.update(payments)
+      .set({ status: amount >= paidTotal ? "REFUNDED" : "PARTIAL_REFUND", refundedAmount: amount.toFixed(2), refundGatewayRef: reference, refundCompletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(payments.bookingId, claimed.bookingId), eq(payments.status, "SUCCESS")));
+    await db.update(bookings).set({ status: "REFUNDED", updatedAt: new Date() }).where(eq(bookings.id, claimed.bookingId));
+    return finish({ refundStatus: "DONE", refundReference: reference, refundedAt: new Date() });
+  };
+
+  if (amount <= 0) return done("no-refund-due");
+
+  if (method === "WALLET") {
+    const wallet = await getOrCreateCustomerWallet(db, claimed.tenantId, booking!.userId!);
     await creditWallet(db, wallet.id, amount, "REFUND_CREDIT", {
-      bookingId: amendment.bookingId, note: `Cancellation refund for booking ${amendment.bookingId.slice(0, 8)}`,
+      bookingId: claimed.bookingId, note: `Cancellation refund for booking ${claimed.bookingId.slice(0, 8)}`,
     });
+    return done(`wallet:${wallet.id}`);
   }
-  const paid = Number(amendment.amountPaid);
-  await db.update(payments)
-    .set({ status: amount >= paid ? "REFUNDED" : "PARTIAL_REFUND", refundedAmount: amount.toFixed(2), refundCompletedAt: new Date(), updatedAt: new Date() })
-    .where(and(eq(payments.bookingId, amendment.bookingId), eq(payments.status, "SUCCESS")));
-  await db.update(bookings).set({ status: "REFUNDED", updatedAt: new Date() }).where(eq(bookings.id, amendment.bookingId));
-  return claimed;
+
+  if (method === "NOMOD") {
+    const apiKey = await resolveNomodApiKey(env, claimed.tenantId);
+    if (!apiKey) return finish({ refundStatus: "MANUAL_REQUIRED", refundError: "Nomod API key is not configured; refund from the Nomod dashboard." });
+    const outcome = await refundNomodCharge(apiKey, paid!.gatewayPaymentId!, amount, `Cancellation of booking ${claimed.bookingId.slice(0, 8)}`);
+    if (outcome.ok) return done(`nomod:${outcome.refundId}`);
+    console.error(`[refund] Nomod refund for ${claimed.bookingId}:`, outcome.error);
+    return outcome.definite
+      ? finish({ refundStatus: "FAILED", refundError: `Nomod HTTP ${outcome.httpStatus}: ${outcome.error}` })
+      : finish({ refundStatus: "MANUAL_REQUIRED", refundError: `No response from Nomod (${outcome.error}). Check the Nomod dashboard before retrying.` });
+  }
+
+  return finish({ refundStatus: "MANUAL_REQUIRED", refundError: `Paid via ${paid?.gateway ?? "unknown"}: refund manually to the original payment method.` });
 }
 
 export function logCancellationCall(c: Ctx, entry: { endpoint: string; level: "INFO" | "WARN" | "ERROR"; bookingId: string; summary?: Record<string, unknown>; snippet?: unknown; errorMessage?: string; errorCode?: string }) {
@@ -268,11 +326,11 @@ export function publicTrip(trip: NonNullable<Awaited<ReturnType<typeof loadTrip>
     totalAmount: Number(b.totalAmount), serviceFee: Number(b.markup ?? 0),
     contactEmail: b.contactEmail, contactPhone: b.contactPhone, createdAt: b.createdAt,
     passengers: trip.passengers,
-    payments: trip.payments.map((p) => ({ ...p, amount: Number(p.amount) })),
+    payments: trip.payments.map(({ gatewayPaymentId: _internal, ...p }) => ({ ...p, amount: Number(p.amount) })),
     cancellations: trip.amendments.filter((a) => a.type === "CANCELLATION").map((a) => ({
       id: a.id, status: a.status, supplierCharges: a.supplierCharges === null ? null : Number(a.supplierCharges),
       refundAmount: a.refundAmount === null ? null : Number(a.refundAmount), refundMethod: a.refundMethod,
-      refundedAt: a.refundedAt, createdAt: a.createdAt,
+      refundStatus: a.refundStatus, refundedAt: a.refundedAt, createdAt: a.createdAt,
     })),
     itinerary,
     eticketAvailable: ["CONFIRMED", "TICKETED"].includes(b.status),

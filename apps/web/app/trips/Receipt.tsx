@@ -15,7 +15,7 @@ export default function Receipt({ mode, id }: { mode: "customer" | "guest"; id?:
   if (!trip) return <main className="page-container" style={{ padding: 24 }}>Loading…</main>;
 
   const fare = trip.totalAmount - trip.serviceFee;
-  const refunds = trip.cancellations.filter((c: any) => c.refundedAt);
+  const refunds = trip.cancellations.filter((c: any) => c.refundStatus === "DONE" && c.refundedAt);
   const seg = trip.itinerary?.segments?.[0];
   return (
     <main className="page-container" style={{ padding: "24px 16px", maxWidth: 720 }}>
@@ -45,7 +45,7 @@ export default function Receipt({ mode, id }: { mode: "customer" | "guest"; id?:
             {trip.serviceFee > 0 && <tr><td style={td}>Service fee</td><td style={tdR}>{inr(trip.serviceFee, trip.currency)}</td></tr>}
             <tr><td style={{ ...td, fontWeight: 800 }}>Total paid</td><td style={{ ...tdR, fontWeight: 800 }}>{inr(trip.totalAmount, trip.currency)}</td></tr>
             {refunds.map((r: any) => (
-              <tr key={r.id}><td style={td}>Refund ({r.refundMethod === "WALLET" ? "to POOMAS wallet" : "manual"}) {new Date(r.refundedAt).toLocaleDateString("en-IN")}</td><td style={tdR}>−{inr(r.refundAmount ?? 0, trip.currency)}</td></tr>
+              <tr key={r.id}><td style={td}>Refund ({r.refundMethod === "WALLET" ? "to POOMAS wallet" : r.refundMethod === "NOMOD" ? "to card via Nomod" : "to original payment method"}) {new Date(r.refundedAt).toLocaleDateString("en-IN")}</td><td style={tdR}>−{inr(r.refundAmount ?? 0, trip.currency)}</td></tr>
             ))}
           </tbody>
         </table>

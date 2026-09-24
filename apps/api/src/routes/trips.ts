@@ -20,7 +20,7 @@ import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { signToken, verifyToken } from "./checkout.js";
 import {
-  QUOTE_TTL, buildQuote, cancellationBlocker, liveItinerary, loadTrip, logCancellationCall,
+  QUOTE_TTL, buildQuote, cancellationBlocker, liveItinerary, loadTrip, logCancellationCall, originalRefundMethod,
   parseCancellationCharges, publicTrip, syncCancellation, tripjackClientFor, type CancellationQuote,
 } from "../lib/trips.js";
 
@@ -106,7 +106,8 @@ customerTripRoutes.post("/:id/cancel/quote", async (c) => {
   if (!parsed) {
     return c.json({ error: "The airline's cancellation charges aren't available online for this ticket. Our team can cancel it for you.", supportSuggested: true }, 422);
   }
-  const quote = buildQuote(trip.booking, parsed);
+  const paid = trip.payments.find((p) => p.status === "SUCCESS");
+  const quote = buildQuote(trip.booking, parsed, originalRefundMethod(paid, Boolean(trip.booking.userId)));
   await c.env.SESSIONS_KV.put(`cancel_quote:${trip.booking.id}`, JSON.stringify({ ...quote, userId: c.get("userId"), raw }), { expirationTtl: QUOTE_TTL });
   return c.json({ quote, validForSeconds: QUOTE_TTL });
 });
@@ -128,7 +129,7 @@ customerTripRoutes.post("/:id/cancel", zValidator("json", z.object({ confirm: z.
   const [amendment] = await db.insert(bookingAmendments).values({
     tenantId: booking.tenantId, bookingId: booking.id, userId, type: "CANCELLATION", status: "SUBMITTED",
     amountPaid: stored.amountPaid.toFixed(2), supplierCharges: stored.supplierCharges.toFixed(2),
-    refundAmount: stored.refundAmount.toFixed(2), currency: booking.currency, refundMethod: "WALLET",
+    refundAmount: stored.refundAmount.toFixed(2), currency: booking.currency, refundMethod: stored.refundMethod,
     quote: { ...stored, raw: undefined },
   }).onConflictDoNothing().returning();
   if (!amendment) throw new HTTPException(409, { message: "A cancellation is already in progress for this booking." });

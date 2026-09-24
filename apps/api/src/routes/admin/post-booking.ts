@@ -10,8 +10,8 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { bookingAmendments, bookings, supportRequests, users } from "@poomas/db/schema";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { bookingAmendments, bookings, payments, supportRequests, users } from "@poomas/db/schema";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { settleRefund, syncCancellation } from "../../lib/trips.js";
 
@@ -24,6 +24,7 @@ cancellationsAdminRoutes.get("/", async (c) => {
     supplierAmendmentId: bookingAmendments.supplierAmendmentId, amountPaid: bookingAmendments.amountPaid,
     supplierCharges: bookingAmendments.supplierCharges, refundAmount: bookingAmendments.refundAmount,
     currency: bookingAmendments.currency, refundMethod: bookingAmendments.refundMethod, refundedAt: bookingAmendments.refundedAt,
+    refundStatus: bookingAmendments.refundStatus, refundReference: bookingAmendments.refundReference, refundError: bookingAmendments.refundError,
     adminNote: bookingAmendments.adminNote, createdAt: bookingAmendments.createdAt, lastCheckedAt: bookingAmendments.lastCheckedAt,
     bookingId: bookings.id, pnr: bookings.pnr, origin: bookings.origin, destination: bookings.destination,
     departureDate: bookings.departureDate, contactEmail: bookings.contactEmail, customerName: users.name,
@@ -50,11 +51,12 @@ cancellationsAdminRoutes.post("/:id/refresh", async (c) => {
   return c.json({ cancellation: updated });
 });
 
-// MARK_SUCCESS          TripJack confirmed outside the API: cancel booking and refund (wallet if the customer has an account)
-// MARK_REJECTED         TripJack rejected: booking stays as it is
-// MARK_REFUNDED_MANUALLY refund was paid outside POOMAS (bank / original payment)
+// MARK_SUCCESS           TripJack confirmed outside the API: cancel booking and refund to the original payment method
+// MARK_REJECTED          TripJack rejected: booking stays as it is
+// RETRY_REFUND           retry a refund the payment provider rejected (FAILED)
+// MARK_REFUNDED_MANUALLY refund was paid outside POOMAS (e.g. from the Nomod dashboard)
 cancellationsAdminRoutes.post("/:id/resolve", zValidator("json", z.object({
-  action:       z.enum(["MARK_SUCCESS", "MARK_REJECTED", "MARK_REFUNDED_MANUALLY"]),
+  action:       z.enum(["MARK_SUCCESS", "MARK_REJECTED", "RETRY_REFUND", "MARK_REFUNDED_MANUALLY"]),
   refundAmount: z.number().min(0).optional(),
   note:         z.string().trim().min(3).max(500),
 })), async (c) => {
@@ -70,12 +72,24 @@ cancellationsAdminRoutes.post("/:id/resolve", zValidator("json", z.object({
     return c.json({ cancellation: u });
   }
 
+  if (action === "RETRY_REFUND") {
+    const u = await settleRefund(db, c.env, a, { retryFailed: true });
+    if (!u) throw new HTTPException(409, { message: "Only a successful cancellation with a pending or failed refund can be retried" });
+    return c.json({ cancellation: u });
+  }
+
   if (action === "MARK_REFUNDED_MANUALLY") {
+    // Not while PROCESSING: an automatic refund may be mid-flight.
     const [u] = await db.update(bookingAmendments).set({
-      refundMethod: "MANUAL", refundedAt: new Date(), adminNote,
+      refundStatus: "DONE", refundedAt: new Date(), refundReference: `manual: ${note}`.slice(0, 200), refundError: null, adminNote,
       ...(refundAmount !== undefined ? { refundAmount: refundAmount.toFixed(2) } : {}), updatedAt: new Date(),
-    }).where(and(eq(bookingAmendments.id, a.id), eq(bookingAmendments.status, "SUCCESS"), isNull(bookingAmendments.refundedAt))).returning();
-    if (!u) throw new HTTPException(409, { message: "Only an unrefunded, successful cancellation can be marked as refunded" });
+    }).where(and(eq(bookingAmendments.id, a.id), eq(bookingAmendments.status, "SUCCESS"),
+      inArray(bookingAmendments.refundStatus, ["PENDING", "FAILED", "MANUAL_REQUIRED"]))).returning();
+    if (!u) throw new HTTPException(409, { message: "Only a successful cancellation whose refund isn't done or in progress can be marked as refunded" });
+    const amount = Number(u.refundAmount ?? 0);
+    await db.update(payments)
+      .set({ status: amount >= Number(u.amountPaid) ? "REFUNDED" : "PARTIAL_REFUND", refundedAmount: amount.toFixed(2), refundGatewayRef: u.refundReference, refundCompletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(payments.bookingId, a.bookingId), eq(payments.status, "SUCCESS")));
     await db.update(bookings).set({ status: "REFUNDED", updatedAt: new Date() }).where(eq(bookings.id, a.bookingId));
     return c.json({ cancellation: u });
   }
@@ -84,13 +98,12 @@ cancellationsAdminRoutes.post("/:id/resolve", zValidator("json", z.object({
   if (refundAmount === undefined) throw new HTTPException(400, { message: "Enter the refund amount confirmed by TripJack" });
   if (refundAmount > Number(a.amountPaid)) throw new HTTPException(400, { message: "Refund can't exceed the amount paid" });
   const [u] = await db.update(bookingAmendments).set({
-    status: "SUCCESS", refundAmount: refundAmount.toFixed(2), adminNote,
-    refundMethod: a.userId ? "WALLET" : "MANUAL", updatedAt: new Date(),
+    status: "SUCCESS", refundAmount: refundAmount.toFixed(2), adminNote, updatedAt: new Date(),
   }).where(and(eq(bookingAmendments.id, a.id), inArray(bookingAmendments.status, ["SUBMITTED", "PROCESSING"]))).returning();
   if (!u) throw new HTTPException(409, { message: `Can't mark a ${a.status} cancellation as successful` });
   await db.update(bookings).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(bookings.id, a.bookingId));
-  const settled = await settleRefund(db, u);
-  return c.json({ cancellation: settled ?? u, refundedToWallet: Boolean(settled) });
+  const settled = await settleRefund(db, c.env, u);
+  return c.json({ cancellation: settled ?? u, refundStatus: settled?.refundStatus ?? u.refundStatus });
 });
 
 export const supportAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();

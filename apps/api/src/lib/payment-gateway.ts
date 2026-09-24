@@ -145,3 +145,48 @@ export async function createRefundNomod(
   const refund = await res.json() as { id: string };
   return { refundId: refund.id };
 }
+
+// ── Nomod refunds for charges paid through a Nomod payment link ─────────────
+//
+// NOTE: Nomod's refund endpoint could not be verified against their public API
+// reference from here. It is kept in one place so it can be corrected quickly.
+// Callers treat anything other than an explicit 2xx as "not refunded", so a
+// wrong endpoint can never mark a refund as paid.
+export const nomodRefundUrl = (chargeId: string) =>
+  `https://api.nomod.com/v1/charges/${encodeURIComponent(chargeId)}/refund`;
+
+export type NomodRefundOutcome =
+  | { ok: true; refundId: string; raw: unknown }
+  | { ok: false; definite: true; httpStatus: number; error: string }   // Nomod answered: nothing refunded
+  | { ok: false; definite: false; error: string };                      // no answer: outcome unknown
+
+export async function refundNomodCharge(apiKey: string, chargeId: string, amount: number, reason: string): Promise<NomodRefundOutcome> {
+  let res: Response;
+  try {
+    res = await fetch(nomodRefundUrl(chargeId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
+      body: JSON.stringify({ amount: amount.toFixed(2), reason }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    return { ok: false, definite: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const text = await res.text().catch(() => "");
+  let body: any = null;
+  try { body = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    return { ok: false, definite: true, httpStatus: res.status, error: (body?.error?.message ?? body?.message ?? text).toString().slice(0, 300) || `HTTP ${res.status}` };
+  }
+  return { ok: true, refundId: String(body?.id ?? body?.refund_id ?? body?.refund?.id ?? chargeId), raw: body };
+}
+
+// Tenant Nomod key: Admin → Settings value first, then the Worker secret.
+export async function resolveNomodApiKey(env: { TENANT_CACHE_KV: { get(k: string): Promise<string | null> }; NOMOD_API_KEY?: string }, tenantId: string): Promise<string> {
+  try {
+    const raw = await env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:payments`);
+    const key = raw ? JSON.parse(raw)?.nomod?.apiKey : undefined;
+    if (key) return key;
+  } catch {}
+  return env.NOMOD_API_KEY ?? "";
+}

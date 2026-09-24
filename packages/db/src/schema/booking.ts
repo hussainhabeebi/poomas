@@ -169,7 +169,10 @@ export const bookingAmendments = pgTable("booking_amendments", {
   supplierCharges: decimal("supplier_charges", { precision: 14, scale: 2 }),
   refundAmount:    decimal("refund_amount",    { precision: 14, scale: 2 }),
   currency:        currencyEnum("currency").notNull(),
-  refundMethod:    text("refund_method").notNull().default("WALLET"),  // WALLET | MANUAL
+  refundMethod:    text("refund_method").notNull().default("WALLET"),  // original payment method: WALLET | NOMOD | MANUAL
+  refundStatus:    text("refund_status").notNull().default("PENDING"), // PENDING | PROCESSING | DONE | FAILED | MANUAL_REQUIRED
+  refundReference: text("refund_reference"),
+  refundError:     text("refund_error"),
   refundedAt:      timestamp("refunded_at", { withTimezone: true }),
   quote:                jsonb("quote"),
   lastSupplierResponse: jsonb("last_supplier_response"),

@@ -9,11 +9,11 @@ interface Trip {
   currency: string; totalAmount: number; serviceFee: number; contactEmail: string | null; contactPhone: string | null; createdAt: string;
   passengers: { id: string; type: string; firstName: string; lastName: string }[];
   payments: { id: string; gateway: string; amount: number; currency: string; status: string; createdAt: string }[];
-  cancellations: { id: string; status: string; supplierCharges: number | null; refundAmount: number | null; refundMethod: string; refundedAt: string | null; createdAt: string }[];
+  cancellations: { id: string; status: string; supplierCharges: number | null; refundAmount: number | null; refundMethod: string; refundStatus: string; refundedAt: string | null; createdAt: string }[];
   itinerary: { supplierStatus?: string; pnr?: string; segments: Segment[]; travellers: { name: string; type?: string; pnr?: string; ticketNumber?: string }[] } | null;
   eticketAvailable: boolean;
 }
-interface Quote { amountPaid: number; serviceFee: number; supplierFare: number; supplierCharges: number; refundAmount: number; currency: string }
+interface Quote { amountPaid: number; serviceFee: number; supplierFare: number; supplierCharges: number; refundAmount: number; currency: string; refundMethod: string; refundTo: string }
 interface SupportReq { id: string; type: string; message: string; status: string; adminNote: string | null; createdAt: string; bookingId: string | null }
 
 const SUPPORT_TYPES: [string, string][] = [
@@ -24,6 +24,8 @@ const CANCEL_LABEL: Record<string, string> = {
   SUBMITTED: "Cancellation requested — confirming with the airline", PROCESSING: "Cancellation in progress with the airline",
   SUCCESS: "Cancelled", REJECTED: "Cancellation was not accepted by the airline", FAILED: "Cancellation request failed",
 };
+
+const REFUND_TO: Record<string, string> = { WALLET: "your POOMAS wallet", NOMOD: "your original card / payment method", MANUAL: "your original payment method" };
 
 const fmtTime = (s: string) => { const d = new Date(s); return isNaN(+d) ? s : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }); };
 const fmtDate = (s: string | null) => { if (!s) return "—"; const d = new Date(s); return isNaN(+d) ? s : d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); };
@@ -116,12 +118,12 @@ export default function TripDetail({ mode, id }: { mode: Mode; id?: string }) {
         <section style={{ ...card, marginTop: 12, borderColor: latestCancel.status === "SUCCESS" ? "#bbf7d0" : latestCancel.status === "REJECTED" || latestCancel.status === "FAILED" ? "#fecaca" : "#fde68a" }}>
           <strong>{CANCEL_LABEL[latestCancel.status] ?? latestCancel.status}</strong>
           <p style={{ margin: "4px 0 0", color: "#475569", fontSize: 14 }}>
-            {latestCancel.status === "SUCCESS" && latestCancel.refundedAt && latestCancel.refundMethod === "WALLET"
-              ? `${inr(latestCancel.refundAmount ?? 0, trip.currency)} refunded to your POOMAS wallet on ${fmtDate(latestCancel.refundedAt)}.`
+            {latestCancel.status === "SUCCESS" && latestCancel.refundStatus === "DONE"
+              ? `${inr(latestCancel.refundAmount ?? 0, trip.currency)} refunded to ${REFUND_TO[latestCancel.refundMethod] ?? "your original payment method"} on ${fmtDate(latestCancel.refundedAt)}.${latestCancel.refundMethod === "NOMOD" ? " It can take 5–10 working days to appear on your statement." : ""}`
               : latestCancel.status === "SUCCESS"
-                ? `Refund of ${inr(latestCancel.refundAmount ?? 0, trip.currency)} is being processed.`
+                ? `Refund of ${inr(latestCancel.refundAmount ?? 0, trip.currency)} to ${REFUND_TO[latestCancel.refundMethod] ?? "your original payment method"} is being processed.`
                 : ["SUBMITTED", "PROCESSING"].includes(latestCancel.status)
-                  ? `Expected refund ${inr(latestCancel.refundAmount ?? 0, trip.currency)} to your wallet once the airline confirms. This page updates automatically.`
+                  ? `Expected refund ${inr(latestCancel.refundAmount ?? 0, trip.currency)} to ${REFUND_TO[latestCancel.refundMethod] ?? "your original payment method"} once the airline confirms. This page updates automatically.`
                   : "Your booking is unchanged. Contact us below if you still want to cancel."}
           </p>
         </section>
@@ -216,8 +218,8 @@ export default function TripDetail({ mode, id }: { mode: Mode; id?: string }) {
               <div style={row}><span>You paid</span><span>{inr(quote.amountPaid, quote.currency)}</span></div>
               <div style={row}><span>Airline & supplier cancellation charges</span><span style={{ color: "#b91c1c" }}>−{inr(quote.supplierCharges, quote.currency)}</span></div>
               {quote.serviceFee > 0 && <div style={row}><span>POOMAS service fee (non-refundable)</span><span style={{ color: "#b91c1c" }}>−{inr(quote.serviceFee, quote.currency)}</span></div>}
-              <div style={{ ...row, fontSize: 17 }}><strong>Refund to your wallet</strong><strong style={{ color: "#166534" }}>{inr(quote.refundAmount, quote.currency)}</strong></div>
-              <p style={{ ...muted, margin: "8px 0" }}>The final refund is confirmed by the airline and credited to your POOMAS wallet as soon as the cancellation is processed. This quote is valid for 10 minutes.</p>
+              <div style={{ ...row, fontSize: 17 }}><strong>Your refund</strong><strong style={{ color: "#166534" }}>{inr(quote.refundAmount, quote.currency)}</strong></div>
+              <p style={{ ...muted, margin: "8px 0" }}>Refunded to {quote.refundTo} once the airline confirms the cancellation. The final amount is confirmed by the airline. This quote is valid for 10 minutes.</p>
               <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14, margin: "8px 0 12px" }}>
                 <input type="checkbox" checked={confirmCancel} onChange={(e) => setConfirmCancel(e.target.checked)} style={{ marginTop: 3 }} />
                 I want to cancel this booking for all travellers. I understand this can't be undone.
@@ -226,7 +228,7 @@ export default function TripDetail({ mode, id }: { mode: Mode; id?: string }) {
                 <button disabled={busy || !confirmCancel} style={{ ...primaryBtnBtn, opacity: busy || !confirmCancel ? .6 : 1 }} onClick={() => run(async () => {
                   const r = await apiCall<{ pending?: boolean; message?: string }>(`/api/profile/trips/${trip.id}/cancel`, { method: "POST", body: JSON.stringify({ confirm: true }) });
                   setQuote(null);
-                  setNotice(r.pending && r.message ? r.message : "Cancellation submitted. We'll credit your refund to your wallet once the airline confirms.");
+                  setNotice(r.pending && r.message ? r.message : `Cancellation submitted. Your refund goes to ${quote?.refundTo ?? "your original payment method"} once the airline confirms.`);
                   await load();
                 })}>{busy ? "Cancelling…" : "Cancel booking"}</button>
                 <button disabled={busy} style={secondaryBtnBtn} onClick={() => setQuote(null)}>Keep my booking</button>
@@ -238,7 +240,7 @@ export default function TripDetail({ mode, id }: { mode: Mode; id?: string }) {
       {mode === "guest" && ticketed && (
         <section style={{ ...card, marginTop: 12 }}>
           <h2 style={h2}>Need to cancel?</h2>
-          <p style={muted}>Online cancellation with instant wallet refund is available when you're signed in to the account used for booking. Otherwise send us a cancellation request below.</p>
+          <p style={muted}>Online cancellation is available when you're signed in to the account used for booking. Otherwise send us a cancellation request below; refunds go back to your original payment method.</p>
         </section>
       )}
 
