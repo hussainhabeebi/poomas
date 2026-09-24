@@ -344,7 +344,7 @@ async function runSearch(
 // Display/payment conversion rate (INR per 1 AED) set by admin; null = AED payment off.
 searchRoutes.get("/fx", async (c) => {
   const aedRate = await getAedRate(c.env, c.get("tenantId"));
-  return c.json({ base: "INR", rates: { AED: aedRate } }, 200, { "Cache-Control": "public, max-age=300" });
+  return c.json({ base: "INR", rates: { AED: aedRate } }, 200, { "Cache-Control": "no-store" });
 });
 
 // Safe operational status: exposes only booleans/names, never secret values.

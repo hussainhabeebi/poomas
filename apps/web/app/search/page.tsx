@@ -31,7 +31,8 @@ interface SearchPageProps { searchParams: Promise<SearchParams>; }
 async function fetchAedRate(): Promise<number | null> {
   try {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
-    const res = await fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" }, next: { revalidate: 300 } });
+    // No caching: a rate saved in Admin must apply to the very next search.
+    const res = await fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" }, cache: "no-store" });
     const data = await res.json() as { rates?: { AED?: number | null } };
     const rate = Number(data.rates?.AED);
     return Number.isFinite(rate) && rate > 0 ? rate : null;
@@ -145,6 +146,12 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
 
         {/* Results column */}
         <div>
+          {requestedCurrency === "AED" && !aedRate && filteredFares.length > 0 && (
+            <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
+              AED prices aren't available right now, so fares are shown in Indian rupees (INR).
+            </div>
+          )}
+
           {result?.isIndicative && (
             <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 13 }}>
               ⚠️ {result.disclaimer}
@@ -372,7 +379,7 @@ function FareCard({ fare, requestedCurrency, aedRate, adults, children = 0, infa
         <div className="fare-card-v2-price-col">
           <div className="fare-card-v2-price">{formatMoney(shown.amount, shown.currency)}</div>
           <div className="fare-card-v2-price-note">
-            {shown.converted ? `≈ ${formatMoney(price, fareCurrency)}` : `${fareCurrency}${currencyDiffers ? " · supplier" : ""}`}
+            {shown.converted ? `≈ ${formatMoney(price, fareCurrency)}` : fareCurrency}
             {!fare.isBookable && " · indicative"}
           </div>
           {isBookable ? (
