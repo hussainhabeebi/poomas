@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import SiteNav from "./components/SiteNav";
 
 export const metadata: Metadata = {
   title: "POOMAS Traveldays",
@@ -32,13 +33,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/" className="site-logo-link">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="POOMAS Traveldays" height={34} className="site-logo" />
+            <span className="site-brand-name" aria-hidden="true">POOMAS Traveldays</span>
           </a>
-          <nav className="site-nav">
-            <a href="/search?origin=CCJ&destination=DXB&departureDate=2026-08-25&adults=1&cabinClass=ECONOMY&tripType=ONEWAY" className="nav-link">Flights</a>
-            <a href="/hotels" className="nav-link">Hotels</a>
-            <a href="/trips" className="nav-link">My Trips</a>
-            <a href="/wallet" className="nav-link">Wallet</a>
-          </nav>
+          <SiteNav />
         </header>
         {children}
       </body>

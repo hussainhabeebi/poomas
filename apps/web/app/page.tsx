@@ -1,13 +1,24 @@
 import SearchWidget from "./components/SearchWidget";
 import HeroBanner from "./components/HeroBanner";
 import PopularRoutes from "./components/PopularRoutes";
+import type { ReactNode } from "react";
 
 const benefits = [
-  { icon: "⚡", title: "Live fare comparison", text: "Compare bookable fares from connected airline suppliers." },
-  { icon: "🧳", title: "Baggage made clear", text: "See duration, stops and baggage before choosing." },
-  { icon: "📷", title: "Scan your passport", text: "Gemini can securely prefill passenger details for review." },
-  { icon: "💬", title: "WhatsApp updates", text: "Continue your booking and receive ticket updates in chat." },
+  { icon: "⚡", symbol: "fare", title: "Live fare comparison", text: "Compare bookable fares from connected airline suppliers." },
+  { icon: "🧳", symbol: "baggage", title: "Baggage made clear", text: "See duration, stops and baggage before choosing." },
+  { icon: "📷", symbol: "passport", title: "Scan your passport", text: "Scan your passport to prefill passenger details for review." },
+  { icon: "💬", symbol: "updates", title: "WhatsApp updates", text: "Continue your booking and receive ticket updates in chat." },
 ];
+
+function BenefitSymbol({ symbol }: { symbol: string }) {
+  const paths: Record<string, ReactNode> = {
+    fare: <><path d="M3 7h18M3 12h12M3 17h9" /><path d="m16 16 2 2 4-5" /></>,
+    baggage: <><rect x="4" y="7" width="16" height="14" rx="2" /><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M9 11v6m6-6v6" /></>,
+    passport: <><rect x="5" y="2" width="14" height="20" rx="2" /><circle cx="12" cy="11" r="3" /><path d="M9 11h6m-3-3v6M9 17h6" /></>,
+    updates: <><path d="M20 11.5a8 8 0 0 1-8 8 8.5 8.5 0 0 1-3.5-.8L4 20l1.3-4.5A8 8 0 1 1 20 11.5Z" /><path d="M9 11h6m-6 3h4" /></>,
+  };
+  return <svg className="benefit-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[symbol]}</svg>;
+}
 
 const steps = [
   ["01", "Search", "Tell us your route and travel date."],
@@ -38,20 +49,20 @@ const AIRLINE_LOGOS = [
 
 export default function HomePage() {
   return (
-    <main>
-      <HeroBanner banners={[]} />
+    <main className="home-phase1">
+      <HeroBanner />
       <section id="flight-search" className="home-shell search-overlap">
         <div className="section-kicker">Live flight search</div>
         <SearchWidget />
       </section>
 
       {/* Trust bar */}
-      <div className="trust-bar">
-        <div className="trust-item"><span className="trust-item-icon">🔒</span> Secure payments</div>
-        <div className="trust-item"><span className="trust-item-icon">✅</span> Instant e-ticket</div>
-        <div className="trust-item"><span className="trust-item-icon">💬</span> WhatsApp support</div>
-        <div className="trust-item"><span className="trust-item-icon">↩️</span> Easy cancellation</div>
-        <div className="trust-item"><span className="trust-item-icon">🌐</span> 50+ airlines</div>
+      <div className="trust-bar" aria-label="Booking information">
+        <div className="trust-item"><span className="trust-item-icon" aria-hidden="true">▣</span> Secure payments</div>
+        <div className="trust-item"><span className="trust-item-icon" aria-hidden="true">✓</span> E-ticket delivery</div>
+        <div className="trust-item"><span className="trust-item-icon" aria-hidden="true">◉</span> WhatsApp support</div>
+        <div className="trust-item"><span className="trust-item-icon" aria-hidden="true">↻</span> Clear cancellation rules</div>
+        <div className="trust-item"><span className="trust-item-icon" aria-hidden="true">✈</span> 50+ airlines</div>
       </div>
 
       {/* Manage booking strip */}
@@ -91,7 +102,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="home-shell">
+      <section className="home-shell popular-routes-section">
         <div className="section-heading-row">
           <div>
             <div className="section-kicker">Popular now</div>
@@ -123,6 +134,7 @@ export default function HomePage() {
           {benefits.map((item) => (
             <article className="benefit-card" key={item.title}>
               <span className="benefit-icon">{item.icon}</span>
+              <span className="benefit-icon-desktop"><BenefitSymbol symbol={item.symbol} /></span>
               <h3>{item.title}</h3>
               <p>{item.text}</p>
             </article>

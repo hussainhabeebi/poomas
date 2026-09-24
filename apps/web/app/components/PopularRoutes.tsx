@@ -26,31 +26,24 @@ export default function PopularRoutes({ routes }: { routes: Route[] }) {
   }
 
   return (
-    <section style={{ marginTop: 24 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
+    <div className="popular-route-list">
+      <div className="popular-route-grid">
         {displayRoutes.map((r, i) => (
           <a
             key={i}
             href={buildSearchUrl(r)}
-            style={{
-              display: "block",
-              padding: "16px 20px",
-              border: "1.5px solid #e5e7eb",
-              borderRadius: 10,
-              textDecoration: "none",
-              transition: "border-color 0.15s, box-shadow 0.15s",
-              background: "white",
-            }}
+            className="popular-route-card"
           >
-            <div style={{ fontWeight: 600, color: "#111827", marginBottom: 4 }}>{r.label}</div>
+            <span className="popular-route-title">{r.label}</span>
             {r.fromPrice && (
-              <div style={{ fontSize: 14, color: "var(--color-primary)", fontWeight: 500 }}>
+              <span className="popular-route-fare">
                 from {r.currency ?? "INR"} {r.fromPrice.toLocaleString()}
-              </div>
+              </span>
             )}
+            <span className="popular-route-arrow" aria-hidden="true">→</span>
           </a>
         ))}
       </div>
-    </section>
+    </div>
   );
 }

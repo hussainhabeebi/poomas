@@ -352,16 +352,6 @@ export default function SearchWidget() {
             >
               {SPECIAL_FARES.map((f) => <option key={f}>{f}</option>)}
             </select>
-            {tripType === "One Way" && (
-              <select
-                className="special-fare-select"
-                value={cabinClass}
-                onChange={(e) => setCabinClass(e.target.value as typeof cabinClass)}
-                aria-label="Cabin class"
-              >
-                {CABIN_CLASSES.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            )}
           </div>
 
           {/* Search button */}
