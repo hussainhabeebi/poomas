@@ -25,6 +25,18 @@ const CURRENCY_LOCALES: Record<string, string> = {
   INR: "en-IN", AED: "en-AE", USD: "en-US", GBP: "en-GB", EUR: "en-IE",
 };
 
+// Display labels for the nearby-airport options already offered by the filters.
+const AIRPORT_CITIES: Record<string, string> = {
+  COK: "Kochi", CCJ: "Kozhikode", CNN: "Kannur", TRV: "Thiruvananthapuram",
+  DXB: "Dubai", DWC: "Dubai Al Maktoum", SHJ: "Sharjah", AUH: "Abu Dhabi",
+};
+
+function displaySearchDate(value?: string) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return value ?? "";
+  const date = new Date(`${value}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
 // Admin-set INR→AED rate (INR per 1 AED); null when AED payment isn't offered.
@@ -118,21 +130,21 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   const adults  = Math.min(9, Math.max(1, parseInt(params.adults  ?? "1") || 1));
   const children = parseInt(params.children ?? "0") || 0;
   const infants  = parseInt(params.infants  ?? "0") || 0;
+  const tripContext = [displaySearchDate(params.departureDate), `${adults} adult${adults > 1 ? "s" : ""}`, (params.cabinClass ?? "ECONOMY").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()), requestedCurrency].filter(Boolean);
 
   return (
     <main className="page-container flight-results-page">
-      {/* Sticky search header */}
+      {/* Route-neutral travel banner; all journey details come from search state. */}
       <div className="search-page-header">
         <div className="search-page-summary">
           <h1>
             {params.origin} → {params.destination}
           </h1>
           <p className="results-meta">
-            {params.departureDate} · {adults} adult{adults > 1 ? "s" : ""} · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}
-            {requestedCurrency ? ` · ${requestedCurrency}` : ""}
+            {tripContext.join(" · ")}
           </p>
+          <a href="/" className="search-page-modify-link"><span aria-hidden="true">✎</span> Modify search</a>
         </div>
-        <a href="/" className="search-page-modify-link">Modify search <span aria-hidden="true">↗</span></a>
       </div>
 
       <div className="search-results-layout">
@@ -159,8 +171,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
           )}
 
           {/* Sort tabs */}
-          {filteredFares.length > 0 && (
-            <div className="sort-tabs" role="tablist" aria-label="Sort results">
+          <div className="sort-tabs" role="tablist" aria-label="Sort results">
               {sortTabs.map(({ key, label }) => {
                 const href = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
                 href.set("sort", key);
@@ -177,23 +188,22 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                   </a>
                 );
               })}
-              <span className="results-count-badge">{filteredFares.length} flights</span>
-            </div>
-          )}
+              <span className="results-count-badge">{filteredFares.length} flight{filteredFares.length === 1 ? "" : "s"}</span>
+          </div>
 
           {filteredFares.length === 0 ? (
             <div className="no-results">
-              <div className="no-results-journey">
-                <span>{params.origin}</span>
-                <span className="no-results-route-icon" aria-hidden="true">✈</span>
-                <span>{params.destination}</span>
-              </div>
-              <div className="no-results-trip-meta">
-                {params.departureDate} · {adults} adult{adults > 1 ? "s" : ""} · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}
-                {requestedCurrency ? ` · ${requestedCurrency}` : ""}
-              </div>
+              <img className="no-results-illustration" src="/search/empty-flight.svg" alt="" aria-hidden="true" width="420" height="150" />
               <h2>No flights available right now</h2>
               <p>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
+              <div className="no-results-trip-card" aria-label="Searched journey">
+                <div className="no-results-route">
+                  <div className="no-results-airport"><strong>{AIRPORT_CITIES[params.origin ?? ""] ?? params.origin ?? "—"} ({params.origin ?? "—"})</strong><span>Origin airport</span></div>
+                  <span className="no-results-route-icon" aria-hidden="true">✈ ──→</span>
+                  <div className="no-results-airport"><strong>{AIRPORT_CITIES[params.destination ?? ""] ?? params.destination ?? "—"} ({params.destination ?? "—"})</strong><span>Destination airport</span></div>
+                </div>
+                <div className="no-results-trip-meta">{tripContext.map((item, i) => <span key={i}>{item}</span>)}</div>
+              </div>
               <div className="no-results-actions">
                 <a href="/" className="fare-card-book-btn no-results-action">Search again</a>
                 <ChangeDatesAction />

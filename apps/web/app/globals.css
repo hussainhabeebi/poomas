@@ -2066,3 +2066,85 @@ html { scroll-behavior: smooth; }
   body:has(.home-phase1) .site-logo-link .site-logo, body:has(.home-phase1) .site-brand-name { transition: none; }
   body:has(.home-phase1) .site-logo-link:hover .site-logo { transform: none; }
 }
+
+/* Search results visual system. Kept under the page class to protect other routes. */
+.flight-results-page { width: min(100%, 1490px); padding: 18px 28px 72px; }
+.flight-results-page .search-page-header {
+  position: relative; top: auto; z-index: auto; display: flex; align-items: center;
+  min-height: 168px; margin: 0 0 22px; padding: 23px 30px;
+  overflow: hidden; border: 1px solid #dce7f3; border-radius: 18px;
+  background: linear-gradient(90deg,rgba(248,252,255,.97) 0%,rgba(248,252,255,.83) 36%,rgba(248,252,255,.16) 77%), url('/search/route-sky.svg') center/cover;
+  box-shadow: 0 7px 22px rgba(23,47,83,.045);
+}
+.flight-results-page .search-page-summary h1 { font-size: clamp(27px,2.6vw,35px); color: #14243d; letter-spacing: -.04em; }
+.flight-results-page .results-meta { margin: 5px 0 14px; color: #344b68; font-size: 14px; font-weight: 500; }
+.flight-results-page .search-page-modify-link { width: fit-content; min-height: 42px; padding: 9px 16px; border-color: #d7e3ef; color: #182d49; font-size: 13px; box-shadow: 0 2px 5px rgba(25,46,70,.035); }
+.flight-results-page .search-page-modify-link span { color: #c51b28; font-size: 18px; line-height: 1; }
+.flight-results-page .search-results-layout { grid-template-columns: minmax(270px, 316px) minmax(0,1fr); gap: 20px; }
+.flight-results-page .filter-sidebar { top: 16px; padding: 19px 18px 10px; border-color: #d9e4f0; border-radius: 16px; box-shadow: 0 5px 22px rgba(22,46,78,.035); }
+.flight-results-page .filter-sidebar-title { margin: 0 0 10px; font-size: 18px; font-weight: 800; }
+.flight-results-page .filter-sidebar-title a { font-size: 12px; }
+.flight-results-page .filter-section { padding: 13px 0; border-color: #e7edf5; }
+.flight-results-page .filter-section-label { margin-bottom: 9px; color: #19304c; font-size: 13px; font-weight: 750; text-transform: none; letter-spacing: 0; }
+.flight-results-page .date-switcher { margin: 0 0 14px !important; }
+.flight-results-page .date-switcher button { min-height: 63px; padding: 8px 2px; border-color: #d9e4f1; }
+.flight-results-page .date-switcher button strong { font-size: 12px; }
+.flight-results-page .airport-select select, .flight-results-page .result-swap, .flight-results-page .stops-btn, .flight-results-page .time-band { border-color: #d5e0ee; }
+.flight-results-page .sort-tabs { gap: 0; min-height: 47px; margin: 0 0 16px; padding: 0 4px; border: 0; border-bottom: 1px solid #dce6f0; border-radius: 0; background: transparent; }
+.flight-results-page .sort-tab { min-height: 46px; padding: 12px 18px 10px; border-bottom: 2px solid transparent; border-radius: 0; color: #263a52; font-size: 13px; }
+.flight-results-page .sort-tab.active { border-bottom-color: #e31e24; background: transparent; color: #cc1721; }
+.flight-results-page .results-count-badge { padding: 5px 12px; border-radius: 18px; background: #eef3f9; color: #374b63; font-size: 12px; font-weight: 700; }
+.flight-results-page .fare-card-v2 { border-color: #dce6f1; border-radius: 16px; box-shadow: 0 4px 17px rgba(18,43,75,.035); }
+.flight-results-page .fare-card-v2-main { gap: 16px; padding: 22px; }
+.flight-results-page .fare-card-v2-time { color: #132944; }
+.flight-results-page .fare-card-v2-book { border-radius: 9px; }
+.flight-results-page .no-results { width: 100%; max-width: none; min-height: 550px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 28px 35px; border-color: #d9e4f1; border-radius: 18px; text-align: center; box-shadow: 0 6px 24px rgba(20,45,80,.04); }
+.flight-results-page .no-results-illustration { display: block; width: min(400px, 100%); height: auto; margin-bottom: 9px; }
+.flight-results-page .no-results h2 { margin: 0 0 5px; color: #14243d; font-size: clamp(21px,2.3vw,29px); line-height: 1.23; }
+.flight-results-page .no-results > p:not(.no-results-reference) { max-width: 620px; margin: 0 auto 18px; color: #596e86; font-size: 14px; }
+.flight-results-page .no-results-trip-card { width: min(670px,100%); padding: 13px 22px 0; border-radius: 16px; background: #f5f8fd; color: #182d48; text-align: left; }
+.flight-results-page .no-results-route { display: grid; grid-template-columns: minmax(0,1fr) 70px minmax(0,1fr); align-items: center; gap: 10px; min-height: 45px; }
+.flight-results-page .no-results-airport { display: flex; flex-direction: column; min-width: 0; }
+.flight-results-page .no-results-airport strong { overflow: hidden; color: #1c304c; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.flight-results-page .no-results-airport span { color: #71839a; font-size: 11px; }
+.flight-results-page .no-results-route-icon { width: auto; height: auto; background: none; color: #bf2530; font-size: 15px; white-space: nowrap; }
+.flight-results-page .no-results-trip-meta { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px 0; width: 100%; margin: 10px 0 0; padding: 11px 0 13px; border-top: 1px solid #e0e9f4; border-bottom: 0; color: #2f4560; font-size: 12px; font-weight: 600; }
+.flight-results-page .no-results-trip-meta span { padding: 0 12px; }
+.flight-results-page .no-results-trip-meta span + span { border-left: 1px solid #ccd8e8; }
+.flight-results-page .no-results-actions { justify-content: center; width: min(670px,100%); margin-top: 17px; gap: 10px; }
+.flight-results-page .no-results-actions > * { flex: 1 1 150px; }
+.flight-results-page .no-results-action { min-height: 48px; background: #e31e24; font-size: 13px; }
+.flight-results-page .no-results-secondary { min-height: 48px; border-color: #d2dfef; color: #243750; font-size: 13px; }
+.flight-results-page .no-results .no-results-reference { margin: 15px 0 0; color: #697e95; text-align: center; }
+
+@media (max-width: 900px) {
+  .flight-results-page .search-results-layout { grid-template-columns: minmax(0,1fr); }
+  .flight-results-page .filter-sidebar.open { top: auto; }
+}
+@media (max-width: 620px) {
+  .flight-results-page { padding: 12px 16px 48px; }
+  .flight-results-page .search-page-header { min-height: 170px; margin-bottom: 14px; padding: 18px 17px; background-position: 61% center; }
+  .flight-results-page .search-page-summary h1 { font-size: 26px; }
+  .flight-results-page .results-meta { max-width: 270px; font-size: 12px; }
+  .flight-results-page .search-page-modify-link { min-height: 44px; }
+  .flight-results-page .sort-tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .flight-results-page .sort-tab { flex-shrink: 0; padding-inline: 12px; }
+  .flight-results-page .results-count-badge { flex-shrink: 0; margin-left: auto; }
+  .flight-results-page .no-results { min-height: 0; padding: 22px 16px 25px; }
+  .flight-results-page .no-results-illustration { width: min(285px,100%); }
+  .flight-results-page .no-results-trip-card { padding: 13px 13px 0; }
+  .flight-results-page .no-results-route { grid-template-columns: minmax(0,1fr) 36px minmax(0,1fr); gap: 5px; }
+  .flight-results-page .no-results-route-icon { font-size: 12px; overflow: hidden; }
+  .flight-results-page .no-results-airport strong { font-size: 11px; }
+  .flight-results-page .no-results-airport span { font-size: 10px; }
+  .flight-results-page .no-results-trip-meta { justify-content: flex-start; gap: 7px 0; }
+  .flight-results-page .no-results-trip-meta span { padding-inline: 8px; }
+  .flight-results-page .no-results-actions { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .flight-results-page .no-results-actions > * { min-width: 0; }
+  .flight-results-page .no-results-action { grid-column: 1/-1; }
+}
+@media (max-width: 390px) {
+  .flight-results-page { padding-inline: 12px; }
+  .flight-results-page .sort-tab { padding-inline: 10px; }
+  .flight-results-page .no-results-trip-meta span { padding-inline: 6px; font-size: 11px; }
+}
