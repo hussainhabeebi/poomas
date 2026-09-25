@@ -108,9 +108,9 @@ export default function HomePage() {
             <div className="section-kicker">Popular now</div>
             <h2 className="home-title">Routes travellers are checking</h2>
           </div>
-          <a href="#flight-search" className="text-link">Custom search →</a>
         </div>
         <PopularRoutes routes={[]} />
+        <a href="#flight-search" className="text-link">Custom search →</a>
       </section>
 
       {/* Airline partners */}

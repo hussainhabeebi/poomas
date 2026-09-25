@@ -1557,6 +1557,7 @@ html { scroll-behavior: smooth; }
 .popular-route-title { display: block; margin-bottom: 4px; color: #111827; font-weight: 600; }
 .popular-route-fare { display: block; color: var(--color-primary); font-size: 14px; font-weight: 500; }
 .popular-route-arrow { display: none; }
+.popular-route-journey, .popular-route-view { display: none; }
 .popular-route-card:focus-visible {
   outline: 3px solid #b91c1c;
   outline-offset: 3px;
@@ -1587,8 +1588,8 @@ html { scroll-behavior: smooth; }
   .home-phase1 .popular-route-list { margin-top: 22px; }
   .home-phase1 .popular-route-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
   .home-phase1 .popular-route-card {
-    min-height: 112px;
-    padding: 20px 56px 18px 22px;
+    min-width: 0;
+    padding: 12px;
     border-color: #dce3ec;
     border-radius: 14px;
     box-shadow: 0 3px 12px rgba(15, 23, 42, .035);
@@ -1600,26 +1601,98 @@ html { scroll-behavior: smooth; }
     border-color: #b6c5d7;
     box-shadow: 0 13px 28px rgba(15, 23, 42, .11);
   }
-  .home-phase1 .popular-route-title { margin-bottom: 11px; color: #16253a; font-size: 16px; font-weight: 750; }
-  .home-phase1 .popular-route-fare { font-size: 13px; font-weight: 650; }
-  .home-phase1 .popular-route-arrow {
+  .home-phase1 .popular-route-journey {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .home-phase1 .popular-route-city {
+    position: relative;
+    display: block;
+    height: clamp(105px, 10vw, 152px);
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 9px;
+    background: #e2e8f0;
+  }
+  .home-phase1 .popular-route-city::after {
     position: absolute;
-    top: 19px;
-    right: 21px;
+    inset: 35% 0 0;
+    content: "";
+    background: linear-gradient(transparent, rgba(8, 22, 42, .72));
+  }
+  .home-phase1 .popular-route-city img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform .22s ease;
+  }
+  .home-phase1 .popular-route-city-name {
+    position: absolute;
+    z-index: 1;
+    bottom: 11px;
+    left: 11px;
+    right: 8px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  }
+  .home-phase1 .popular-route-plane {
+    position: absolute;
+    z-index: 2;
+    top: 50%;
+    left: 50%;
     display: grid;
     place-items: center;
-    width: 29px;
-    height: 29px;
+    width: 34px;
+    height: 34px;
     border-radius: 50%;
-    background: #f1f5f9;
-    color: #b91c1c;
-    font-size: 18px;
-    transition: transform .22s ease, background-color .22s ease;
+    background: #fff;
+    color: #a31621;
+    box-shadow: 0 2px 9px rgba(15, 23, 42, .18);
+    transform: translate(-50%, -50%);
+    transition: transform .22s ease;
   }
-  .home-phase1 .popular-route-card:hover .popular-route-arrow,
-  .home-phase1 .popular-route-card:focus-visible .popular-route-arrow {
-    transform: translateX(3px);
-    background: #fff1f2;
+  .home-phase1 .popular-route-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .home-phase1 .popular-route-details {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 14px 4px 3px;
+  }
+  .home-phase1 .popular-route-fare { font-size: 13px; font-weight: 650; }
+  .home-phase1 .popular-route-view {
+    display: block;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+  .home-phase1 .popular-route-arrow { display: none; }
+  .home-phase1 .popular-route-card:hover .popular-route-city img,
+  .home-phase1 .popular-route-card:focus-visible .popular-route-city img { transform: scale(1.04); }
+  .home-phase1 .popular-route-card:hover .popular-route-plane,
+  .home-phase1 .popular-route-card:focus-visible .popular-route-plane { transform: translate(calc(-50% + 3px), -50%); }
+  .home-phase1 .popular-route-card:hover .popular-route-view,
+  .home-phase1 .popular-route-card:focus-visible .popular-route-view { color: #a31621; }
+  .home-phase1 .popular-routes-section > .text-link {
+    display: inline-block;
+    margin-top: 18px;
   }
 
 }
@@ -1628,9 +1701,15 @@ html { scroll-behavior: smooth; }
   body:has(.home-phase1) .site-brand-name { transition: none; }
   body:has(.home-phase1) .site-logo-link:hover .site-logo { transform: none; }
   .home-phase1 .popular-route-card,
-  .home-phase1 .popular-route-arrow { transition: none; }
+  .home-phase1 .popular-route-arrow,
+  .home-phase1 .popular-route-city img,
+  .home-phase1 .popular-route-plane { transition: none; }
   .home-phase1 .popular-route-card:hover,
   .home-phase1 .popular-route-card:focus-visible,
   .home-phase1 .popular-route-card:hover .popular-route-arrow,
-  .home-phase1 .popular-route-card:focus-visible .popular-route-arrow { transform: none; }
+  .home-phase1 .popular-route-card:focus-visible .popular-route-arrow,
+  .home-phase1 .popular-route-card:hover .popular-route-city img,
+  .home-phase1 .popular-route-card:focus-visible .popular-route-city img { transform: none; }
+  .home-phase1 .popular-route-card:hover .popular-route-plane,
+  .home-phase1 .popular-route-card:focus-visible .popular-route-plane { transform: translate(-50%, -50%); }
 }
