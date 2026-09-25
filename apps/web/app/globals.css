@@ -1493,6 +1493,16 @@ html { scroll-behavior: smooth; }
   .home-phase1 .search-widget .sw-route-row { flex: 2.6; gap: 10px; }
   .home-phase1 .search-widget .sw-extras-row { flex: 2; gap: 10px; }
   .home-phase1 .search-widget .search-input { border-radius: 9px; }
+  .home-phase1 .search-widget .toggle-pill,
+  .home-phase1 .search-widget .special-fare-select {
+    min-height: 40px;
+    box-sizing: border-box;
+    border-color: #e5e7eb;
+    border-radius: 9px;
+    padding-block: 9px;
+  }
+  .home-phase1 .search-widget .toggle-pill { width: fit-content; padding-inline: 14px; }
+  .home-phase1 .search-widget .special-fare-select { padding-left: 14px; padding-right: 32px; }
   .home-phase1 .search-widget .search-btn {
     background: #d71920;
     min-width: 186px;

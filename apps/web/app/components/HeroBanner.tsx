@@ -81,7 +81,6 @@ export default function HeroBanner({ banners }: { banners: unknown[] }) {
               onClick={() => setIdx(i)} aria-label={`Show travel offer ${i + 1}`} />
           ))}
         </div>
-        <a className="hero-credit" href={slide.source} target="_blank" rel="noreferrer">Photo on Unsplash</a>
       </div>
       <button className="hero-arrow hero-arrow-right" onClick={() => move(1)} aria-label="Next offer">›</button>
     </section>
