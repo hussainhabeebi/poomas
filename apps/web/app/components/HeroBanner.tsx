@@ -64,7 +64,7 @@ export default function HeroBanner({ banners }: { banners: unknown[] }) {
         key={slide.image}
         src={slide.image}
         alt=""
-        className="hero-photo-img"
+        className={`hero-photo-img hero-photo-img-${idx + 1}`}
         loading={idx === 0 ? "eager" : "lazy"}
         fetchPriority={idx === 0 ? "high" : "auto"}
       />
