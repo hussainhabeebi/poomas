@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 
 export default function SiteNav() {
   const pathname = usePathname();
-  const active = pathname === "/search" || pathname.startsWith("/search/") || pathname === "/book" || pathname.startsWith("/checkout/")
+  const active = pathname === "/search" || pathname.startsWith("/search/") || pathname === "/book" || pathname.startsWith("/book/") || pathname === "/checkout" || pathname.startsWith("/checkout/")
     ? "flights"
     : pathname === "/hotels" || pathname.startsWith("/hotels/")
       ? "hotels"

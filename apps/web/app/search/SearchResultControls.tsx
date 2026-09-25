@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 type Props = {
   origin: string;
@@ -44,6 +44,7 @@ export default function SearchResultControls({ origin, destination, departureDat
   const router = useRouter();
   const current = useSearchParams();
   const [isPending, startTransition] = useTransition();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const selectedDate = useMemo(() => {
     const parsed = new Date(`${departureDate}T12:00:00Z`);
@@ -90,11 +91,19 @@ export default function SearchResultControls({ origin, destination, departureDat
   }
 
   return (
-    <aside className="filter-sidebar" aria-label="Flight filters">
+    <>
+    <button type="button" className="mobile-filter-toggle" aria-expanded={mobileOpen} aria-controls="flight-filter-panel" onClick={() => setMobileOpen(true)}>
+      <span aria-hidden="true">☷</span> Filters
+    </button>
+    {mobileOpen && <button type="button" className="filter-backdrop" aria-label="Close filters" onClick={() => setMobileOpen(false)} />}
+    <aside id="flight-filter-panel" className={`filter-sidebar${mobileOpen ? " open" : ""}`} aria-label="Flight filters">
       {/* Date strip */}
       <div className="filter-sidebar-title">
-        Filters
-        <a href="#" onClick={(e) => { e.preventDefault(); update({ stops: null, refundable: null, baggage: null, depBand: null, airlines: null }); }}>Reset all</a>
+        <span>Filters</span>
+        <div className="filter-sidebar-actions">
+          <a href="#" onClick={(e) => { e.preventDefault(); update({ stops: null, refundable: null, baggage: null, depBand: null, airlines: null }); }}>Reset all</a>
+          <button type="button" className="filter-close" aria-label="Close filters" onClick={() => setMobileOpen(false)}>×</button>
+        </div>
       </div>
 
       <div className="date-switcher" aria-label="Choose departure date" style={{ marginBottom: 16 }}>
@@ -191,6 +200,8 @@ export default function SearchResultControls({ origin, destination, departureDat
       )}
 
       {isPending && <div className="result-refresh"><span /> Updating…</div>}
+      <button type="button" className="filter-apply" onClick={() => setMobileOpen(false)}>Show flights</button>
     </aside>
+    </>
   );
 }

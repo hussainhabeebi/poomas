@@ -120,11 +120,11 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
   const infants  = parseInt(params.infants  ?? "0") || 0;
 
   return (
-    <main className="page-container" style={{ paddingTop: 16 }}>
+    <main className="page-container flight-results-page">
       {/* Sticky search header */}
       <div className="search-page-header">
-        <div>
-          <h1 style={{ margin: 0, fontSize: "clamp(15px,3vw,18px)", fontWeight: 800, color: "#0f172a" }}>
+        <div className="search-page-summary">
+          <h1>
             {params.origin} → {params.destination}
           </h1>
           <p className="results-meta">
@@ -132,7 +132,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
             {requestedCurrency ? ` · ${requestedCurrency}` : ""}
           </p>
         </div>
-        <a href="/" className="search-page-modify-link">✏ Modify search</a>
+        <a href="/" className="search-page-modify-link">Modify search <span aria-hidden="true">↗</span></a>
       </div>
 
       <div className="search-results-layout">
@@ -145,7 +145,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
         />
 
         {/* Results column */}
-        <div>
+        <div className="search-results-column">
           {requestedCurrency === "AED" && !aedRate && filteredFares.length > 0 && (
             <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
               AED prices aren't available right now, so fares are shown in Indian rupees (INR).
@@ -177,18 +177,18 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                   </a>
                 );
               })}
-              <span className="results-count-badge" style={{ marginLeft: "auto", alignSelf: "center" }}>{filteredFares.length} flights</span>
+              <span className="results-count-badge">{filteredFares.length} flights</span>
             </div>
           )}
 
           {filteredFares.length === 0 ? (
             <div className="no-results">
-              <div className="no-results-icon">✈️</div>
+              <div className="no-results-icon" aria-hidden="true">✈</div>
               <h2>{result.apiError || failingSuppliers.length > 0 ? "No flights available right now" : "No flights found"}</h2>
               <p>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
-              <a href="/" className="fare-card-book-btn" style={{ maxWidth: 220, margin: "0 auto" }}>Search again</a>
+              <a href="/" className="fare-card-book-btn no-results-action">Search again</a>
               {(result.apiError || failingSuppliers.length > 0) && result.searchId && (
-                <p style={{ marginTop: 12, fontSize: 11, color: "#94a3b8" }}>Reference: {result.searchId.slice(0, 8)}</p>
+                <p className="no-results-reference">Reference: {result.searchId.slice(0, 8)}</p>
               )}
             </div>
           ) : (
@@ -328,7 +328,7 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
   return (
     <div className="fare-card-v2" style={{ position: "relative" }}>
       {fare.__badge && (
-        <div style={{ position: "absolute", top: -1, left: 14, background: badgeColor, color: "#fff", borderRadius: "0 0 8px 8px", padding: "2px 10px", fontSize: 10, fontWeight: 800, zIndex: 1 }}>
+        <div className="fare-card-recommendation" style={{ background: badgeColor }}>
           {fare.__badge}
         </div>
       )}

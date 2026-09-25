@@ -1922,3 +1922,122 @@ html { scroll-behavior: smooth; }
   .home-phase1 .search-widget .sw-extras-bar { flex-wrap: nowrap; }
   .home-phase1 .search-widget .toggle-pill { flex-shrink: 0; }
 }
+
+/* Flight results presentation; search and booking data remain unchanged. */
+.flight-results-page { padding-top: 20px; padding-bottom: 64px; }
+.flight-results-page .search-page-header {
+  margin: 0 0 22px;
+  padding: 16px 20px;
+  top: 56px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 5px 20px rgba(15,23,42,.04);
+}
+.flight-results-page .search-page-summary { min-width: 0; }
+.flight-results-page .search-page-summary h1 { margin: 0; color: #0f172a; font-size: clamp(20px,2.1vw,26px); line-height: 1.2; letter-spacing: -.025em; }
+.flight-results-page .results-meta { margin-top: 5px; color: #64748b; font-size: 12px; line-height: 1.5; }
+.flight-results-page .search-page-modify-link {
+  flex-shrink: 0; min-height: 40px; padding: 9px 13px;
+  border: 1px solid #e2e8f0; border-radius: 9px; background: #fff;
+  color: #334155; font-size: 12px;
+}
+.flight-results-page .search-page-modify-link:hover { border-color: #e31e24; color: #b91c1c; }
+.flight-results-page .search-results-layout { grid-template-columns: minmax(250px,270px) minmax(0,1fr); gap: 22px; }
+.flight-results-page .search-results-column { min-width: 0; }
+.flight-results-page .filter-sidebar { top: 82px; padding: 20px; border-color: #e2e8f0; box-shadow: 0 4px 18px rgba(15,23,42,.035); }
+.flight-results-page .filter-sidebar-title { margin-bottom: 16px; font-size: 14px; text-transform: none; letter-spacing: 0; }
+.flight-results-page .filter-sidebar-actions { display: flex; align-items: center; gap: 12px; }
+.flight-results-page .filter-sidebar-title a { font-size: 11px; }
+.flight-results-page .filter-section { padding: 16px 0; border-color: #e2e8f0; }
+.flight-results-page .filter-section-label { margin-bottom: 10px; color: #334155; font-size: 11px; }
+.flight-results-page .date-switcher { margin-bottom: 18px !important; }
+.flight-results-page .date-switcher button { min-height: 54px; border-radius: 9px; }
+.flight-results-page .airport-select { min-width: 0; }
+.flight-results-page .airport-select select, .flight-results-page .result-swap { height: 44px; border-radius: 9px; }
+.flight-results-page .result-swap { width: 38px; }
+.flight-results-page .stops-btn, .flight-results-page .time-band { min-height: 44px; border-radius: 9px; }
+.flight-results-page .filter-option { min-height: 36px; }
+.flight-results-page .filter-option input[type="checkbox"] { width: 17px; height: 17px; }
+.flight-results-page .sort-tabs { align-items: center; gap: 5px; padding: 5px; margin-bottom: 14px; border: 1px solid #e2e8f0; border-radius: 11px; background: #fff; }
+.flight-results-page .sort-tab { margin: 0; padding: 10px 14px; border: 0; border-radius: 8px; font-size: 12px; }
+.flight-results-page .sort-tab.active { background: #fff1f2; color: #b91c1c; }
+.flight-results-page .results-count-badge { margin-left: auto; white-space: nowrap; }
+.flight-results-page .fare-card-v2 { border-width: 1px; }
+.flight-results-page .fare-card-v2-main { grid-template-columns: minmax(105px,135px) minmax(225px,1fr) minmax(90px,auto) minmax(130px,auto); gap: 14px; padding: 20px; }
+.flight-results-page .fare-card-v2-airline-logo { width: 32px; height: 32px; margin-bottom: 3px; }
+.flight-results-page .fare-card-v2-time-row { gap: 9px; }
+.flight-results-page .fare-card-v2-time-row > :last-child { text-align: right; }
+.flight-results-page .fare-card-v2-duration-bar { min-width: 70px; }
+.flight-results-page .fare-card-v2-price { font-size: 21px; white-space: nowrap; }
+.flight-results-page .fare-card-v2-book { min-height: 44px; }
+.flight-results-page .fare-card-recommendation { position: absolute; z-index: 1; top: -1px; left: 14px; padding: 3px 10px; border-radius: 0 0 7px 7px; color: #fff; font-size: 10px; font-weight: 800; }
+.flight-results-page .fare-card-v2-tags { align-items: flex-start; }
+.flight-results-page .no-results { max-width: 680px; margin-inline: auto; padding: 38px 28px; border-width: 1px; }
+.flight-results-page .no-results-icon { display: grid; place-items: center; width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 12px; background: #fff1f2; color: #b91c1c; font-size: 26px; }
+.flight-results-page .no-results h2 { font-size: 19px; }
+.flight-results-page .no-results p { line-height: 1.5; }
+.flight-results-page .no-results-action { display: inline-flex; justify-content: center; align-items: center; min-height: 44px; margin: 0 auto; padding: 9px 20px; text-decoration: none; }
+.flight-results-page .no-results-reference { margin: 14px auto 0; color: #64748b; font-size: 11px; overflow-wrap: anywhere; }
+.flight-results-page .filter-backdrop, .flight-results-page .filter-close, .flight-results-page .filter-apply { display: none; }
+.flight-results-page :is(.sort-tab,.mobile-filter-toggle,.filter-close,.filter-apply,.fare-card-v2-book,.search-page-modify-link):focus-visible { outline: 2px solid #b91c1c; outline-offset: 2px; }
+
+/* All public routes use the shared navigation's same route-derived active state. */
+@media (max-width: 767px) {
+  body:not(:has(.home-phase1)) .site-header { gap: 8px; padding: 8px 12px; min-height: 64px; }
+  body:not(:has(.home-phase1)) .site-logo { height: 32px; }
+  body:not(:has(.home-phase1)) .site-nav { gap: 6px; position: relative; }
+  body:not(:has(.home-phase1)) .site-nav > .nav-link { display: none; }
+  body:not(:has(.home-phase1)) .home-mobile-account-link, body:not(:has(.home-phase1)) .home-mobile-menu { display: block; }
+  body:not(:has(.home-phase1)) .home-mobile-account-link, body:not(:has(.home-phase1)) .home-mobile-menu summary { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 10px; border: 1px solid #dbe3ec; border-radius: 9px; background: #fff; color: #14233a; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; white-space: nowrap; }
+  body:not(:has(.home-phase1)) .home-mobile-menu summary { gap: 7px; list-style: none; }
+  body:not(:has(.home-phase1)) .home-mobile-menu summary::-webkit-details-marker { display: none; }
+  body:not(:has(.home-phase1)) .home-mobile-menu-icon { display: grid; gap: 3px; width: 17px; }
+  body:not(:has(.home-phase1)) .home-mobile-menu-icon i { width: 17px; height: 2px; border-radius: 2px; background: currentColor; }
+  body:not(:has(.home-phase1)) .home-mobile-menu-panel { position: absolute; z-index: 100; top: calc(100% + 7px); right: 0; width: min(300px,calc(100vw - 24px)); display: grid; padding: 8px; border: 1px solid #dbe3ec; border-radius: 12px; background: #fff; box-shadow: 0 14px 36px rgba(15,23,42,.18); }
+  body:not(:has(.home-phase1)) .home-mobile-menu-panel .nav-link { display: block; padding: 12px 14px; border-radius: 8px; font-size: 14px; }
+  body:not(:has(.home-phase1)) .home-mobile-menu-panel .nav-link-active { background: #fff1f2; }
+  body:not(:has(.home-phase1)) .site-nav :is(a,summary):focus-visible { outline: 2px solid #b91c1c; outline-offset: 2px; }
+}
+
+@media (max-width: 1150px) and (min-width: 901px) {
+  .flight-results-page .fare-card-v2-main { grid-template-columns: minmax(95px,120px) minmax(180px,1fr) minmax(125px,auto); }
+  .flight-results-page .fare-card-v2-tags { grid-column: 1 / 3; grid-row: 2; flex-direction: row; flex-wrap: wrap; }
+  .flight-results-page .fare-card-v2-price-col { grid-column: 3; grid-row: 1 / 3; }
+}
+@media (max-width: 900px) {
+  .flight-results-page .search-results-layout { grid-template-columns: minmax(0,1fr); gap: 14px; }
+  .flight-results-page .mobile-filter-toggle { display: inline-flex; width: fit-content; min-height: 44px; border-radius: 9px; margin-bottom: 0; }
+  .flight-results-page .filter-sidebar { display: none; }
+  .flight-results-page .filter-backdrop { display: block; position: fixed; inset: 0; z-index: 80; background: rgba(8,22,42,.5); border: 0; cursor: pointer; }
+  .flight-results-page .filter-sidebar.open { display: block; position: fixed; top: auto; bottom: 0; left: 0; right: 0; z-index: 81; width: 100%; max-height: min(88vh,820px); overflow-y: auto; border-radius: 18px 18px 0 0; padding: 22px max(20px,env(safe-area-inset-right)) max(22px,env(safe-area-inset-bottom)); }
+  .flight-results-page .filter-close { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #334155; font-size: 23px; cursor: pointer; }
+  .flight-results-page .filter-apply { display: block; width: 100%; min-height: 48px; margin-top: 12px; border: 0; border-radius: 9px; background: #e31e24; color: #fff; font-weight: 700; cursor: pointer; }
+  .flight-results-page .fare-card-v2-main { grid-template-columns: minmax(0,1fr) minmax(155px,auto); grid-template-rows: auto auto auto; gap: 14px; }
+  .flight-results-page .fare-card-v2-airline { grid-column: 1 / -1; grid-row: 1; flex-direction: row; align-items: center; gap: 9px; }
+  .flight-results-page .fare-card-v2-airline-logo { margin: 0; }
+  .flight-results-page .fare-card-v2-times { grid-column: 1; grid-row: 2; }
+  .flight-results-page .fare-card-v2-tags { grid-column: 1; grid-row: 3; flex-direction: row; flex-wrap: wrap; }
+  .flight-results-page .fare-card-v2-price-col { grid-column: 2; grid-row: 2 / 4; }
+}
+@media (max-width: 620px) {
+  .flight-results-page { padding: 14px 16px 40px; }
+  .flight-results-page .search-page-header { top: 64px; margin-bottom: 14px; padding: 14px 16px; }
+  .flight-results-page .search-page-summary h1 { font-size: 22px; }
+  .flight-results-page .search-page-modify-link { min-height: 40px; }
+  .flight-results-page .sort-tabs { overflow-x: auto; flex-wrap: wrap; gap: 3px; }
+  .flight-results-page .sort-tab { padding: 9px 10px; min-height: 42px; }
+  .flight-results-page .results-count-badge { margin-left: 4px; }
+  .flight-results-page .fare-card-v2-main { grid-template-columns: minmax(0,1fr); grid-template-rows: auto; padding: 18px 15px 15px; gap: 14px; }
+  .flight-results-page .fare-card-v2-airline { grid-column: 1; grid-row: auto; flex-wrap: wrap; }
+  .flight-results-page .fare-card-v2-times { grid-column: 1; grid-row: auto; }
+  .flight-results-page .fare-card-v2-time-row { gap: 9px; }
+  .flight-results-page .fare-card-v2-time { font-size: 19px; }
+  .flight-results-page .fare-card-v2-tags { grid-column: 1; grid-row: auto; }
+  .flight-results-page .fare-card-v2-price-col { grid-column: 1; grid-row: auto; flex-direction: row; flex-wrap: wrap; justify-content: space-between; align-items: center; width: 100%; padding-top: 14px; border-top: 1px solid #e2e8f0; }
+  .flight-results-page .fare-card-v2-price-note { flex-basis: 100%; order: 3; text-align: left; }
+  .flight-results-page .fare-card-v2-book { min-width: 110px; }
+  .flight-results-page .no-results { padding: 32px 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flight-results-page :is(.fare-card-v2,.fare-card-v2-book,.date-switcher button,.result-swap) { transition: none; }
+}
