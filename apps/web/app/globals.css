@@ -2148,3 +2148,19 @@ html { scroll-behavior: smooth; }
   .flight-results-page .sort-tab { padding-inline: 10px; }
   .flight-results-page .no-results-trip-meta span { padding-inline: 6px; font-size: 11px; }
 }
+
+/* Date-window controls use the existing five-date search selector. */
+.flight-results-page .date-navigation { display: grid; grid-template-columns: 28px minmax(0,1fr) 28px; align-items: stretch; gap: 4px; margin-bottom: 14px; }
+.flight-results-page .date-navigation .date-switcher { min-width: 0; gap: 3px; margin: 0 !important; }
+.flight-results-page .date-navigation .date-switcher button { padding-inline: 1px; }
+.flight-results-page .date-navigation .date-switcher button span { font-size: 9px; }
+.flight-results-page .date-navigation .date-switcher button strong { font-size: 11px; }
+.flight-results-page .date-range-arrow { display: grid; place-items: center; padding: 0; border: 1px solid #d9e4f1; border-radius: 9px; background: #fff; color: #263a52; font: inherit; font-size: 21px; cursor: pointer; }
+.flight-results-page .date-range-arrow:hover:not(:disabled) { border-color: #e31e24; color: #b91c1c; }
+.flight-results-page .date-range-arrow:disabled, .flight-results-page .date-switcher button:disabled { opacity: .45; cursor: not-allowed; }
+.flight-results-page .date-navigation button:focus-visible { outline: 2px solid #b91c1c; outline-offset: 2px; }
+.flight-results-page .filter-sidebar > .result-refresh { justify-content: flex-start; margin: -2px 0 10px; }
+@media (max-width: 900px) {
+  .flight-results-page .date-navigation { grid-template-columns: 44px minmax(0,1fr) 44px; gap: 6px; }
+  .flight-results-page .date-navigation .date-switcher button { min-height: 56px; }
+}

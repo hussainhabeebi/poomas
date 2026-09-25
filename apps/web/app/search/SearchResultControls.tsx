@@ -33,6 +33,15 @@ function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function moveDate(value: string, days: number) {
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return isoDate(new Date());
+  date.setUTCDate(date.getUTCDate() + days);
+  return isoDate(date);
+}
+
+const RESULT_FILTER_KEYS = ["stops", "depBand", "refundable", "baggage", "airlines"] as const;
+
 const TIME_BANDS = [
   { label: "Early morning", range: "00–06", sub: "12am–6am" },
   { label: "Morning",       range: "06–12", sub: "6am–12pm" },
@@ -57,6 +66,23 @@ export default function SearchResultControls({ origin, destination, departureDat
   const current = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const currentQuery = current.toString();
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+  const visible = useMemo(() => new URLSearchParams(pendingQuery ?? currentQuery), [pendingQuery, currentQuery]);
+  const today = isoDate(new Date()); // Same UTC day boundary as the homepage search date input.
+  const [windowStart, setWindowStart] = useState(() => {
+    const centered = moveDate(departureDate, -2);
+    return centered < isoDate(new Date()) ? isoDate(new Date()) : centered;
+  });
+
+  useEffect(() => { setPendingQuery(null); }, [currentQuery]);
+  useEffect(() => {
+    setWindowStart((start) => {
+      if (departureDate >= start && departureDate <= moveDate(start, 4)) return start;
+      const centered = moveDate(departureDate, -2);
+      return centered < today ? today : centered;
+    });
+  }, [departureDate, today]);
 
   useEffect(() => {
     const openDates = () => setMobileOpen(true);
@@ -68,32 +94,30 @@ export default function SearchResultControls({ origin, destination, departureDat
     if (mobileOpen) document.querySelector<HTMLButtonElement>("#flight-filter-panel .date-switcher button.active, #flight-filter-panel .date-switcher button")?.focus();
   }, [mobileOpen]);
 
-  const selectedDate = useMemo(() => {
-    const parsed = new Date(`${departureDate}T12:00:00Z`);
-    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-  }, [departureDate]);
-
   function update(updates: Record<string, string | null>) {
-    const next = new URLSearchParams(current.toString());
+    const next = new URLSearchParams(pendingQuery ?? currentQuery);
     Object.entries(updates).forEach(([key, value]) => {
       if (value === null || value === "") next.delete(key);
       else next.set(key, value);
     });
     next.delete("all");
+    setPendingQuery(next.toString());
     startTransition(() => router.push(`/search?${next.toString()}`));
   }
 
-  const dates = [-2, -1, 0, 1, 2].map((offset) => {
-    const date = new Date(selectedDate);
-    date.setUTCDate(date.getUTCDate() + offset);
-    return date;
-  });
+  function resetFilters() {
+    if (RESULT_FILTER_KEYS.some((key) => visible.has(key))) {
+      update(Object.fromEntries(RESULT_FILTER_KEYS.map((key) => [key, null])));
+    }
+  }
 
-  const stops       = current.get("stops");
-  const refundable  = current.get("refundable") === "1";
-  const baggage     = current.get("baggage") === "1";
-  const depBand     = current.get("depBand");
-  const airlines    = (current.get("airlines") ?? "").split(",").filter(Boolean);
+  const dates = [0, 1, 2, 3, 4].map((offset) => new Date(`${moveDate(windowStart, offset)}T12:00:00Z`));
+
+  const stops       = visible.get("stops");
+  const refundable  = visible.get("refundable") === "1";
+  const baggage     = visible.get("baggage") === "1";
+  const depBand     = visible.get("depBand");
+  const airlines    = (visible.get("airlines") ?? "").split(",").filter(Boolean);
 
   // Derive unique airlines from fares
   const uniqueAirlines = useMemo(() => {
@@ -123,23 +147,28 @@ export default function SearchResultControls({ origin, destination, departureDat
       <div className="filter-sidebar-title">
         <span>Filters</span>
         <div className="filter-sidebar-actions">
-          <a href="#" onClick={(e) => { e.preventDefault(); update({ stops: null, refundable: null, baggage: null, depBand: null, airlines: null }); }}>Reset all</a>
+          <a href="#" onClick={(e) => { e.preventDefault(); resetFilters(); }}>Reset all</a>
           <button type="button" className="filter-close" aria-label="Close filters" onClick={() => setMobileOpen(false)}>×</button>
         </div>
       </div>
 
+      {(isPending || pendingQuery !== null) && <div className="result-refresh" role="status"><span /> Updating flights…</div>}
       <div className="filter-section-label">Travel dates</div>
-      <div className="date-switcher" aria-label="Choose departure date" style={{ marginBottom: 16 }}>
-        {dates.map((date) => {
-          const value = isoDate(date);
-          const active = value === departureDate;
-          return (
-            <button key={value} type="button" className={active ? "active" : ""} onClick={() => !active && update({ departureDate: value })}>
-              <span>{date.toLocaleDateString("en", { weekday: "short", timeZone: "UTC" })}</span>
-              <strong>{date.toLocaleDateString("en", { day: "numeric", month: "short", timeZone: "UTC" })}</strong>
-            </button>
-          );
-        })}
+      <div className="date-navigation">
+        <button type="button" className="date-range-arrow" aria-label="Previous travel dates" disabled={windowStart <= today} onClick={() => setWindowStart(moveDate(windowStart, -1))}>‹</button>
+        <div className="date-switcher" aria-label="Choose departure date">
+          {dates.map((date) => {
+            const value = isoDate(date);
+            const active = value === (visible.get("departureDate") ?? departureDate);
+            return (
+              <button key={value} type="button" className={active ? "active" : ""} aria-pressed={active} disabled={value < today} onClick={() => !active && update({ departureDate: value })}>
+                <span>{date.toLocaleDateString("en", { weekday: "short", timeZone: "UTC" })}</span>
+                <strong>{date.toLocaleDateString("en", { day: "numeric", month: "short", timeZone: "UTC" })}</strong>
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" className="date-range-arrow" aria-label="Next travel dates" onClick={() => setWindowStart(moveDate(windowStart, 1))}>›</button>
       </div>
 
       {/* Nearby airports */}
@@ -222,7 +251,6 @@ export default function SearchResultControls({ origin, destination, departureDat
         </div>
       )}
 
-      {isPending && <div className="result-refresh"><span /> Updating…</div>}
       <button type="button" className="filter-apply" onClick={() => setMobileOpen(false)}>Show flights</button>
     </aside>
     </>
