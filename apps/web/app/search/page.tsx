@@ -394,39 +394,32 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
         </div>
       </div>
 
-      {/* Expand row */}
-      <div className="fare-card-v2-expand-row">
-        <span style={{ fontSize: 11, color: "#94a3b8" }}>
-          {fmtDate(dep)} · {fare.supplier ?? ""}
-        </span>
-        <details style={{ display: "inline" }}>
-          <summary className="fare-card-v2-expand-btn" style={{ listStyle: "none", cursor: "pointer" }}>
-            Details ▾
-          </summary>
-        </details>
-      </div>
-
-      {/* Expanded detail */}
-      <div className="fare-card-v2-detail" style={{ display: "none" }} id={`detail-${fare.id}`}>
-        <div className="fare-card-v2-detail-item">
-          <label>Cabin baggage</label>
-          <span>{fare.baggage?.cabin ?? "—"}</span>
-        </div>
-        <div className="fare-card-v2-detail-item">
-          <label>Check-in baggage</label>
-          <span>{fare.baggage?.checked ?? "—"}</span>
-        </div>
-        <div className="fare-card-v2-detail-item">
-          <label>Refundable</label>
-          <span>{fare.isRefundable ? "Yes" : "No"}</span>
-        </div>
-        {fare.fareClass && (
+      <details className="fare-card-v2-details">
+        <summary className="fare-card-v2-expand-row">
+          <span className="fare-card-v2-supplier">{fmtDate(dep)} · {fare.supplier ?? ""}</span>
+          <span className="fare-card-v2-expand-btn">Details <span className="fare-card-v2-expand-indicator" aria-hidden="true">⌄</span></span>
+        </summary>
+        <div className="fare-card-v2-detail">
           <div className="fare-card-v2-detail-item">
-            <label>Fare class</label>
-            <span>{fare.fareClass}</span>
+            <label>Cabin baggage</label>
+            <span>{fare.baggage?.cabin ?? "—"}</span>
           </div>
-        )}
-      </div>
+          <div className="fare-card-v2-detail-item">
+            <label>Check-in baggage</label>
+            <span>{fare.baggage?.checked ?? "—"}</span>
+          </div>
+          <div className="fare-card-v2-detail-item">
+            <label>Refundable</label>
+            <span>{fare.isRefundable ? "Yes" : "No"}</span>
+          </div>
+          {fare.fareClass && (
+            <div className="fare-card-v2-detail-item">
+              <label>Fare class</label>
+              <span>{fare.fareClass}</span>
+            </div>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

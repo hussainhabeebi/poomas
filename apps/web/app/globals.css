@@ -1107,7 +1107,14 @@ html { scroll-behavior: smooth; }
   justify-content: space-between;
   padding: 8px 20px;
   background: #fafbfc;
+  list-style: none;
+  cursor: pointer;
 }
+.fare-card-v2-expand-row::-webkit-details-marker { display: none; }
+.fare-card-v2-expand-row:focus-visible { outline: 2px solid #b91c1c; outline-offset: -3px; }
+.fare-card-v2-supplier { min-width: 0; font-size: 11px; color: #64748b; overflow-wrap: anywhere; }
+.fare-card-v2-expand-indicator { display: inline-block; font-size: 16px; line-height: 1; transition: transform .2s ease; }
+.fare-card-v2-details[open] .fare-card-v2-expand-indicator { transform: rotate(180deg); }
 .fare-card-v2-expand-btn {
   font-size: 11px;
   color: #64748b;
@@ -1138,6 +1145,7 @@ html { scroll-behavior: smooth; }
 }
 .fare-card-v2-detail-item label { display: block; font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
 .fare-card-v2-detail-item span  { font-size: 13px; font-weight: 600; color: #334155; }
+@media (prefers-reduced-motion: reduce) { .fare-card-v2-expand-indicator { transition: none; } }
 
 @media (max-width: 900px) {
   .search-results-layout { grid-template-columns: 1fr; }
