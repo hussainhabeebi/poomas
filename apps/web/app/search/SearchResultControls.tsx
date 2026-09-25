@@ -128,6 +128,7 @@ export default function SearchResultControls({ origin, destination, departureDat
         </div>
       </div>
 
+      <div className="filter-section-label">Travel dates</div>
       <div className="date-switcher" aria-label="Choose departure date" style={{ marginBottom: 16 }}>
         {dates.map((date) => {
           const value = isoDate(date);

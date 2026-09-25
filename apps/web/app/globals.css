@@ -2091,7 +2091,7 @@ html { scroll-behavior: smooth; }
 .flight-results-page .date-switcher button strong { font-size: 12px; }
 .flight-results-page .airport-select select, .flight-results-page .result-swap, .flight-results-page .stops-btn, .flight-results-page .time-band { border-color: #d5e0ee; }
 .flight-results-page .sort-tabs { gap: 0; min-height: 47px; margin: 0 0 16px; padding: 0 4px; border: 0; border-bottom: 1px solid #dce6f0; border-radius: 0; background: transparent; }
-.flight-results-page .sort-tab { min-height: 46px; padding: 12px 18px 10px; border-bottom: 2px solid transparent; border-radius: 0; color: #263a52; font-size: 13px; }
+.flight-results-page .sort-tab { min-height: 46px; padding: 12px 18px 10px; border-bottom: 2px solid transparent; border-radius: 0; color: #263a52; font-size: 13px; text-decoration: none; }
 .flight-results-page .sort-tab.active { border-bottom-color: #e31e24; background: transparent; color: #cc1721; }
 .flight-results-page .results-count-badge { padding: 5px 12px; border-radius: 18px; background: #eef3f9; color: #374b63; font-size: 12px; font-weight: 700; }
 .flight-results-page .fare-card-v2 { border-color: #dce6f1; border-radius: 16px; box-shadow: 0 4px 17px rgba(18,43,75,.035); }
