@@ -23,7 +23,7 @@ function now() {
 export default function LoginPage() {
 
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { id: 1, from: "bot", text: "Hi! 👋 Welcome to POOMAS Travel.", time: now() },
+    { id: 1, from: "bot", text: "Hi! 👋 Welcome to FlyPoomas.", time: now() },
     { id: 2, from: "bot", text: "Please enter your email address to sign in.", time: now() },
   ]);
   const [step, setStep] = useState<Step>("email");
@@ -139,7 +139,7 @@ export default function LoginPage() {
           </a>
           <div className="wa-avatar">✈️</div>
           <div className="wa-header-info">
-            <div className="wa-contact-name">POOMAS Travel</div>
+            <div className="wa-contact-name">FlyPoomas</div>
             <div className="wa-contact-status">Online</div>
           </div>
           <div className="wa-header-icons">
@@ -271,13 +271,13 @@ export default function LoginPage() {
       {/* Desktop fallback — traditional card */}
       <div className="wa-desktop-fallback">
         <div className="wa-desktop-card">
-          <img src="/logo.svg" alt="POOMAS" height={40} style={{ margin: "0 auto 24px", display: "block" }} />
+          <img src="/logo.svg" alt="FlyPoomas logo" height={40} style={{ margin: "0 auto 24px", display: "block" }} />
           <h1 style={{ textAlign: "center", marginBottom: 28, fontSize: 22, fontWeight: 700, color: "#1e293b" }}>
-            Sign in to POOMAS
+            Sign in to FlyPoomas
           </h1>
           <DesktopLoginForm />
           <p style={{ textAlign: "center", marginTop: 18, fontSize: 14, color: "#64748b" }}>
-            New to POOMAS? <a href="/signup" style={{ color: "#E31E24", fontWeight: 700 }}>Create an account</a>
+            New to FlyPoomas? <a href="/signup" style={{ color: "#E31E24", fontWeight: 700 }}>Create an account</a>
           </p>
         </div>
       </div>

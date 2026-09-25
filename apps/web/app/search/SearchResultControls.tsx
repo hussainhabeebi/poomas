@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 type Props = {
   origin: string;
@@ -40,11 +40,33 @@ const TIME_BANDS = [
   { label: "Evening",       range: "18–24", sub: "6pm–12am" },
 ];
 
+export function ChangeDatesAction() {
+  function focusDateControls() {
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      window.dispatchEvent(new Event("flypoomas:open-date-filters"));
+    } else {
+      document.querySelector<HTMLButtonElement>("#flight-filter-panel .date-switcher button.active, #flight-filter-panel .date-switcher button")?.focus();
+    }
+  }
+
+  return <button type="button" className="no-results-secondary" onClick={focusDateControls}>Change dates</button>;
+}
+
 export default function SearchResultControls({ origin, destination, departureDate, fares = [] }: Props) {
   const router = useRouter();
   const current = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    const openDates = () => setMobileOpen(true);
+    window.addEventListener("flypoomas:open-date-filters", openDates);
+    return () => window.removeEventListener("flypoomas:open-date-filters", openDates);
+  }, []);
+
+  useEffect(() => {
+    if (mobileOpen) document.querySelector<HTMLButtonElement>("#flight-filter-panel .date-switcher button.active, #flight-filter-panel .date-switcher button")?.focus();
+  }, [mobileOpen]);
 
   const selectedDate = useMemo(() => {
     const parsed = new Date(`${departureDate}T12:00:00Z`);

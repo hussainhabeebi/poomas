@@ -95,7 +95,7 @@ export default function WalletPage() {
   }
 
   function share(c: Coupon) {
-    const text = `I've sent you ${inr(Number(c.amount))} on POOMAS! Redeem code ${c.code} at https://flypoomas.com/wallet before ${new Date(c.expiresAt).toLocaleDateString("en-IN")}.`;
+    const text = `I've sent you ${inr(Number(c.amount))} on FlyPoomas! Redeem code ${c.code} at https://flypoomas.com/wallet before ${new Date(c.expiresAt).toLocaleDateString("en-IN")}.`;
     if (navigator.share) navigator.share({ text }).catch(() => {});
     else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   }
@@ -106,7 +106,7 @@ export default function WalletPage() {
     return (
       <main className="page-container" style={{ padding: "40px 16px", maxWidth: 520 }}>
         <section style={card}>
-          <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>POOMAS Wallet</h1>
+          <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>FlyPoomas Wallet</h1>
           <p style={{ color: "#64748b", margin: "0 0 18px" }}>Sign in to see your balance. Every confirmed booking earns you ₹50, and you can pay for flights with your wallet.</p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a href="/signup?next=/wallet" style={primaryBtn}>Create account</a>
@@ -139,7 +139,7 @@ export default function WalletPage() {
         </section>
         <section style={card}>
           <h2 style={h2}>Redeem a code</h2>
-          <p style={muted}>Got a POOMAS wallet code from someone? Add it here.</p>
+          <p style={muted}>Got a FlyPoomas wallet code from someone? Add it here.</p>
           <form onSubmit={redeem} style={{ display: "flex", gap: 8 }}>
             <input placeholder="PM-XXXXX-XXXXX" value={redeemCode} onChange={(e) => setRedeemCode(e.target.value.toUpperCase())} style={{ ...input, textTransform: "uppercase" }} />
             <button type="submit" disabled={busy} style={{ ...primaryBtn, opacity: busy ? .6 : 1 }}>Redeem</button>

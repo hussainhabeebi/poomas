@@ -1,6 +1,6 @@
 {
-  "name": "POOMAS Traveldays",
-  "short_name": "POOMAS",
+  "name": "FlyPoomas",
+  "short_name": "FlyPoomas",
   "description": "Book flights at best prices",
   "start_url": "/",
   "display": "standalone",

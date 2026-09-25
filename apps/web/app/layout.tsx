@@ -3,11 +3,11 @@ import "./globals.css";
 import SiteNav from "./components/SiteNav";
 
 export const metadata: Metadata = {
-  title: "POOMAS Traveldays",
+  title: "FlyPoomas",
   description: "Book flights at best prices — India, Gulf & beyond",
   icons: { icon: "/favicon.ico", apple: "/logo.png" },
   manifest: "/manifest.json",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "POOMAS" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "FlyPoomas" },
 };
 
 export const viewport: Viewport = {
@@ -32,8 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="site-header">
           <a href="/" className="site-logo-link">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="POOMAS Traveldays" height={34} className="site-logo" />
-            <span className="site-brand-name" aria-hidden="true">POOMAS Traveldays</span>
+            <img src="/logo.png" alt="" height={34} className="site-logo" />
+            <span className="site-brand-name">FlyPoomas</span>
           </a>
           <SiteNav />
         </header>

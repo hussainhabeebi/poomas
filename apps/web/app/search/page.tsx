@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import SearchResultControls from "./SearchResultControls";
+import SearchResultControls, { ChangeDatesAction } from "./SearchResultControls";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
@@ -183,10 +183,22 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
 
           {filteredFares.length === 0 ? (
             <div className="no-results">
-              <div className="no-results-icon" aria-hidden="true">✈</div>
-              <h2>{result.apiError || failingSuppliers.length > 0 ? "No flights available right now" : "No flights found"}</h2>
+              <div className="no-results-journey">
+                <span>{params.origin}</span>
+                <span className="no-results-route-icon" aria-hidden="true">✈</span>
+                <span>{params.destination}</span>
+              </div>
+              <div className="no-results-trip-meta">
+                {params.departureDate} · {adults} adult{adults > 1 ? "s" : ""} · {(params.cabinClass ?? "ECONOMY").replace("_", " ")}
+                {requestedCurrency ? ` · ${requestedCurrency}` : ""}
+              </div>
+              <h2>No flights available right now</h2>
               <p>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
-              <a href="/" className="fare-card-book-btn no-results-action">Search again</a>
+              <div className="no-results-actions">
+                <a href="/" className="fare-card-book-btn no-results-action">Search again</a>
+                <ChangeDatesAction />
+                <a href="/#flight-search" className="no-results-secondary">Modify search</a>
+              </div>
               {(result.apiError || failingSuppliers.length > 0) && result.searchId && (
                 <p className="no-results-reference">Reference: {result.searchId.slice(0, 8)}</p>
               )}
