@@ -31,8 +31,8 @@ export default function SiteNav() {
       <a href="/hotels" className={navClass("hotels")} aria-current={active === "hotels" ? "page" : undefined}>Hotels</a>
       <a href="/trips" className={navClass("trips")} aria-current={active === "trips" ? "page" : undefined}>My Trips</a>
       <a href="/wallet" className={navClass("wallet")} aria-current={active === "wallet" ? "page" : undefined}>Wallet</a>
-      <a href="/account" className="nav-link home-account-link">{accountIcon}<span>Account</span></a>
-      <a href="/account" className="home-mobile-account-link" aria-label="Account">{accountIcon}<span>Account</span></a>
+      <a href="/account" className="nav-link home-account-link"><span className="site-account-icon-wrap">{accountIcon}</span><span>Account</span></a>
+      <a href="/account" className="home-mobile-account-link" aria-label="Account"><span className="site-account-icon-wrap">{accountIcon}</span><span>Account</span></a>
       <details className="home-mobile-menu">
         <summary aria-label="Navigation menu">
           <span className="home-mobile-menu-icon" aria-hidden="true"><i /><i /><i /></span>
