@@ -383,18 +383,13 @@ select.search-input {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   WhatsApp-style Mobile Login
-   Visible only on mobile (< 768px); desktop shows .wa-desktop-fallback.
+   Login presentation: the conventional form is used at every viewport.
+   The chat implementation remains in the login component but is not the default UI.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Visibility split ────────────────────────────────────────────────────── */
-.wa-screen           { display: flex; }
-.wa-desktop-fallback { display: none; }
-
-@media (min-width: 768px) {
-  .wa-screen           { display: none; }
-  .wa-desktop-fallback { display: flex; }
-}
+.wa-screen           { display: none; }
+.wa-desktop-fallback { display: flex; }
 
 /* ── Full-screen overlay ─────────────────────────────────────────────────── */
 .wa-screen {
@@ -652,6 +647,8 @@ select.search-input {
   align-items: center;
   justify-content: center;
   background: #f9fafb;
+  padding: 24px 16px;
+  box-sizing: border-box;
 }
 
 .wa-desktop-card {
@@ -661,6 +658,12 @@ select.search-input {
   box-shadow: 0 4px 24px rgba(0,0,0,0.08);
   width: 100%;
   max-width: 420px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 767px) {
+  .wa-desktop-fallback { min-height: calc(100dvh - 66px); }
+  .wa-desktop-card { padding: 28px 22px; }
 }
 
 
