@@ -42,6 +42,14 @@ const CURRENCIES = [
   { code: "USD" as CurrencyCode, symbol: "$" },
 ];
 const POPULAR_HUB_CODES = ["DXB", "AUH", "DOH", "BOM", "DEL", "COK"];
+const HUB_IMAGES: Record<string, string> = {
+  DXB: "/routes/dubai.jpg",
+  AUH: "/routes/abu-dhabi.jpg",
+  DOH: "/routes/doha.jpg",
+  BOM: "/routes/mumbai.jpg",
+  DEL: "/routes/delhi.jpg",
+  COK: "/routes/kochi.jpg",
+};
 
 function CityInput({
   label, value, onChange,
@@ -219,9 +227,15 @@ export default function HotelsPage() {
             {POPULAR_HUB_CODES.map((code) => {
               const hub = CITIES.find((item) => item.code === code)!;
               return <button type="button" key={code} className="hw-hub" onClick={() => chooseHub(hub)}>
-                <span className="hw-hub-mark" aria-hidden="true">{hub.city.slice(0, 1)}</span>
-                <span><strong>{hub.city}</strong><small>{hub.country} · {hub.code}</small></span>
-                <span className="hw-hub-arrow" aria-hidden="true">↗</span>
+                <span className="hw-hub-image" aria-hidden="true">
+                  {/* The city name below supplies the button's accessible name. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={HUB_IMAGES[code]} alt="" loading="lazy" decoding="async" width="640" height="360" />
+                </span>
+                <span className="hw-hub-content">
+                  <span><strong>{hub.city}</strong><small>{hub.country} · {hub.code}</small></span>
+                  <span className="hw-hub-arrow" aria-hidden="true">↗</span>
+                </span>
               </button>;
             })}
           </div>
@@ -320,13 +334,16 @@ const css = `
 .hw-section-heading p { margin: 0 0 2px; color: #697b91; font-size: 12px; }
 .hw-eyebrow { color: #c71c28; font-size: 10px; letter-spacing: .12em; font-weight: 800; }
 .hw-hub-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 11px; }
-.hw-hub { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 68px; padding: 11px 14px; border: 1px solid #dfe7f0; border-radius: 12px; background: white; color: #1a2e47; text-align: left; cursor: pointer; transition: border-color .2s, box-shadow .2s, transform .2s; }
+.hw-hub { display: block; min-width: 0; padding: 0; overflow: hidden; border: 1px solid #dfe7f0; border-radius: 12px; background: white; color: #1a2e47; text-align: left; cursor: pointer; transition: border-color .2s, box-shadow .2s, transform .2s; }
 .hw-hub:hover { transform: translateY(-2px); border-color: #e5b6bd; box-shadow: 0 7px 18px rgba(18,39,68,.06); }
-.hw-hub-mark { display: grid; place-items: center; flex: none; width: 37px; height: 37px; border-radius: 9px; background: #f3f5f9; color: #bd2932; font-size: 16px; font-weight: 800; }
+.hw-hub-image { display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #e8edf3; }
+.hw-hub-image img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .22s ease; }
+.hw-hub:hover .hw-hub-image img { transform: scale(1.035); }
+.hw-hub-content { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 65px; padding: 12px 15px; }
 .hw-hub strong, .hw-hub small { display: block; }
-.hw-hub strong { font-size: 13px; }
+.hw-hub strong { font-size: 15px; }
 .hw-hub small { margin-top: 3px; color: #718096; font-size: 11px; }
-.hw-hub-arrow { margin-left: auto; color: #a6b3c3; font-size: 18px; }
+.hw-hub-arrow { flex: none; color: #a6b3c3; font-size: 18px; }
 .hw-benefits { margin-top: 46px; }
 .hw-benefit-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
 .hw-benefit { min-width: 0; padding: 21px; border: 1px solid #e5ebf2; border-radius: 13px; background: #fff; }
@@ -364,13 +381,12 @@ const css = `
   .hw-perks { gap: 7px 14px; line-height: 1.4; }
   .hw-hubs, .hw-benefits { margin-top: 34px; }
   .hw-hub-list { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
-  .hw-hub { padding: 9px; min-height: 65px; gap: 8px; }
-  .hw-hub-mark { width: 30px; height: 30px; font-size: 13px; }
+  .hw-hub-content { min-height: 62px; padding: 10px; }
   .hw-hub strong { font-size: 12px; }
   .hw-hub small { font-size: 10px; }
-  .hw-hub-arrow { display: none; }
+  .hw-hub-arrow { font-size: 15px; }
   .hw-benefit-grid { grid-template-columns: 1fr; gap: 10px; }
   .hw-benefit { padding: 17px; }
 }
-@media (prefers-reduced-motion: reduce) { .hw-hub, .hw-cur { transition: none; } .hw-hub:hover { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .hw-hub, .hw-hub-image img, .hw-cur { transition: none; } .hw-hub:hover, .hw-hub:hover .hw-hub-image img { transform: none; } }
 `;
