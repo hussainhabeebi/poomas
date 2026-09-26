@@ -9,6 +9,7 @@ import {
 } from "@poomas/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
+import { resolveFlightSuppliers } from "./routes/search.js";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
@@ -51,6 +52,9 @@ type NotifyQueueMsg    = NotifyBookingMsg | NotifyOtpMsg;
 
 // ── Booking Queue consumer ────────────────────────────────────────
 
+// Matches max_retries = 3 on the poomas-bookings consumer (1 try + 3 retries).
+const BOOKING_MAX_ATTEMPTS = 4;
+
 export async function handleBookingQueue(
   batch: MessageBatch<BookingQueueMsg>,
   env: Env,
@@ -64,7 +68,7 @@ export async function handleBookingQueue(
       if (data.type === "INITIATE_PAYMENT") {
         await handleInitiatePayment(db, env, data);
       } else if (data.type === "PAYMENT_CAPTURED") {
-        await handlePaymentCaptured(db, env, data);
+        await handlePaymentCaptured(db, env, data, msg.attempts >= BOOKING_MAX_ATTEMPTS);
       }
 
       msg.ack();
@@ -342,6 +346,7 @@ async function handlePaymentCaptured(
   db: ReturnType<typeof createDb>,
   env: Env,
   data: PaymentCapturedMsg,
+  finalAttempt = false,
 ): Promise<void> {
   // Find the booking from the payment record
   const [payment] = await db
@@ -367,23 +372,28 @@ async function handlePaymentCaptured(
     return;
   }
 
-  // Load supplier configs for this tenant
+  // Resolve suppliers exactly like search / checkout: the tenant DB rows plus the
+  // Admin-saved TripJack integration (key + toggle) and Worker secrets. Using the
+  // DB rows alone left TripJack "not available" here whenever it was configured
+  // from Admin or env only, so paid bookings never reached the airline.
   const supplierRows = await db
     .select()
     .from(tenantSupplierConfigs)
     .where(eq(tenantSupplierConfigs.tenantId, booking.tenantId));
 
-  const supplierConfigs = supplierRows.map((s) => ({
-    name:        s.supplier as "RIYA" | "TRIPJACK" | "GOOGLE_SERP",
-    isEnabled:   s.isEnabled,
-    priority:    s.priority,
-    credentials: s.credentials as Record<string, string> | null,
-    timeoutMs:   s.timeoutMs,
-    maxRetries:  s.maxRetries,
-  }));
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(
+    env,
+    { supplierConfigs: supplierRows.map((s) => ({
+      supplier:    s.supplier,
+      isEnabled:   s.isEnabled,
+      priority:    s.priority,
+      credentials: s.credentials as Record<string, string> | null,
+      timeoutMs:   s.timeoutMs,
+      maxRetries:  s.maxRetries,
+    })) } as unknown as Parameters<typeof resolveFlightSuppliers>[1],
+    booking.tenantId,
+  );
 
-  // Build platform credentials from env so the queue worker can reach suppliers
-  // even when they are configured only via env vars and not in the DB.
   // Raw TripJack exchanges (review / book / booking-details) for certification logs.
   const collector = collectExchanges();
   const flightMeta = (booking.flightData ?? {}) as Record<string, unknown>;
@@ -391,17 +401,11 @@ async function handlePaymentCaptured(
     bookingId: booking.id, searchId: typeof flightMeta.searchId === "string" ? flightMeta.searchId : null,
   });
   for (const cfg of supplierConfigs) {
-    if (cfg.name === "TRIPJACK" && cfg.credentials) cfg.credentials = { ...cfg.credentials, recorder: collector.recorder } as any;
+    if (cfg.name === "TRIPJACK") cfg.credentials = { ...(cfg.credentials ?? {}), recorder: collector.recorder } as any;
   }
-
-  const platformCredentials = {
-    ...(env.RIYA_API_KEY && env.RIYA_API_BASE_URL
-      ? { RIYA: { apiKey: env.RIYA_API_KEY, secretKey: env.RIYA_API_SECRET, baseUrl: env.RIYA_API_BASE_URL } }
-      : {}),
-    ...((env.TRIPJACK_API_KEY || env.TRIPJACK_PROXY_KEY) && env.TRIPJACK_API_BASE_URL
-      ? { TRIPJACK: { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY, recorder: collector.recorder } }
-      : {}),
-  };
+  if (platformCredentials.TRIPJACK) {
+    platformCredentials.TRIPJACK = { ...platformCredentials.TRIPJACK, recorder: collector.recorder } as any;
+  }
 
   // Load passengers
   const paxRows = await db
@@ -409,8 +413,25 @@ async function handlePaymentCaptured(
     .from(bookingPassengers)
     .where(eq(bookingPassengers.bookingId, booking.id));
 
+  // Before the airline is called, a failure is safe to retry. On the last attempt
+  // stop the traveller waiting forever: fail the booking and refund the payment.
+  const failBeforeBooking = async (err: unknown) => {
+    if (!finalAttempt) throw err;
+    console.error(`[booking] ${booking.id} could not reach the supplier after ${BOOKING_MAX_ATTEMPTS} attempts:`, err);
+    await db.update(bookings)
+      .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
+      .where(eq(bookings.id, booking.id));
+    await triggerAutoRefund(db, env, booking.id, data.gatewayPaymentId, Number(booking.totalAmount));
+    throw err;
+  };
+
   // Call supplier book()
-  const adapter = getBookableAdapter(booking.supplier as "RIYA" | "TRIPJACK", supplierConfigs, platformCredentials);
+  let adapter: ReturnType<typeof getBookableAdapter>;
+  try {
+    adapter = getBookableAdapter(booking.supplier as "RIYA" | "TRIPJACK", supplierConfigs, platformCredentials);
+  } catch (err) {
+    return failBeforeBooking(err);
+  }
 
   if (!adapter.book) {
     throw new Error(`${booking.supplier} adapter does not implement book()`);
@@ -424,10 +445,10 @@ async function handlePaymentCaptured(
   let tripjackHoldId = booking.supplierBookingRef ?? "";
   if (booking.supplier === "TRIPJACK" && !tripjackHoldId) {
     const fareId = (flightData.id as string) ?? booking.supplierSessionId ?? "";
-    if (!fareId) throw new Error(`TripJack booking ${booking.id}: no fare ID to review`);
+    if (!fareId) return failBeforeBooking(new Error(`TripJack booking ${booking.id}: no fare ID to review`));
     if (!adapter.revalidate) throw new Error("TripJack adapter missing revalidate");
     let reviewed;
-    try { reviewed = await adapter.revalidate(fareId); } catch (err) { await saveLogs(); throw err; }
+    try { reviewed = await adapter.revalidate(fareId); } catch (err) { await saveLogs(); return failBeforeBooking(err); }
     tripjackHoldId = reviewed.bookingId;
     // Persist so retries don't call review again
     await db.update(bookings)

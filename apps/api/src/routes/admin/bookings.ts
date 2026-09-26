@@ -134,6 +134,30 @@ bookingsAdminRoutes.get("/:id/exchanges.zip", async (c) => {
 });
 
 // Calls TripJack booking-details now (logged against the booking) and returns the parsed result.
+// Re-run the airline booking for a paid booking stuck in PAYMENT_PENDING
+// (e.g. the background job could not reach TripJack). Safe to repeat: the
+// job skips bookings that are already confirmed or ticketed.
+bookingsAdminRoutes.post("/:id/retry-booking", async (c) => {
+  const b = await loadBooking(c, c.req.param("id"));
+  if (b.status !== "PAYMENT_PENDING") throw new HTTPException(400, { message: `Booking is ${b.status} — only paid bookings waiting for the airline can be retried` });
+  const [payment] = await c.get("db")
+    .select({ status: payments.status, gatewayOrderId: payments.gatewayOrderId, gatewayPaymentId: payments.gatewayPaymentId, amount: payments.amount })
+    .from(payments)
+    .where(eq(payments.bookingId, b.id))
+    .orderBy(desc(payments.createdAt))
+    .limit(1);
+  if (!payment || payment.status !== "SUCCESS" || !payment.gatewayOrderId) {
+    throw new HTTPException(400, { message: "No successful payment found for this booking" });
+  }
+  await c.env.BOOKING_QUEUE.send({
+    type:             "PAYMENT_CAPTURED",
+    gatewayPaymentId: payment.gatewayPaymentId ?? payment.gatewayOrderId,
+    orderId:          payment.gatewayOrderId,
+    amount:           Number(payment.amount),
+  });
+  return c.json({ ok: true });
+});
+
 bookingsAdminRoutes.post("/:id/refresh-details", async (c) => {
   const b = await loadBooking(c, c.req.param("id"));
   if (b.supplier !== "TRIPJACK" || !b.supplierBookingRef) throw new HTTPException(400, { message: "No TripJack booking reference on this booking" });
