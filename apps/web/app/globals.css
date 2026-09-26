@@ -2067,6 +2067,118 @@ html { scroll-behavior: smooth; }
   body:has(.home-phase1) .site-logo-link:hover .site-logo { transform: none; }
 }
 
+/* Shared customer header. Search-form currency selectors keep their own state and layout. */
+@media (min-width: 1024px) {
+  body .site-header {
+    min-height: 68px;
+    padding-block: 0;
+    padding-inline: max(24px, calc((100vw - 1440px) / 2));
+    gap: 24px;
+    box-shadow: 0 1px 12px rgba(15, 23, 42, .04);
+  }
+  body .site-nav { gap: 4px; }
+  body .site-nav > .nav-link {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 12px 15px;
+    border-radius: 0;
+    background: transparent;
+    color: #263449;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: color .22s ease;
+  }
+  body .site-nav > .nav-link:hover,
+  body .site-nav > .nav-link:focus-visible,
+  body .site-nav > .nav-link-active { color: #b91c1c; background: transparent; }
+  body .site-nav > .nav-link-active::after {
+    content: "";
+    position: absolute;
+    right: 15px;
+    bottom: 1px;
+    left: 15px;
+    height: 2px;
+    border-radius: 2px;
+    background: #b91c1c;
+  }
+  body .site-nav > .home-account-link {
+    display: inline-flex;
+    margin-left: 12px;
+    border: 1px solid #dbe3ec;
+    border-radius: 9px;
+    min-height: 42px;
+    padding: 9px 13px;
+  }
+  body .site-nav > .home-account-link:hover,
+  body .site-nav > .home-account-link:focus-visible { border-color: #b91c1c; }
+  body:has(.home-phase1) .site-nav > .nav-link:hover,
+  body:has(.home-phase1) .site-nav > .nav-link:focus-visible,
+  body:has(.home-phase1) .site-nav > .nav-link-active { background: transparent; }
+  body:has(.home-phase1) .site-nav > .home-account-link { border: 1px solid #dbe3ec; }
+}
+
+@media (max-width: 1023px) {
+  body .site-header { min-height: 64px; padding: 8px 20px; gap: 12px; }
+  body .site-nav { gap: 8px; flex-shrink: 0; position: relative; }
+  body .site-nav > .nav-link { display: none; }
+  body .home-mobile-account-link,
+  body .home-mobile-menu { display: block; }
+  body .home-mobile-account-link,
+  body .home-mobile-menu summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid #dbe3ec;
+    border-radius: 9px;
+    background: #fff;
+    color: #14233a;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  body .home-mobile-menu summary { list-style: none; }
+  body .home-mobile-menu summary::-webkit-details-marker { display: none; }
+  body .home-mobile-menu-icon { display: grid; gap: 3px; width: 17px; }
+  body .home-mobile-menu-icon i { width: 17px; height: 2px; border-radius: 2px; background: currentColor; }
+  body .home-mobile-menu-panel {
+    position: absolute;
+    top: calc(100% + 7px);
+    right: 0;
+    z-index: 100;
+    display: grid;
+    width: min(300px, calc(100vw - 24px));
+    padding: 8px;
+    border: 1px solid #dbe3ec;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 14px 36px rgba(15,23,42,.18);
+  }
+  body .home-mobile-menu-panel .nav-link { display: block; min-height: 44px; padding: 12px 14px; border-radius: 8px; font-size: 14px; }
+  body .home-mobile-menu-panel .nav-link-active { color: #b91c1c; background: transparent; box-shadow: inset 3px 0 #b91c1c; }
+  body:has(.home-phase1) .home-mobile-menu-panel .nav-link-active { background: transparent; }
+}
+
+@media (max-width: 430px) {
+  body .site-header { padding-inline: 12px; gap: 8px; }
+  body .site-nav { gap: 6px; }
+  body .home-mobile-account-link,
+  body .home-mobile-menu summary { padding-inline: 9px; font-size: 12px; }
+}
+
+body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  body .site-nav > .nav-link { transition: none; }
+}
+
 /* Search results visual system. Kept under the page class to protect other routes. */
 .flight-results-page { width: min(100%, 1490px); padding: 18px 28px 72px; }
 .flight-results-page .search-page-header {
