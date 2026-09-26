@@ -53,9 +53,13 @@ export default function TripsPage() {
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const visible = trips.filter((trip) => matches(trip, filter, today));
+  const counts = Object.fromEntries(filters.map(({ id }) => [id, trips.filter((trip) => matches(trip, id, today)).length])) as Record<Filter, number>;
 
   return <main className={styles.page}><div className={styles.container}>
-    <header className={styles.intro}><h1>My Trips</h1><p>View and manage your flight and hotel bookings</p></header>
+    <header className={styles.hero}>
+      <img className={styles.heroImage} src="/trips/airplane-wing-clouds.webp" alt="" width="2048" height="694" fetchPriority="high" />
+      <div className={styles.heroContent}><h1>My Trips</h1><p>Manage your bookings and travel details</p></div>
+    </header>
     {signedIn === null || (loading && signedIn) ? <div className={styles.message} role="status">Loading your bookings…</div>
       : !signedIn ? <section className={styles.message}>
         <h2>Sign in to see your trips</h2><p>Bookings made with your account will appear here.</p>
@@ -68,7 +72,7 @@ export default function TripsPage() {
         <nav className={styles.filters} aria-label="Filter bookings">
           {filters.map(({ id, label }) => <button key={id} type="button"
             className={`${styles.filter} ${filter === id ? styles.selected : ""}`}
-            aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
+            aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <span className={styles.count}>{counts[id]}</span></button>)}
         </nav>
         {error ? <div className={styles.error} role="alert">{error}</div>
           : visible.length ? <div className={styles.list}>{visible.map((trip) => <TripCard key={trip.id} trip={trip} />)}</div>
@@ -87,7 +91,7 @@ function TripCard({ trip }: { trip: TripRow }) {
   const status = STATUS_LABEL[trip.status] ?? { label: trip.status.replaceAll("_", " ").toLowerCase(), color: "#334155", bg: "#f1f5f9" };
   const passengers = trip.adultCount + trip.childCount + trip.infantCount;
   return <article className={styles.card}>
-    <div className={styles.cardHead}><div><span className={styles.cardEyebrow}>Flight booking</span>
+    <div className={styles.cardHead}><div><span className={styles.cardEyebrow}><span aria-hidden="true">✈</span> Flight booking</span>
       <h2>{trip.origin} <span aria-hidden="true">→</span> {trip.destination}</h2></div>
       <span className={styles.status} style={{ color: status.color, backgroundColor: status.bg }}>{status.label}</span>
     </div>
