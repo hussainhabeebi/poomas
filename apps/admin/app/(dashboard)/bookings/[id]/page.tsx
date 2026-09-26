@@ -76,6 +76,18 @@ export default function BookingDetailPage() {
     } catch (e: any) { setError(e.message); } finally { setBusy(""); }
   }
 
+  async function retryBooking() {
+    if (!confirm("Send this paid booking to TripJack again?")) return;
+    setBusy("retry"); setError(""); setNotice("");
+    try {
+      const res = await fetch(`${API}/api/admin/bookings/${id}/retry-booking`, { method: "POST", headers: apiHeaders() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message ?? d.error ?? `HTTP ${res.status}`);
+      setNotice("Booking sent to TripJack again. Status and PNR update in a few seconds.");
+      setTimeout(load, 8000);
+    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  }
+
   if (error && !data) return <div><a href="/bookings" style={backLink}>← Bookings</a><div style={errBox}>{error}</div></div>;
   if (!data) return <p style={{ color: "#64748b" }}>Loading booking…</p>;
 
@@ -105,6 +117,12 @@ export default function BookingDetailPage() {
       </div>
 
       {error && <div style={errBox}>{error}</div>}
+      {b.status === "PAYMENT_PENDING" && (
+        <div style={{ ...errBox, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span>Paid, but the airline booking has not completed. The customer is waiting on the confirmation page.</span>
+          <button disabled={!!busy} onClick={retryBooking} style={btn}>{busy === "retry" ? "Sending…" : "Retry airline booking"}</button>
+        </div>
+      )}
       {notice && <div style={okBox}>{notice}</div>}
 
       {tab === "overview" && (
