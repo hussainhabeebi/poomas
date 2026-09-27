@@ -16,7 +16,15 @@ export class TripjackHotelAdapter {
   async search(params: HotelSearchParams): Promise<NormalizedHotel[]> {
     const raw = await this.client.hotelSearch(params) as {
       searchResult?: { his?: Record<string, unknown>[] };
+      status?: { success?: boolean; statusMessage?: string };
+      errors?: { errCode?: string; message?: string }[];
     };
+    if (raw?.status?.success === false) {
+      const detail = raw.errors?.map((e) => [e.errCode, e.message].filter(Boolean).join(" ")).join("; ") || raw.status.statusMessage || "";
+      throw Object.assign(new Error(`TripJack rejected the hotel search${detail ? `: ${detail}` : ""}`), {
+        endpoint: "/hotel-search/v1", responseSnippet: JSON.stringify(raw).slice(0, 800),
+      });
+    }
     const hotels = raw?.searchResult?.his ?? [];
     return hotels.map((h) => normalizeTripjackHotel(h as Record<string, unknown>, params.checkIn, params.checkOut));
   }

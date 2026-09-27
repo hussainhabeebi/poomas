@@ -4,6 +4,72 @@ import { z } from "zod";
 import { TripjackHotelAdapter } from "@poomas/suppliers";
 import type { SupplierCredentials } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
+import { logSupplierCall } from "../lib/supplier-logger.js";
+
+// Every hotel call is written to Admin → Supplier logs: endpoint, gateway URL,
+// HTTP status, error code, TripJack's (or the gateway's) response and timing.
+function errorCodeOf(err: any): string {
+  const snippet = typeof err?.responseSnippet === "string" ? err.responseSnippet : "";
+  try {
+    const body = JSON.parse(snippet);
+    const code = body?.error ?? body?.errors?.[0]?.errCode ?? body?.status?.errCode;
+    if (code) return String(code);
+  } catch { /* not JSON */ }
+  if (typeof err?.statusCode === "number") return `HTTP_${err.statusCode}`;
+  if (err?.name === "TimeoutError" || /timed out|timeout/i.test(String(err?.message))) return "TIMEOUT";
+  return err?.name === "TypeError" ? "NETWORK_ERROR" : "HOTEL_API_ERROR";
+}
+
+function errorMessageOf(err: any): string {
+  const base = err instanceof Error ? err.message : String(err);
+  let supplier = "";
+  try {
+    const body = JSON.parse(err?.responseSnippet ?? "");
+    supplier = body?.errors?.map((e: any) => e?.message ?? e?.details).filter(Boolean).join("; ")
+      || body?.status?.statusMessage || body?.message || body?.error || "";
+  } catch { /* not JSON */ }
+  const hint = err?.statusCode === 404
+    ? " — the gateway or TripJack has no such route (check the gateway ROUTES map and the TripJack hotel base URL)"
+    : err?.statusCode === 401 || err?.statusCode === 403 ? " — API key or IP whitelist rejected" : "";
+  return `${base}${supplier ? ` — TripJack: ${supplier}` : ""}${hint}`;
+}
+
+async function logged<T>(
+  c: any,
+  endpoint: string,
+  requestSummary: Record<string, unknown>,
+  call: () => Promise<T>,
+  summarize: (result: T) => Record<string, unknown> = () => ({}),
+): Promise<T> {
+  const started = Date.now();
+  const requestId = crypto.randomUUID();
+  const base = { tenantId: c.get("tenantId"), supplier: "TRIPJACK" as const, endpoint, requestId };
+  const summary = { ...requestSummary, gatewayUrl: `${(c.env.TRIPJACK_API_BASE_URL ?? "").replace(/\/$/, "")}${endpoint}` };
+  try {
+    const result = await call();
+    c.executionCtx.waitUntil(logSupplierCall(c.get("db"), {
+      ...base, level: "INFO", httpStatus: 200, durationMs: Date.now() - started,
+      requestSummary: { ...summary, ...summarize(result) },
+    }));
+    return result;
+  } catch (err: any) {
+    console.error(`[hotel] ${endpoint} failed`, err);
+    await logSupplierCall(c.get("db"), {
+      ...base, level: "ERROR",
+      httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
+      errorCode: errorCodeOf(err),
+      errorMessage: errorMessageOf(err),
+      responseSnippet: typeof err?.responseSnippet === "string" ? err.responseSnippet : (err?.stack ?? String(err)).slice(0, 800),
+      requestSummary: summary,
+      durationMs: Date.now() - started,
+    });
+    throw Object.assign(err instanceof Error ? err : new Error(String(err)), { requestId });
+  }
+}
+
+function hotelError(c: any, err: any, fallback: string) {
+  return c.json({ error: err?.message ?? fallback, errorCode: errorCodeOf(err), requestId: err?.requestId }, 502);
+}
 
 function tripjackCredentials(env: Env): SupplierCredentials {
   return { apiKey: env.TRIPJACK_API_KEY, baseUrl: env.TRIPJACK_API_BASE_URL, proxyKey: env.TRIPJACK_PROXY_KEY };
@@ -60,7 +126,16 @@ hotelRoutes.post("/search", zValidator("json", hotelSearchSchema), async (c) => 
     // cache miss is fine
   }
 
-  const hotels = await adapter.search(params);
+  let hotels;
+  try {
+    hotels = await logged(c, "/hotel-search/v1", {
+      cityCode: params.cityCode, checkIn: params.checkIn, checkOut: params.checkOut,
+      rooms: params.rooms.length, guests: params.rooms.reduce((n, r) => n + r.adults + r.children, 0),
+      nationality: params.nationality, currency: params.currency,
+    }, () => adapter.search(params), (list) => ({ hotelCount: list.length }));
+  } catch (err) {
+    return hotelError(c, err, "Hotel search failed");
+  }
   const response = { hotels, supplier: "TRIPJACK" };
 
   c.executionCtx.waitUntil((async () => {
@@ -80,30 +155,55 @@ hotelRoutes.post("/prebook", async (c) => {
   if (!optionId) return c.json({ error: "optionId required" }, 400);
 
   const adapter = new TripjackHotelAdapter(tripjackCredentials(c.env));
-  const result  = await adapter.preBook(optionId);
-  return c.json(result);
+  try {
+    const result = await logged(c, "/hotel-prebook/v1", { optionId }, () => adapter.preBook(optionId),
+      (r) => ({ isAvailable: r.isAvailable, totalFare: r.totalFare, currency: r.currency }));
+    return c.json(result);
+  } catch (err) {
+    return hotelError(c, err, "Hotel price check failed");
+  }
 });
 
 // Book hotel
 hotelRoutes.post("/book", zValidator("json", hotelBookSchema), async (c) => {
   const params  = c.req.valid("json");
   const adapter = new TripjackHotelAdapter(tripjackCredentials(c.env));
-  const result  = await adapter.book(params);
-  return c.json(result, result.success ? 201 : 422);
+  try {
+    const result = await logged(c, "/hotel-book/v1", {
+      optionId: params.optionId, guests: params.guests.length, contactEmail: params.contactEmail,
+    }, () => adapter.book(params), (r) => ({ success: r.success, bookingRef: r.bookingRef }));
+    if (!result.success) {
+      await logSupplierCall(c.get("db"), {
+        tenantId: c.get("tenantId"), supplier: "TRIPJACK", endpoint: "/hotel-book/v1", level: "ERROR",
+        errorCode: "HOTEL_BOOK_NOT_CONFIRMED", errorMessage: "TripJack did not confirm the hotel booking",
+        requestSummary: { optionId: params.optionId }, responseSnippet: JSON.stringify(result.raw ?? {}).slice(0, 800),
+      });
+    }
+    return c.json(result, result.success ? 201 : 422);
+  } catch (err) {
+    return hotelError(c, err, "Hotel booking failed");
+  }
 });
 
 // Get hotel booking detail
 hotelRoutes.get("/bookings/:bookingId", async (c) => {
   const { bookingId } = c.req.param();
   const adapter = new TripjackHotelAdapter(tripjackCredentials(c.env));
-  const detail  = await adapter.getBookingDetail(bookingId);
-  return c.json(detail);
+  try {
+    return c.json(await logged(c, "/hotel-booking-detail/v1", { bookingId }, () => adapter.getBookingDetail(bookingId)));
+  } catch (err) {
+    return hotelError(c, err, "Hotel booking details failed");
+  }
 });
 
 // Cancel hotel booking
 hotelRoutes.post("/bookings/:bookingId/cancel", async (c) => {
   const { bookingId } = c.req.param();
   const adapter = new TripjackHotelAdapter(tripjackCredentials(c.env));
-  const result  = await adapter.cancel(bookingId);
-  return c.json(result);
+  try {
+    return c.json(await logged(c, "/hotel-cancel/v1", { bookingId }, () => adapter.cancel(bookingId),
+      (r) => ({ success: r.success, status: r.status })));
+  } catch (err) {
+    return hotelError(c, err, "Hotel cancellation failed");
+  }
 });

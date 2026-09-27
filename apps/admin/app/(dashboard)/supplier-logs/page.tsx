@@ -33,6 +33,11 @@ const ENDPOINT_LABEL: Record<string, string> = {
   "/oms/v1/booking-details":      "PNR Status",
   "/oms/v1/air/amendment/submit-amendment": "Cancel",
   "db:bookings:insert":           "DB Save",
+  "/hotel-search/v1":             "Hotel Search",
+  "/hotel-prebook/v1":            "Hotel Price Check",
+  "/hotel-book/v1":               "Hotel Book",
+  "/hotel-booking-detail/v1":     "Hotel Booking Details",
+  "/hotel-cancel/v1":             "Hotel Cancel",
 };
 
 async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; fetchError?: string }> {
@@ -96,7 +101,7 @@ export default async function SupplierLogsPage({
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>Supplier API Logs</h1>
         <p style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
-          Every TripJack / Riya API call — timestamp, endpoint, HTTP status, error detail.
+          Every TripJack / Riya API call (flights and hotels) — timestamp, endpoint, HTTP status, error detail.
         </p>
       </div>
 
