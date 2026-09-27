@@ -119,9 +119,15 @@ export default function BookingDetailPage() {
       {error && <div style={errBox}>{error}</div>}
       {b.status === "PAYMENT_PENDING" && (
         <div style={{ ...errBox, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-          <span>Paid, but the airline booking has not completed. The customer is waiting on the confirmation page.</span>
+          <span>
+            Paid, but the airline booking has not completed. The customer is waiting on the confirmation page.
+            {data.queueError && <><br /><b>Last error (attempt {data.queueError.attempt}, {new Date(data.queueError.at).toLocaleString()}):</b> {data.queueError.message}</>}
+          </span>
           <button disabled={!!busy} onClick={retryBooking} style={btn}>{busy === "retry" ? "Sending…" : "Retry airline booking"}</button>
         </div>
+      )}
+      {b.status === "PAYMENT_FAILED" && data.queueError && (
+        <div style={errBox}><b>Airline booking failed:</b> {data.queueError.message}</div>
       )}
       {notice && <div style={okBox}>{notice}</div>}
 
