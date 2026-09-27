@@ -140,7 +140,8 @@ export default function ItineraryConfirmationPage() {
             <button disabled={download === "busy" || !segs.length} onClick={saveItinerary} style={{ ...primaryBtn, opacity: download === "busy" || !segs.length ? .6 : 1 }}>
               {download === "busy" ? "Downloading…" : download === "done" ? "Download itinerary again" : "Download itinerary"}
             </button>
-            <button onClick={() => openETicket("/api/trips/eticket", "guest").catch((e) => setDownloadError(e.message))} style={secondaryBtn}>View / print e-ticket</button>
+            <button onClick={() => { setDownloadError(""); downloadFile("/api/trips/eticket", "guest", fileName.replace(/^itinerary-/, "e-ticket-")).catch((e) => setDownloadError(e.message)); }} style={secondaryBtn}>Download e-ticket</button>
+            <button onClick={() => { setDownloadError(""); openETicket("/api/trips/eticket", "guest").catch((e) => setDownloadError(e.message)); }} style={secondaryBtn}>View / print e-ticket</button>
             <a href="/trips/guest" style={secondaryBtn}>Manage booking</a>
           </div>
           {downloadError && <div style={errBox}>{downloadError}</div>}

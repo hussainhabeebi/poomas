@@ -17,12 +17,13 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { bookings, bookingAmendments } from "@poomas/db/schema";
+import { bookings, bookingAmendments, bookingPassengers } from "@poomas/db/schema";
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { itineraryFileName, renderItineraryHtml } from "../lib/itinerary.js";
 import { signToken, verifyToken } from "./checkout.js";
 import { resendStalledBooking } from "../lib/booking-recovery.js";
+import { storeETicket } from "../lib/eticket.js";
 import { processPaidBooking } from "../queue-consumer.js";
 import {
   QUOTE_TTL, buildQuote, cancellationBlocker, liveItinerary, loadTrip, logCancellationCall, originalRefundMethod,
@@ -179,8 +180,29 @@ async function eticketResponse(c: any, booking: typeof bookings.$inferSelect) {
   if (!["CONFIRMED", "TICKETED"].includes(booking.status)) {
     throw new HTTPException(400, { message: "The e-ticket is available once the booking is confirmed" });
   }
-  const obj = await c.env.DOCUMENTS_R2.get(`etickets/${booking.id}.html`);
-  if (!obj) throw new HTTPException(404, { message: "E-ticket is not ready yet. Please check again in a few minutes." });
+  const key = `etickets/${booking.id}.html`;
+  // TripJack bookings: always build from TripJack's live booking details so the
+  // copy carries the latest PNR and ticket numbers; keep the stored copy current.
+  if (booking.supplier === "TRIPJACK" && booking.supplierBookingRef) {
+    const itinerary = await liveItinerary(c, booking, { fresh: true });
+    if (itinerary?.segments.length) {
+      if (!itinerary.travellers.length) {
+        const pax = await c.get("db").select().from(bookingPassengers).where(eq(bookingPassengers.bookingId, booking.id));
+        itinerary.travellers = pax.map((p: typeof bookingPassengers.$inferSelect, i: number) => ({
+          name: `${p.firstName} ${p.lastName}`, type: p.passengerType, ticketNumber: booking.ticketNumbers[i] || undefined,
+        }));
+      }
+      const html = renderItineraryHtml({
+        bookingId: booking.id, pnr: booking.pnr ?? itinerary.pnr ?? null, status: booking.status, bookedAt: booking.createdAt,
+        origin: booking.origin, destination: booking.destination, totalAmount: Number(booking.totalAmount), currency: booking.currency,
+        contactEmail: booking.contactEmail, contactPhone: booking.contactPhone, itinerary, docType: "eticket",
+      });
+      c.executionCtx.waitUntil(storeETicket(c.env.DOCUMENTS_R2, booking.id, html).catch(() => {}));
+      return c.body(html, 200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store" });
+    }
+  }
+  const obj = await c.env.DOCUMENTS_R2.get(key);
+  if (!obj) throw new HTTPException(503, { message: "TripJack hasn't returned the booking details yet. Please try again in a minute." });
   return c.body(await obj.text(), 200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store" });
 }
 

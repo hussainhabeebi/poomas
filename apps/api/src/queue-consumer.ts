@@ -17,6 +17,8 @@ import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPA
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
+import { renderItineraryHtml } from "./lib/itinerary.js";
+import { parseBookingDetails } from "./lib/trips.js";
 import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
 
 // ── Message type discriminated union ─────────────────────────────
@@ -578,6 +580,7 @@ async function bookPaidBooking(
     `${booking.supplier} accepted the booking${bookResult.pnr ? ` — PNR ${bookResult.pnr}` : " — PNR not in the book response, checking booking details"}`,
     { bookingRef: bookResult.bookingRef, status: bookResult.status, ticketNumbers: bookResult.ticketNumbers });
 
+  let lastDetailsRaw: unknown = null;
   let finalPnr = bookResult.pnr;
   let finalTickets = bookResult.ticketNumbers.filter(Boolean);
   let finalStatus: "CONFIRMED" | "TICKETED" = bookResult.status === "TICKETED" ? "TICKETED" : "CONFIRMED";
@@ -597,6 +600,7 @@ async function bookPaidBooking(
       if (delays[i]) await new Promise((resolve) => setTimeout(resolve, delays[i]));
       try {
         const details = await adapter.getPNRStatus(bookResult.bookingRef);
+        lastDetailsRaw = details.raw ?? lastDetailsRaw;
         const tickets = details.passengers.map((p) => p.ticketNumber);
         const allTicketed = tickets.length > 0 && tickets.every(Boolean);
         if (details.pnr) finalPnr = details.pnr;
@@ -659,42 +663,65 @@ async function bookPaidBooking(
     .where(eq(tenants.id, booking.tenantId))
     .limit(1);
 
-  const fd = flightData as {
-    airline: string; airlineName: string; flightNumber: string;
-    origin: string; destination: string;
-    departureTime: string; arrivalTime: string;
-    cabinClass: string; isRefundable: boolean;
-    baggage: { cabin: string; checked: string };
-  };
-
-  const eticketHtml = renderETicketHtml({
-    bookingRef:    booking.id,
-    pnr:           finalPnr,
-    ticketNumbers: finalTickets,
-    airline:       fd.airline,
-    airlineName:   fd.airlineName,
-    flightNumber:  fd.flightNumber,
-    origin:        fd.origin,
-    destination:   fd.destination,
-    departureTime: fd.departureTime,
-    arrivalTime:   fd.arrivalTime,
-    cabinClass:    fd.cabinClass,
-    isRefundable:  fd.isRefundable,
-    baggage:       fd.baggage,
-    passengers:    paxRows.map((p, i) => ({
-      name:         `${p.firstName} ${p.lastName}`,
-      type:         p.passengerType,
-      ticketNumber: finalTickets[i],
-    })),
-    totalAmount:  Number(booking.totalAmount),
-    currency:     booking.currency,
-    brandName:    tenantRow?.name ?? "POOMAS Traveldays",
-    brandLogo:    tenantRow?.logoUrl ?? undefined,
-    primaryColor: tenantRow?.primaryColor ?? "#E31E24",
-    supportEmail: tenantRow?.supportEmail ?? undefined,
-  });
-
-  const eticketKey = await storeETicket(env.DOCUMENTS_R2, booking.id, eticketHtml);
+  // E-ticket from TripJack's own booking details (flights, PNR, ticket numbers).
+  // flightData from checkout only holds the fare ID, so it cannot build a ticket.
+  let eticketKey = `etickets/${booking.id}.html`;
+  try {
+    const itinerary = lastDetailsRaw ? parseBookingDetails(lastDetailsRaw) : null;
+    let eticketHtml: string;
+    if (itinerary?.segments.length) {
+      if (!itinerary.travellers.length) {
+        itinerary.travellers = paxRows.map((p, i) => ({ name: `${p.firstName} ${p.lastName}`, type: p.passengerType, ticketNumber: finalTickets[i] || undefined }));
+      }
+      eticketHtml = renderItineraryHtml({
+        bookingId: booking.id, pnr: finalPnr || null, status: finalStatus, bookedAt: booking.createdAt,
+        origin: booking.origin, destination: booking.destination, totalAmount: Number(booking.totalAmount), currency: booking.currency,
+        contactEmail: booking.contactEmail, contactPhone: booking.contactPhone, itinerary, docType: "eticket",
+      });
+    } else {
+      const fd = flightData as {
+        airline: string; airlineName: string; flightNumber: string;
+        origin: string; destination: string;
+        departureTime: string; arrivalTime: string;
+        cabinClass: string; isRefundable: boolean;
+        baggage: { cabin: string; checked: string };
+      };
+      const departureTime = fd.departureTime ?? booking.departureDate.toISOString();
+      eticketHtml = renderETicketHtml({
+        bookingRef:    booking.id,
+        pnr:           finalPnr,
+        ticketNumbers: finalTickets,
+        airline:       fd.airline ?? "",
+        airlineName:   fd.airlineName ?? fd.airline ?? "",
+        flightNumber:  fd.flightNumber ?? "",
+        origin:        booking.origin,
+        destination:   booking.destination,
+        departureTime,
+        arrivalTime:   fd.arrivalTime ?? departureTime,
+        cabinClass:    fd.cabinClass ?? booking.cabinClass,
+        isRefundable:  fd.isRefundable ?? false,
+        baggage:       fd.baggage ?? { cabin: "As per airline", checked: "As per airline" },
+        passengers:    paxRows.map((p, i) => ({
+          name:         `${p.firstName} ${p.lastName}`,
+          type:         p.passengerType,
+          ticketNumber: finalTickets[i],
+        })),
+        totalAmount:  Number(booking.totalAmount),
+        currency:     booking.currency,
+        brandName:    tenantRow?.name ?? "POOMAS Traveldays",
+        brandLogo:    tenantRow?.logoUrl ?? undefined,
+        primaryColor: tenantRow?.primaryColor ?? "#E31E24",
+        supportEmail: tenantRow?.supportEmail ?? undefined,
+      });
+    }
+    eticketKey = await storeETicket(env.DOCUMENTS_R2, booking.id, eticketHtml);
+    await logBookingEvent(env, booking.id, "TICKET", "info",
+      `E-ticket copy saved${itinerary?.segments.length ? " from TripJack booking details" : ""}`);
+  } catch (err) {
+    // Never fail (and retry) an already-booked seat over the ticket document.
+    await logBookingEvent(env, booking.id, "TICKET", "error",
+      "Could not create the e-ticket copy — it will be built from TripJack when the customer opens it", errorDetail(err));
+  }
 
   // Queue notification
   await env.NOTIFY_QUEUE.send({

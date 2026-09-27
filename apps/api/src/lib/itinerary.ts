@@ -15,6 +15,8 @@ export interface ItineraryDocData {
   contactEmail: string | null;
   contactPhone: string | null;
   itinerary:    Itinerary;
+  // "eticket" titles the same TripJack booking-details document as the e-ticket.
+  docType?:     "itinerary" | "eticket";
 }
 
 const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (ch) => (
@@ -43,6 +45,7 @@ export function itineraryFileName(data: Pick<ItineraryDocData, "pnr" | "bookingI
 export function renderItineraryHtml(data: ItineraryDocData): string {
   const { itinerary } = data;
   const pnr = data.pnr ?? itinerary.pnr ?? "Pending";
+  const docName = data.docType === "eticket" ? "E-ticket" : "Flight itinerary";
   const bookedAt = data.bookedAt ? new Date(data.bookedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 
   const segments = itinerary.segments.map((s) => {
@@ -85,7 +88,7 @@ export function renderItineraryHtml(data: ItineraryDocData): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Itinerary — ${esc(pnr)} · ${esc(data.origin)} to ${esc(data.destination)}</title>
+<title>${data.docType === "eticket" ? "E-ticket" : "Itinerary"} — ${esc(pnr)} · ${esc(data.origin)} to ${esc(data.destination)}</title>
 <style>
   body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:#f1f5f9; color:#0f172a; }
   .doc { max-width:720px; margin:20px auto; background:#fff; border-radius:14px; overflow:hidden; border:1px solid #e2e8f0; }
@@ -121,7 +124,7 @@ export function renderItineraryHtml(data: ItineraryDocData): string {
 <div class="doc">
   <div class="head">
     <div>
-      <h1>Flight itinerary · ${esc(data.origin)} → ${esc(data.destination)}</h1>
+      <h1>${docName} · ${esc(data.origin)} → ${esc(data.destination)}</h1>
       <div class="sub">POOMAS · flypoomas.com${bookedAt ? ` · Booked ${esc(bookedAt)}` : ""}</div>
     </div>
     <div class="pnr"><small>Airline PNR</small><strong>${esc(pnr)}</strong></div>
