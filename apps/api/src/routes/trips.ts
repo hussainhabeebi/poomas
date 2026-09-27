@@ -23,6 +23,7 @@ import type { Env, Variables } from "../types.js";
 import { itineraryFileName, renderItineraryHtml } from "../lib/itinerary.js";
 import { signToken, verifyToken } from "./checkout.js";
 import { resendStalledBooking } from "../lib/booking-recovery.js";
+import { processPaidBooking } from "../queue-consumer.js";
 import {
   QUOTE_TTL, buildQuote, cancellationBlocker, liveItinerary, loadTrip, logCancellationCall, originalRefundMethod,
   parseCancellationCharges, publicTrip, syncCancellation, tripjackClientFor, type CancellationQuote,
@@ -250,7 +251,7 @@ async function guestTrip(c: any) {
 guestTripRoutes.get("/view", async (c) => {
   const trip = await guestTrip(c);
   // The customer is waiting on the confirmation page: nudge a stalled paid booking.
-  c.executionCtx.waitUntil(resendStalledBooking(c.get("db"), c.env, trip.booking));
+  c.executionCtx.waitUntil(resendStalledBooking(c.get("db"), c.env, trip.booking, (message) => processPaidBooking(c.env, message)));
   const itinerary = await liveItinerary(c, trip.booking);
   return c.json({ trip: publicTrip(trip, itinerary), cancelBlocker: "Sign in to the account used for this booking, or contact support, to cancel." });
 });

@@ -8,7 +8,8 @@ import { eq, and, asc, desc, or } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
 import { buildZip } from "../../lib/zip.js";
-import { readBookingError, sendPaidBookingToQueue } from "../../lib/booking-recovery.js";
+import { describeError, paidBookingMessage, readBookingError, readQueueReceipt } from "../../lib/booking-recovery.js";
+import { processPaidBooking } from "../../queue-consumer.js";
 
 export const bookingsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -87,9 +88,13 @@ bookingsAdminRoutes.get("/:id", async (c) => {
     db.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt)),
     b.userId ? db.select({ id: users.id, name: users.name, email: users.email, phone: users.phone }).from(users).where(eq(users.id, b.userId)).limit(1) : Promise.resolve([]),
   ]);
-  const queueError = ["PAYMENT_PENDING", "PAYMENT_FAILED"].includes(b.status) ? await readBookingError(c.env, b.id) : null;
+  const waiting = ["PAYMENT_PENDING", "PAYMENT_FAILED"].includes(b.status);
+  const queueError = waiting ? await readBookingError(c.env, b.id) : null;
+  const paidOrder = paymentRows.find((p) => p.status === "SUCCESS")?.gatewayOrderId;
+  const queueReceipt = waiting && paidOrder ? await readQueueReceipt(c.env, paidOrder) : null;
+  const paymentConfirmed = Boolean(paidOrder);
   return c.json({
-    booking: b, queueError, customer: customer[0] ?? null, passengers, payments: paymentRows, cancellations: amendments,
+    booking: b, queueError, queueReceipt, paymentConfirmed, customer: customer[0] ?? null, passengers, payments: paymentRows, cancellations: amendments,
     supportRequests: support, walletTransactions: walletTx,
     exchanges: exchanges.map((x) => ({ ...x, requestKey: undefined, responseKey: undefined, hasResponse: Boolean(x.responseKey) })),
   });
@@ -142,10 +147,20 @@ bookingsAdminRoutes.get("/:id/exchanges.zip", async (c) => {
 bookingsAdminRoutes.post("/:id/retry-booking", async (c) => {
   const b = await loadBooking(c, c.req.param("id"));
   if (b.status !== "PAYMENT_PENDING") throw new HTTPException(400, { message: `Booking is ${b.status} — only paid bookings waiting for the airline can be retried` });
-  if (!(await sendPaidBookingToQueue(c.get("db"), c.env, b.id))) {
-    throw new HTTPException(400, { message: "No successful payment found for this booking" });
+  const message = await paidBookingMessage(c.get("db"), b.id);
+  if (!message) throw new HTTPException(400, { message: "No successful payment found for this booking — the payment has not been confirmed by the gateway" });
+
+  // Book directly (not via the queue) so the result or error comes straight back.
+  try {
+    await processPaidBooking(c.env, message);
+  } catch (err) {
+    return c.json({ ok: false, error: describeError(err) }, 502);
   }
-  return c.json({ ok: true });
+  const after = await loadBooking(c, b.id);
+  if (after.status === "PAYMENT_PENDING") {
+    return c.json({ ok: false, error: (await readBookingError(c.env, b.id))?.message ?? "Booking is already being processed — check again in a minute" }, 409);
+  }
+  return c.json({ ok: true, status: after.status, pnr: after.pnr });
 });
 
 bookingsAdminRoutes.post("/:id/refresh-details", async (c) => {
