@@ -196,6 +196,9 @@ export function explainMissingPnr(details: { status: string; statusMessage?: str
   const tickets = details.passengers.filter((p) => p.ticketNumber).length;
   const suffix = details.statusMessage ? ` TripJack says: "${details.statusMessage}".` : "";
   if (details.pnr && tickets === details.passengers.length && tickets > 0) return "PNR and all ticket numbers issued.";
+  if (isTestBooking(details.pnr)) {
+    return `TripJack test booking (UAT) — PNR ${details.pnr} is a dummy and no real ticket number is issued. Real PNRs and ticket numbers come once the TripJack production account is live.`;
+  }
   switch (status) {
     case "PENDING":
     case "IN_PROGRESS":
@@ -218,4 +221,9 @@ export function explainMissingPnr(details: { status: string; statusMessage?: str
     default:
       return `TripJack order status ${status}: PNR ${details.pnr || "not issued"}, ${tickets}/${details.passengers.length} ticket(s).${suffix}`;
   }
+}
+
+// TripJack UAT (test) bookings return a dummy PNR such as "TESTPNR" and never ticket.
+export function isTestBooking(pnr: string | null | undefined): boolean {
+  return /^TEST/i.test(pnr ?? "");
 }

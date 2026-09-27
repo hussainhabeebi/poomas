@@ -9,7 +9,7 @@ import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
 import { buildZip } from "../../lib/zip.js";
 import {
-  describeError, errorDetail, explainMissingPnr, logBookingEvent, paidBookingMessage,
+  describeError, errorDetail, explainMissingPnr, isTestBooking, logBookingEvent, paidBookingMessage,
   readBookingError, readBookingEvents, readQueueReceipt,
 } from "../../lib/booking-recovery.js";
 import { processPaidBooking } from "../../queue-consumer.js";
@@ -192,7 +192,7 @@ bookingsAdminRoutes.post("/:id/refresh-details", async (c) => {
       }).where(eq(bookings.id, b.id));
     }
     await logBookingEvent(c.env, b.id, details.pnr && allTicketed ? "TICKET" : "BOOKING_DETAILS",
-      details.pnr && allTicketed ? "info" : "warn", `Admin booking-details check: ${reason}`,
+      (details.pnr && allTicketed) || isTestBooking(details.pnr) ? "info" : "warn", `Admin booking-details check: ${reason}`,
       { orderStatus: details.supplierStatus ?? null, pnr: details.pnr ?? null,
         tickets: details.travellers.map((t) => ({ name: t.name, ticketNumber: t.ticketNumber ?? null })) });
     return c.json({ ok: true, details, reason });
