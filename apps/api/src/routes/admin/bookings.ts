@@ -8,7 +8,10 @@ import { eq, and, asc, desc, or } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
 import { buildZip } from "../../lib/zip.js";
-import { describeError, paidBookingMessage, readBookingError, readQueueReceipt } from "../../lib/booking-recovery.js";
+import {
+  describeError, errorDetail, explainMissingPnr, logBookingEvent, paidBookingMessage,
+  readBookingError, readBookingEvents, readQueueReceipt,
+} from "../../lib/booking-recovery.js";
 import { processPaidBooking } from "../../queue-consumer.js";
 
 export const bookingsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -94,7 +97,7 @@ bookingsAdminRoutes.get("/:id", async (c) => {
   const queueReceipt = waiting && paidOrder ? await readQueueReceipt(c.env, paidOrder) : null;
   const paymentConfirmed = Boolean(paidOrder);
   return c.json({
-    booking: b, queueError, queueReceipt, paymentConfirmed, customer: customer[0] ?? null, passengers, payments: paymentRows, cancellations: amendments,
+    booking: b, queueError, queueReceipt, paymentConfirmed, events: await readBookingEvents(c.env, b.id), customer: customer[0] ?? null, passengers, payments: paymentRows, cancellations: amendments,
     supportRequests: support, walletTransactions: walletTx,
     exchanges: exchanges.map((x) => ({ ...x, requestKey: undefined, responseKey: undefined, hasResponse: Boolean(x.responseKey) })),
   });
@@ -169,8 +172,33 @@ bookingsAdminRoutes.post("/:id/refresh-details", async (c) => {
   const client = await tripjackClientFor(c as any, b.id);
   try {
     const raw = await client.pnrStatus(b.supplierBookingRef);
-    return c.json({ ok: true, details: parseBookingDetails(raw) });
+    const details = parseBookingDetails(raw);
+    const root = ((raw as any)?.data ?? (raw as any)?.result ?? raw ?? {}) as any;
+    const tickets = details.travellers.map((t) => t.ticketNumber ?? "");
+    const allTicketed = tickets.length > 0 && tickets.every(Boolean);
+    const reason = explainMissingPnr({
+      status: String(details.supplierStatus ?? ""),
+      statusMessage: root?.order?.statusMessage ?? root?.status?.statusMessage,
+      pnr: details.pnr ?? "",
+      passengers: tickets.map((ticketNumber) => ({ ticketNumber })),
+    });
+    // Save what TripJack now reports so the booking, itinerary and e-ticket catch up.
+    if (details.pnr || tickets.some(Boolean)) {
+      await c.get("db").update(bookings).set({
+        ...(details.pnr ? { pnr: details.pnr } : {}),
+        ...(tickets.some(Boolean) ? { ticketNumbers: tickets } : {}),
+        ...(["CONFIRMED", "PAYMENT_PENDING"].includes(b.status) && allTicketed ? { status: "TICKETED" as const } : {}),
+        updatedAt: new Date(),
+      }).where(eq(bookings.id, b.id));
+    }
+    await logBookingEvent(c.env, b.id, details.pnr && allTicketed ? "TICKET" : "BOOKING_DETAILS",
+      details.pnr && allTicketed ? "info" : "warn", `Admin booking-details check: ${reason}`,
+      { orderStatus: details.supplierStatus ?? null, pnr: details.pnr ?? null,
+        tickets: details.travellers.map((t) => ({ name: t.name, ticketNumber: t.ticketNumber ?? null })) });
+    return c.json({ ok: true, details, reason });
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 502);
+    await logBookingEvent(c.env, b.id, "BOOKING_DETAILS", "error",
+      `Admin booking-details check failed: ${describeError(err)}`, errorDetail(err));
+    return c.json({ ok: false, error: describeError(err) }, 502);
   }
 });

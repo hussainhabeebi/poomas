@@ -11,7 +11,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
 import { resolveFlightSuppliers } from "./routes/search.js";
 import {
-  acquireBookingLock, recordBookingError, recordQueueReceipt, releaseBookingLock,
+  acquireBookingLock, errorDetail, explainMissingPnr, logBookingEvent, recordBookingError, recordQueueReceipt, releaseBookingLock,
 } from "./lib/booking-recovery.js";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
@@ -403,14 +403,18 @@ async function handlePaymentCaptured(
 
   // One supplier booking at a time per booking (queue retry + automatic re-send).
   if (!(await acquireBookingLock(env, booking.id))) {
-    console.warn(`Booking ${booking.id} is already being booked with the supplier, skipping`);
+    await logBookingEvent(env, booking.id, "QUEUE", "warn", "Skipped: another run is already booking this seat with the supplier");
     return;
   }
   try {
-    console.info(`[booking] ${booking.id} attempt ${attempt}: booking with ${booking.supplier}`);
+    await logBookingEvent(env, booking.id, "QUEUE", "info",
+      `Payment confirmed — starting ${booking.supplier} booking (attempt ${attempt}${finalAttempt ? ", final" : ""})`,
+      { orderId: data.orderId, gatewayPaymentId: data.gatewayPaymentId, amount: data.amount });
     await bookPaidBooking(db, env, data, booking, finalAttempt);
   } catch (err) {
     await recordBookingError(env, booking.id, err, attempt);
+    await logBookingEvent(env, booking.id, "QUEUE", "error",
+      `Attempt ${attempt} failed: ${err instanceof Error ? err.message : String(err)}`, errorDetail(err));
     throw err;
   } finally {
     await releaseBookingLock(env, booking.id);
@@ -471,6 +475,8 @@ async function bookPaidBooking(
   const failBeforeBooking = async (err: unknown) => {
     if (!finalAttempt) throw err;
     console.error(`[booking] ${booking.id} could not reach the supplier after ${BOOKING_MAX_ATTEMPTS} attempts:`, err);
+    await logBookingEvent(env, booking.id, "REFUND", "error",
+      `Gave up after ${BOOKING_MAX_ATTEMPTS} attempts without reaching the airline — booking failed, payment refund started`, errorDetail(err));
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
@@ -483,6 +489,8 @@ async function bookPaidBooking(
   try {
     adapter = getBookableAdapter(booking.supplier as "RIYA" | "TRIPJACK", supplierConfigs, platformCredentials);
   } catch (err) {
+    await logBookingEvent(env, booking.id, "SUPPLIER_CONFIG", "error",
+      `${booking.supplier} is not configured/enabled for this tenant — check Admin → Integrations and API secrets`, errorDetail(err));
     return failBeforeBooking(err);
   }
 
@@ -501,7 +509,13 @@ async function bookPaidBooking(
     if (!fareId) return failBeforeBooking(new Error(`TripJack booking ${booking.id}: no fare ID to review`));
     if (!adapter.revalidate) throw new Error("TripJack adapter missing revalidate");
     let reviewed;
-    try { reviewed = await adapter.revalidate(fareId); } catch (err) { await saveLogs(); return failBeforeBooking(err); }
+    try { reviewed = await adapter.revalidate(fareId); } catch (err) {
+      await saveLogs();
+      await logBookingEvent(env, booking.id, "REVIEW", "error",
+        "TripJack fare review failed — the fare may have expired or changed since search", { fareId, ...errorDetail(err) });
+      return failBeforeBooking(err);
+    }
+    await logBookingEvent(env, booking.id, "REVIEW", "info", `Fare reviewed — TripJack booking ID ${reviewed.bookingId}`, { totalFare: reviewed.totalFare });
     tripjackHoldId = reviewed.bookingId;
     // Persist so retries don't call review again
     await db.update(bookings)
@@ -509,6 +523,10 @@ async function bookPaidBooking(
       .where(eq(bookings.id, booking.id));
   }
 
+  const paymentAmount = Math.round((Number(booking.totalAmount) - Number(booking.markup ?? 0)) * 100) / 100;
+  await logBookingEvent(env, booking.id, "BOOK", "info", `Sending book request to ${booking.supplier}`, {
+    supplierBookingId: tripjackHoldId || booking.supplierBookingRef, paymentAmount, passengers: paxRows.length,
+  });
   let bookResult;
   try {
     bookResult = await adapter.book({
@@ -519,7 +537,7 @@ async function bookPaidBooking(
       contactPhone:  booking.contactPhone ?? "",
       paymentRef:    data.gatewayPaymentId,
       // TripJack must be paid its reviewed net fare; totalAmount includes our markup.
-      paymentAmount: Math.round((Number(booking.totalAmount) - Number(booking.markup ?? 0)) * 100) / 100,
+      paymentAmount,
       passengers: paxRows.map((p) => ({
         type:           p.passengerType as "ADULT" | "CHILD" | "INFANT",
         firstName:      p.firstName,
@@ -535,6 +553,8 @@ async function bookPaidBooking(
   } catch (err) {
     await saveLogs();
     console.error(`Supplier book() failed for booking ${booking.id}:`, err);
+    await logBookingEvent(env, booking.id, "BOOK", "error",
+      `${booking.supplier} rejected the book request — no PNR issued; payment refund started`, errorDetail(err));
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
@@ -544,6 +564,9 @@ async function bookPaidBooking(
 
   if (!bookResult.success) {
     await saveLogs();
+    await logBookingEvent(env, booking.id, "BOOK", "error",
+      `${booking.supplier} did not confirm the booking — no PNR issued; payment refund started`,
+      { status: bookResult.status, bookingRef: bookResult.bookingRef, supplierResponse: JSON.stringify(bookResult.raw ?? {}).slice(0, 1500) });
     await db.update(bookings)
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
@@ -551,31 +574,58 @@ async function bookPaidBooking(
     throw new Error(`Supplier booking failed: ${JSON.stringify(bookResult)}`);
   }
 
-  // Update booking to TICKETED
-  const newStatus = bookResult.status === "TICKETED" ? "TICKETED" : "CONFIRMED";
+  await logBookingEvent(env, booking.id, "BOOK", "info",
+    `${booking.supplier} accepted the booking${bookResult.pnr ? ` — PNR ${bookResult.pnr}` : " — PNR not in the book response, checking booking details"}`,
+    { bookingRef: bookResult.bookingRef, status: bookResult.status, ticketNumbers: bookResult.ticketNumbers });
+
+  let finalPnr = bookResult.pnr;
+  let finalTickets = bookResult.ticketNumbers.filter(Boolean);
+  let finalStatus: "CONFIRMED" | "TICKETED" = bookResult.status === "TICKETED" ? "TICKETED" : "CONFIRMED";
   await db.update(bookings).set({
-    status:            newStatus,
-    pnr:               bookResult.pnr,
-    ticketNumbers:     bookResult.ticketNumbers,
+    status:            finalStatus,
+    pnr:               finalPnr || null,
+    ticketNumbers:     finalTickets,
     supplierBookingRef: bookResult.bookingRef,
     updatedAt:         new Date(),
   }).where(eq(bookings.id, booking.id));
 
-  // Fetch booking details from TripJack right after ticketing: completes the
-  // certification log trail and fills PNR / ticket numbers if the book response lacked them.
+  // TripJack issues the PNR and ticket numbers asynchronously: read booking
+  // details a few times and log why they are missing when they are.
   if (booking.supplier === "TRIPJACK" && bookResult.bookingRef && adapter.getPNRStatus) {
-    try {
-      const details = await adapter.getPNRStatus(bookResult.bookingRef);
-      const tickets = details.passengers.map((p) => p.ticketNumber).filter(Boolean);
-      if ((!bookResult.pnr && details.pnr) || (!bookResult.ticketNumbers?.length && tickets.length)) {
-        await db.update(bookings).set({
-          ...(!bookResult.pnr && details.pnr ? { pnr: details.pnr } : {}),
-          ...(!bookResult.ticketNumbers?.length && tickets.length ? { ticketNumbers: tickets } : {}),
-          updatedAt: new Date(),
-        }).where(eq(bookings.id, booking.id));
+    const delays = [0, 4000, 8000, 12000];
+    for (let i = 0; i < delays.length; i++) {
+      if (delays[i]) await new Promise((resolve) => setTimeout(resolve, delays[i]));
+      try {
+        const details = await adapter.getPNRStatus(bookResult.bookingRef);
+        const tickets = details.passengers.map((p) => p.ticketNumber);
+        const allTicketed = tickets.length > 0 && tickets.every(Boolean);
+        if (details.pnr) finalPnr = details.pnr;
+        if (tickets.some(Boolean)) finalTickets = tickets;
+        if (allTicketed) finalStatus = "TICKETED";
+        const reason = explainMissingPnr(details);
+        await logBookingEvent(env, booking.id, finalPnr && allTicketed ? "TICKET" : "BOOKING_DETAILS",
+          finalPnr && allTicketed ? "info" : i === delays.length - 1 ? "error" : "warn",
+          `Booking details check ${i + 1}/${delays.length}: ${reason}`,
+          { orderStatus: details.status, statusMessage: details.statusMessage, pnr: details.pnr || null,
+            tickets: details.passengers.map((p) => ({ name: p.name, ticketNumber: p.ticketNumber || null })) });
+        if (finalPnr && allTicketed) break;
+        if (["FAILED", "ABORTED", "CANCELLED"].includes(details.status.toUpperCase())) break;
+      } catch (err) {
+        await logBookingEvent(env, booking.id, "BOOKING_DETAILS", i === delays.length - 1 ? "error" : "warn",
+          `Booking details check ${i + 1}/${delays.length} failed: ${err instanceof Error ? err.message : String(err)}`, errorDetail(err));
       }
-    } catch (err) {
-      console.error(`[booking-details] ${booking.id}:`, err);
+    }
+    await db.update(bookings).set({
+      status: finalStatus, pnr: finalPnr || null, ticketNumbers: finalTickets, updatedAt: new Date(),
+    }).where(eq(bookings.id, booking.id));
+    if (!finalPnr) {
+      await logBookingEvent(env, booking.id, "PNR", "error",
+        "Booking accepted by TripJack but no PNR yet — use \"Fetch booking details from TripJack\" later, or contact TripJack support with the booking ID",
+        { bookingRef: bookResult.bookingRef });
+    } else if (finalStatus !== "TICKETED") {
+      await logBookingEvent(env, booking.id, "TICKET", "warn",
+        `PNR ${finalPnr} issued but ticket numbers are not issued yet — the airline/TripJack is still ticketing`,
+        { bookingRef: bookResult.bookingRef });
     }
   }
   await saveLogs();
@@ -619,8 +669,8 @@ async function bookPaidBooking(
 
   const eticketHtml = renderETicketHtml({
     bookingRef:    booking.id,
-    pnr:           bookResult.pnr,
-    ticketNumbers: bookResult.ticketNumbers,
+    pnr:           finalPnr,
+    ticketNumbers: finalTickets,
     airline:       fd.airline,
     airlineName:   fd.airlineName,
     flightNumber:  fd.flightNumber,
@@ -634,7 +684,7 @@ async function bookPaidBooking(
     passengers:    paxRows.map((p, i) => ({
       name:         `${p.firstName} ${p.lastName}`,
       type:         p.passengerType,
-      ticketNumber: bookResult.ticketNumbers[i],
+      ticketNumber: finalTickets[i],
     })),
     totalAmount:  Number(booking.totalAmount),
     currency:     booking.currency,

@@ -119,3 +119,92 @@ export async function resendStalledBooking(
     console.error(`[booking-recovery] re-send failed for ${booking.id}`, err);
   }
 }
+
+// ── Booking event log (Admin → booking → "Booking error log") ────────────────
+// Step-by-step record of the paid-booking pipeline, so Admin can see exactly
+// where and why the PNR / ticket was not issued.
+
+export type BookingStep =
+  | "QUEUE" | "SUPPLIER_CONFIG" | "REVIEW" | "BOOK" | "BOOKING_DETAILS" | "PNR" | "TICKET" | "REFUND" | "NOTIFY";
+
+export interface BookingEvent {
+  at:      string;
+  step:    BookingStep;
+  level:   "info" | "warn" | "error";
+  message: string;
+  detail?: Record<string, unknown>;
+}
+
+const eventsKey = (bookingId: string) => `booking_events:${bookingId}`;
+const MAX_EVENTS = 80;
+
+// Everything useful on a supplier / network error, without secrets.
+export function errorDetail(err: unknown): Record<string, unknown> {
+  if (!(err instanceof Error)) return { error: String(err) };
+  const e = err as Error & Record<string, unknown>;
+  const pick = (k: string) => (e[k] !== undefined && e[k] !== null && e[k] !== "" ? { [k]: e[k] } : {});
+  return {
+    errorType: e.name,
+    message:   e.message,
+    ...pick("statusCode"), ...pick("code"), ...pick("endpoint"),
+    ...pick("supplierDetail"), ...pick("supplierMessage"), ...pick("supplierErrorCodes"),
+    ...pick("requestId"),
+    ...(typeof e.responseSnippet === "string" ? { supplierResponse: (e.responseSnippet as string).slice(0, 1500) } : {}),
+    ...(typeof e.body === "string" && e.name === "SupplierError" ? { supplierBody: (e.body as string).slice(0, 500) } : {}),
+  };
+}
+
+export async function logBookingEvent(
+  env: Env, bookingId: string,
+  step: BookingStep, level: BookingEvent["level"], message: string, detail?: Record<string, unknown>,
+) {
+  const event: BookingEvent = { at: new Date().toISOString(), step, level, message, ...(detail ? { detail } : {}) };
+  (level === "error" ? console.error : level === "warn" ? console.warn : console.info)(
+    `[booking-log] ${bookingId} ${step} ${level}: ${message}`, detail ? JSON.stringify(detail).slice(0, 1500) : "",
+  );
+  try {
+    const list = (await env.TENANT_CACHE_KV.get(eventsKey(bookingId), "json") as BookingEvent[] | null) ?? [];
+    list.push(event);
+    await env.TENANT_CACHE_KV.put(eventsKey(bookingId), JSON.stringify(list.slice(-MAX_EVENTS)), { expirationTtl: ERROR_TTL * 4 });
+  } catch (err) {
+    console.error(`[booking-log] could not store event for ${bookingId}`, err);
+  }
+}
+
+export async function readBookingEvents(env: Env, bookingId: string): Promise<BookingEvent[]> {
+  try {
+    return (await env.TENANT_CACHE_KV.get(eventsKey(bookingId), "json") as BookingEvent[] | null) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Plain-language reason a confirmed TripJack booking still has no PNR / ticket.
+export function explainMissingPnr(details: { status: string; statusMessage?: string; pnr: string; passengers: { ticketNumber: string }[] }): string {
+  const status = details.status.toUpperCase();
+  const tickets = details.passengers.filter((p) => p.ticketNumber).length;
+  const suffix = details.statusMessage ? ` TripJack says: "${details.statusMessage}".` : "";
+  if (details.pnr && tickets === details.passengers.length && tickets > 0) return "PNR and all ticket numbers issued.";
+  switch (status) {
+    case "PENDING":
+    case "IN_PROGRESS":
+      return `TripJack is still processing the booking with the airline (order status ${status}); the PNR/ticket is issued asynchronously.${suffix}`;
+    case "ON_HOLD":
+      return `Booking is ON HOLD at TripJack — it was not paid from the TripJack wallet, so no ticket is issued until the hold is confirmed.${suffix}`;
+    case "FAILED":
+    case "ABORTED":
+      return `TripJack/airline rejected the booking (order status ${status}).${suffix}`;
+    case "CANCELLED":
+      return `Booking was cancelled at TripJack.${suffix}`;
+    case "UNCONFIRMED":
+      return `Airline has not confirmed the seat yet (order status UNCONFIRMED) — TripJack support may need to follow up.${suffix}`;
+    case "SUCCESS":
+      return details.pnr
+        ? `PNR ${details.pnr} issued but ${details.passengers.length - tickets} of ${details.passengers.length} ticket number(s) not yet issued by the airline.${suffix}`
+        : `TripJack reports SUCCESS but returned no PNR in booking-details.${suffix}`;
+    case "":
+      return `TripJack booking-details returned no order status.${suffix}`;
+    default:
+      return `TripJack order status ${status}: PNR ${details.pnr || "not issued"}, ${tickets}/${details.passengers.length} ticket(s).${suffix}`;
+  }
+}

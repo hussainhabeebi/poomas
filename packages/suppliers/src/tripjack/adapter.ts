@@ -119,39 +119,41 @@ export class TripjackAdapter implements SupplierAdapter {
 
   async book(params: BookParams): Promise<BookResult> {
     const raw = await this.client.book(params as HoldParams & BookParams) as Record<string, unknown>;
-    const response = (raw.data ?? raw.result ?? raw) as Record<string, unknown>;
+    const response = unwrap(raw);
     const order = (response.order ?? response) as Record<string, unknown>;
-    const travellers = (response.travellerInfos ?? []) as Array<Record<string, unknown>>;
-    const pnrMap = travellers[0]?.pnrDetails as Record<string, string> | undefined;
-    const pnr = pnrMap ? Object.values(pnrMap)[0] ?? "" : String(response.pnrDetails ?? "");
+    const travellers = travellersOf(response);
+    const pnr = firstValue(travellers.find((t) => firstValue(t.pnrDetails))?.pnrDetails) || String(response.pnr ?? "");
     const bookingRef = String(order.bookingId ?? response.bookingId ?? params.holdId);
     const orderStatus = String(order.status ?? "").toUpperCase();
+    const apiSuccess = (response.status as { success?: boolean } | undefined)?.success === true;
     return {
-      success:       orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" || !!(pnr || bookingRef !== params.holdId),
+      success:       orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" || apiSuccess || !!(pnr || bookingRef !== params.holdId),
       bookingRef,
       pnr,
-      status:        orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" ? "CONFIRMED" : "FAILED",
-      ticketNumbers: [],
+      status:        orderStatus === "SUCCESS" || orderStatus === "ON_HOLD" || apiSuccess ? "CONFIRMED" : "FAILED",
+      ticketNumbers: travellers.map((t) => firstValue(t.ticketNumberDetails)).filter(Boolean),
       raw: response,
     };
   }
 
   async getPNRStatus(bookingId: string): Promise<PNRStatusResult> {
-    const raw = await this.client.pnrStatus(bookingId) as Record<string, unknown>;
-    // booking-details wraps response in order{}
+    const raw = unwrap(await this.client.pnrStatus(bookingId) as Record<string, unknown>);
+    // booking-details: { order: {status}, itemInfos: { AIR: { tripInfos, travellerInfos } } }
     const order = (raw.order ?? raw) as Record<string, unknown>;
-    const travellers = (raw.travellerInfos ?? []) as Array<Record<string, unknown>>;
-    const pnrMap = travellers[0]?.pnrDetails as Record<string, string> | undefined;
-    const pnr = pnrMap ? Object.values(pnrMap)[0] ?? "" : "";
+    const air = ((raw.itemInfos as Record<string, unknown> | undefined)?.AIR ?? {}) as Record<string, unknown>;
+    const travellers = travellersOf(raw);
+    const status = raw.status as { statusMessage?: string } | undefined;
     return {
-      pnr,
+      pnr:        firstValue(travellers.find((t) => firstValue(t.pnrDetails))?.pnrDetails),
       status:     String(order.status ?? ""),
+      statusMessage: String(order.statusMessage ?? order.message ?? status?.statusMessage ?? "") || undefined,
       passengers: travellers.map((t) => ({
         name:         `${t.fN ?? ""} ${t.lN ?? ""}`.trim(),
-        ticketNumber: Object.values((t.ticketNumberDetails as Record<string, string>) ?? {})[0] ?? "",
+        ticketNumber: firstValue(t.ticketNumberDetails),
         status:       String(order.status ?? ""),
       })),
-      itinerary: raw.tripInfos ?? raw.itemInfos,
+      itinerary: air.tripInfos ?? raw.tripInfos ?? raw.itemInfos,
+      raw,
     };
   }
 
@@ -170,4 +172,22 @@ export class TripjackAdapter implements SupplierAdapter {
 
 function safeSnippet(value: unknown): string {
   try { return JSON.stringify(value).slice(0, 800); } catch { return ""; }
+}
+
+// Some whitelisted proxies wrap the upstream JSON in `data` or `result`.
+function unwrap(raw: Record<string, unknown>): Record<string, unknown> {
+  return (raw?.data ?? raw?.result ?? raw ?? {}) as Record<string, unknown>;
+}
+
+// Travellers (with pnrDetails / ticketNumberDetails) live under itemInfos.AIR.
+function travellersOf(root: Record<string, unknown>): Array<Record<string, unknown>> {
+  const air = (root.itemInfos as Record<string, unknown> | undefined)?.AIR as Record<string, unknown> | undefined;
+  const list = air?.travellerInfos ?? root.travellerInfos;
+  return Array.isArray(list) ? list as Array<Record<string, unknown>> : [];
+}
+
+function firstValue(v: unknown): string {
+  if (!v || typeof v !== "object") return "";
+  const first = Object.values(v as Record<string, unknown>).find((x) => typeof x === "string" && x);
+  return typeof first === "string" ? first : "";
 }
