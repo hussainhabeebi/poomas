@@ -3,8 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API, apiHeaders } from "../../../../lib/api";
 
-type Tab = "overview" | "passengers" | "payments" | "logs" | "support";
-const TABS: [Tab, string][] = [["overview", "Overview"], ["passengers", "Passengers"], ["payments", "Payments & refunds"], ["logs", "API logs"], ["support", "Support"]];
+type Tab = "overview" | "errors" | "passengers" | "payments" | "logs" | "support";
+const TABS: [Tab, string][] = [["overview", "Overview"], ["errors", "Booking error log"], ["passengers", "Passengers"], ["payments", "Payments & refunds"], ["logs", "API logs"], ["support", "Support"]];
 
 const ENDPOINT_LABEL: Record<string, string> = {
   "/fms/v1/air-search-all": "Search", "/air-search-all/v2": "Search", "/fms/v1/review": "Fare review",
@@ -71,7 +71,7 @@ export default function BookingDetailPage() {
       const res = await fetch(`${API}/api/admin/bookings/${id}/refresh-details`, { method: "POST", headers: apiHeaders() });
       const d = await res.json();
       if (!res.ok || !d.ok) throw new Error(d.error ?? `HTTP ${res.status}`);
-      setNotice(`Booking details fetched from TripJack${d.details?.pnr ? ` · PNR ${d.details.pnr}` : ""}. The request/response is now in the log list.`);
+      setNotice(`Booking details fetched from TripJack${d.details?.pnr ? ` · PNR ${d.details.pnr}` : ""}. ${d.reason ?? ""} Details are in the Booking error log.`);
       setTimeout(load, 1500);
     } catch (e: any) { setError(e.message); } finally { setBusy(""); }
   }
@@ -111,7 +111,7 @@ export default function BookingDetailPage() {
           <button key={k} onClick={() => setTab(k)} style={{
             background: "none", border: 0, borderBottom: `2px solid ${tab === k ? "#E31E24" : "transparent"}`, color: tab === k ? "#f1f5f9" : "#94a3b8",
             padding: "10px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
-          }}>{label}{k === "logs" ? ` (${data.exchanges.length})` : k === "support" ? ` (${data.supportRequests.length})` : ""}</button>
+          }}>{label}{k === "errors" ? ` (${(data.events ?? []).filter((e: any) => e.level === "error").length})` : k === "logs" ? ` (${data.exchanges.length})` : k === "support" ? ` (${data.supportRequests.length})` : ""}</button>
         ))}
       </div>
 
@@ -130,6 +130,16 @@ export default function BookingDetailPage() {
           <button disabled={!!busy} onClick={retryBooking} style={btn}>{busy === "retry" ? "Booking with TripJack…" : "Retry airline booking"}</button>
         </div>
       )}
+      {(() => {
+        const lastError = [...(data.events ?? [])].reverse().find((e: any) => e.level === "error");
+        const missing = ["CONFIRMED", "TICKETED", "PAYMENT_PENDING", "PAYMENT_FAILED"].includes(b.status) && (!b.pnr || b.status !== "TICKETED");
+        return missing && lastError ? (
+          <div style={errBox}>
+            <b>Why the PNR / ticket is missing ({lastError.step.replace(/_/g, " ").toLowerCase()}, {new Date(lastError.at).toLocaleString()}):</b> {lastError.message}
+            {" "}<button onClick={() => setTab("errors")} style={linkBtn}>See full error log →</button>
+          </div>
+        ) : null;
+      })()}
       {b.status === "PAYMENT_FAILED" && data.queueError && (
         <div style={errBox}><b>Airline booking failed:</b> {data.queueError.message}</div>
       )}
@@ -184,6 +194,44 @@ export default function BookingDetailPage() {
               rows={data.walletTransactions.map((t: any) => [fmtDate(t.createdAt), t.type, t.amount, t.balanceAfter, t.note ?? ""])} />
           </Card>
         </div>
+      )}
+
+      {tab === "errors" && (
+        <Card title="Booking error log — why the PNR / ticket was or wasn't issued">
+          <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px" }}>
+            Every step after payment: booking with TripJack, booking-details checks for the PNR and ticket numbers, and any refund. Errors include TripJack's own response.
+          </p>
+          {b.supplier === "TRIPJACK" && b.supplierBookingRef && (
+            <div style={{ marginBottom: 12 }}>
+              <button disabled={!!busy} onClick={refreshDetails} style={btnGhost}>{busy === "refresh" ? "Fetching…" : "Fetch booking details from TripJack"}</button>
+            </div>
+          )}
+          {data.queueReceipt?.error && (
+            <div style={errBox}><b>Background job ({new Date(data.queueReceipt.at).toLocaleString()}, attempt {data.queueReceipt.attempt}):</b> {data.queueReceipt.error}</div>
+          )}
+          {!(data.events ?? []).length ? (
+            <p style={{ color: "#64748b", fontSize: 13 }}>No booking steps recorded yet. Steps are recorded for bookings processed after this log was added — press <b>Retry airline booking</b> or <b>Fetch booking details from TripJack</b> to record them.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {[...data.events].reverse().map((e: any, i: number) => (
+                <div key={i} style={{ border: `1px solid ${e.level === "error" ? "#7f1d1d" : e.level === "warn" ? "#78350f" : "#334155"}`, borderRadius: 8, padding: "10px 12px", background: e.level === "error" ? "rgba(239,68,68,.08)" : e.level === "warn" ? "rgba(245,158,11,.08)" : "transparent" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
+                    <span style={{ fontWeight: 800, color: e.level === "error" ? "#f87171" : e.level === "warn" ? "#fbbf24" : "#4ade80" }}>{e.level.toUpperCase()}</span>
+                    <span style={{ fontFamily: "monospace" }}>{e.step}</span>
+                    <span>{new Date(e.at).toLocaleString()}</span>
+                  </div>
+                  <div style={{ color: "#e2e8f0", fontSize: 13, lineHeight: 1.5 }}>{e.message}</div>
+                  {e.detail && (
+                    <details style={{ marginTop: 6 }}>
+                      <summary style={{ color: "#93c5fd", fontSize: 12, cursor: "pointer" }}>Technical details</summary>
+                      <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11, color: "#cbd5e1", background: "#0f172a", borderRadius: 6, padding: 8, margin: "6px 0 0" }}>{JSON.stringify(e.detail, null, 2)}</pre>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
       )}
 
       {tab === "logs" && (
@@ -290,4 +338,5 @@ const btn: React.CSSProperties = { background: "#E31E24", color: "#fff", border:
 const btnGhost: React.CSSProperties = { ...btn, background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" };
 const small: React.CSSProperties = { background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, padding: "4px 8px", fontWeight: 600, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" };
 const errBox: React.CSSProperties = { background: "rgba(239,68,68,.1)", border: "1px solid #7f1d1d", color: "#fca5a5", borderRadius: 8, padding: "10px 12px", fontSize: 13, margin: "10px 0" };
+const linkBtn: React.CSSProperties = { background: "none", border: 0, color: "#93c5fd", fontWeight: 700, fontSize: 13, cursor: "pointer", padding: 0 };
 const okBox: React.CSSProperties = { background: "rgba(34,197,94,.1)", border: "1px solid #166534", color: "#86efac", borderRadius: 8, padding: "10px 12px", fontSize: 13, margin: "10px 0" };

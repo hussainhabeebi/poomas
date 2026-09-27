@@ -118,6 +118,8 @@ export interface PNRStatusResult {
   status:       string;
   passengers:   { name: string; ticketNumber: string; status: string }[];
   itinerary:    unknown;
+  statusMessage?: string;  // Supplier's own status text (why a PNR/ticket is missing)
+  raw?:         unknown;
 }
 
 export interface CancelResult {
