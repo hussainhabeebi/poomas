@@ -133,6 +133,8 @@ export interface BookingEvent {
   level:   "info" | "warn" | "error";
   message: string;
   detail?: Record<string, unknown>;
+  repeat?:  number;   // same event seen again (e.g. the customer page polling)
+  firstAt?: string;
 }
 
 const eventsKey = (bookingId: string) => `booking_events:${bookingId}`;
@@ -164,7 +166,16 @@ export async function logBookingEvent(
   );
   try {
     const list = (await env.TENANT_CACHE_KV.get(eventsKey(bookingId), "json") as BookingEvent[] | null) ?? [];
-    list.push(event);
+    const last = list[list.length - 1];
+    if (last && last.step === step && last.level === level && last.message === message) {
+      // Collapse repeats into one entry with a count and the latest details.
+      last.repeat = (last.repeat ?? 1) + 1;
+      last.firstAt = last.firstAt ?? last.at;
+      last.at = event.at;
+      if (detail) last.detail = detail;
+    } else {
+      list.push(event);
+    }
     await env.TENANT_CACHE_KV.put(eventsKey(bookingId), JSON.stringify(list.slice(-MAX_EVENTS)), { expirationTtl: ERROR_TTL * 4 });
   } catch (err) {
     console.error(`[booking-log] could not store event for ${bookingId}`, err);

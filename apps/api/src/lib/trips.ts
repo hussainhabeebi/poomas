@@ -15,6 +15,7 @@ import { resolveFlightSuppliers } from "../routes/search.js";
 import { creditWallet, getOrCreateCustomerWallet, roundMoney } from "./customer-wallet.js";
 import { refundNomodCharge, resolveNomodApiKey } from "./payment-gateway.js";
 import { logSupplierCall } from "./supplier-logger.js";
+import { describeError, errorDetail, logBookingEvent } from "./booking-recovery.js";
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Booking = typeof bookings.$inferSelect;
@@ -70,7 +71,7 @@ export interface Itinerary {
 
 // `fresh` skips the KV cache (used for downloads, so ticket numbers issued a
 // moment ago are included).
-export async function liveItinerary(c: Ctx, booking: Booking, opts: { fresh?: boolean } = {}): Promise<Itinerary | null> {
+export async function liveItinerary(c: Ctx, booking: Booking, opts: { fresh?: boolean; source?: string } = {}): Promise<Itinerary | null> {
   if (booking.supplier !== "TRIPJACK" || !booking.supplierBookingRef || !["CONFIRMED", "TICKETED", "CANCELLED", "REFUNDED"].includes(booking.status)) {
     return null;
   }
@@ -81,14 +82,35 @@ export async function liveItinerary(c: Ctx, booking: Booking, opts: { fresh?: bo
       if (cached) return cached;
     } catch {}
   }
+  let client: TripjackClient;
   try {
-    const client = await tripjackClientFor(c, booking.id);
+    client = await tripjackClientFor(c, booking.id);
+  } catch (err) {
+    await logBookingEvent(c.env, booking.id, "SUPPLIER_CONFIG", "error",
+      "Customer page could not read booking details: TripJack is not configured (key / base URL / toggle in Admin → Integrations)",
+      { source: opts.source ?? "customer page", ...errorDetail(err) });
+    return null;
+  }
+  try {
     const raw = await client.pnrStatus(booking.supplierBookingRef) as any;
     const itin = parseBookingDetails(raw);
+    if (!itin.segments.length) {
+      const root = raw?.data ?? raw?.result ?? raw ?? {};
+      await logBookingEvent(c.env, booking.id, "BOOKING_DETAILS", "warn",
+        `TripJack booking-details returned no flight segments for ${booking.supplierBookingRef} (order status ${root?.order?.status ?? "missing"})`,
+        { source: opts.source ?? "customer page", supplierBookingId: booking.supplierBookingRef,
+          orderStatus: root?.order?.status ?? null, statusMessage: root?.order?.statusMessage ?? root?.status?.statusMessage ?? null,
+          apiStatus: root?.status ?? null, errors: root?.errors ?? null,
+          supplierResponse: JSON.stringify(raw ?? null).slice(0, 1500) });
+      return itin;
+    }
     try { await c.env.SESSIONS_KV.put(key, JSON.stringify(itin), { expirationTtl: ITINERARY_TTL }); } catch {}
     return itin;
   } catch (err) {
     console.error(`[trips] booking-details failed for ${booking.id}`, err);
+    await logBookingEvent(c.env, booking.id, "BOOKING_DETAILS", "error",
+      `TripJack booking-details lookup failed for ${booking.supplierBookingRef}: ${describeError(err)}`,
+      { source: opts.source ?? "customer page", supplierBookingId: booking.supplierBookingRef, ...errorDetail(err) });
     return null;
   }
 }

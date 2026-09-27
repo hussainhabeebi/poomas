@@ -184,7 +184,7 @@ async function eticketResponse(c: any, booking: typeof bookings.$inferSelect) {
   // TripJack bookings: always build from TripJack's live booking details so the
   // copy carries the latest PNR and ticket numbers; keep the stored copy current.
   if (booking.supplier === "TRIPJACK" && booking.supplierBookingRef) {
-    const itinerary = await liveItinerary(c, booking, { fresh: true });
+    const itinerary = await liveItinerary(c, booking, { fresh: true, source: "e-ticket download" });
     if (itinerary?.segments.length) {
       if (!itinerary.travellers.length) {
         const pax = await c.get("db").select().from(bookingPassengers).where(eq(bookingPassengers.bookingId, booking.id));
@@ -212,7 +212,7 @@ async function itineraryResponse(c: any, trip: NonNullable<Awaited<ReturnType<ty
   if (!["CONFIRMED", "TICKETED"].includes(booking.status)) {
     throw new HTTPException(409, { message: "The itinerary is available once the airline confirms the booking" });
   }
-  const itinerary = await liveItinerary(c, booking, { fresh: true });
+  const itinerary = await liveItinerary(c, booking, { fresh: true, source: "itinerary download" });
   if (!itinerary?.segments.length) {
     throw new HTTPException(503, { message: "The airline's itinerary isn't available yet. Please try again in a minute." });
   }

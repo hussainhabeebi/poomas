@@ -219,6 +219,8 @@ export default function BookingDetailPage() {
                     <span style={{ fontWeight: 800, color: e.level === "error" ? "#f87171" : e.level === "warn" ? "#fbbf24" : "#4ade80" }}>{e.level.toUpperCase()}</span>
                     <span style={{ fontFamily: "monospace" }}>{e.step}</span>
                     <span>{new Date(e.at).toLocaleString()}</span>
+                    {e.repeat > 1 && <span style={{ color: "#fbbf24" }}>×{e.repeat} since {new Date(e.firstAt).toLocaleString()}</span>}
+                    {e.detail?.source && <span>· {e.detail.source}</span>}
                   </div>
                   <div style={{ color: "#e2e8f0", fontSize: 13, lineHeight: 1.5 }}>{e.message}</div>
                   {e.detail && (
