@@ -77,15 +77,14 @@ export default function BookingDetailPage() {
   }
 
   async function retryBooking() {
-    if (!confirm("Send this paid booking to TripJack again?")) return;
+    if (!confirm("Book this paid booking with TripJack now?")) return;
     setBusy("retry"); setError(""); setNotice("");
     try {
       const res = await fetch(`${API}/api/admin/bookings/${id}/retry-booking`, { method: "POST", headers: apiHeaders() });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.message ?? d.error ?? `HTTP ${res.status}`);
-      setNotice("Booking sent to TripJack again. Status and PNR update in a few seconds.");
-      setTimeout(load, 8000);
-    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
+      if (!res.ok || !d.ok) throw new Error(d.message ?? d.error ?? `HTTP ${res.status}`);
+      setNotice(`TripJack booking done — status ${d.status}${d.pnr ? ` · PNR ${d.pnr}` : ""}.`);
+    } catch (e: any) { setError(`TripJack booking failed: ${e.message}`); } finally { setBusy(""); load(); }
   }
 
   if (error && !data) return <div><a href="/bookings" style={backLink}>← Bookings</a><div style={errBox}>{error}</div></div>;
@@ -120,10 +119,15 @@ export default function BookingDetailPage() {
       {b.status === "PAYMENT_PENDING" && (
         <div style={{ ...errBox, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <span>
-            Paid, but the airline booking has not completed. The customer is waiting on the confirmation page.
+            {data.paymentConfirmed
+              ? "Paid, but the airline booking has not completed. The customer is waiting on the confirmation page."
+              : "Waiting for payment — no successful payment has been recorded from the gateway yet."}
+            {data.paymentConfirmed && <><br />Background job: {data.queueReceipt
+              ? `received (attempt ${data.queueReceipt.attempt}, ${new Date(data.queueReceipt.at).toLocaleString()})${data.queueReceipt.error ? ` — failed: ${data.queueReceipt.error}` : ""}`
+              : "never received this booking"}</>}
             {data.queueError && <><br /><b>Last error (attempt {data.queueError.attempt}, {new Date(data.queueError.at).toLocaleString()}):</b> {data.queueError.message}</>}
           </span>
-          <button disabled={!!busy} onClick={retryBooking} style={btn}>{busy === "retry" ? "Sending…" : "Retry airline booking"}</button>
+          <button disabled={!!busy} onClick={retryBooking} style={btn}>{busy === "retry" ? "Booking with TripJack…" : "Retry airline booking"}</button>
         </div>
       )}
       {b.status === "PAYMENT_FAILED" && data.queueError && (

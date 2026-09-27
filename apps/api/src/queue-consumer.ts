@@ -10,7 +10,9 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
 import { resolveFlightSuppliers } from "./routes/search.js";
-import { acquireBookingLock, recordBookingError, releaseBookingLock } from "./lib/booking-recovery.js";
+import {
+  acquireBookingLock, recordBookingError, recordQueueReceipt, releaseBookingLock,
+} from "./lib/booking-recovery.js";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
@@ -27,7 +29,7 @@ interface InitiatePaymentMsg {
   agentId?:  string;
 }
 
-interface PaymentCapturedMsg {
+export interface PaymentCapturedMsg {
   type:             "PAYMENT_CAPTURED";
   gatewayPaymentId: string;
   orderId:          string;
@@ -69,7 +71,13 @@ export async function handleBookingQueue(
       if (data.type === "INITIATE_PAYMENT") {
         await handleInitiatePayment(db, env, data);
       } else if (data.type === "PAYMENT_CAPTURED") {
-        await handlePaymentCaptured(db, env, data, msg.attempts, msg.attempts >= BOOKING_MAX_ATTEMPTS);
+        await recordQueueReceipt(env, data.orderId, msg.attempts);
+        try {
+          await handlePaymentCaptured(db, env, data, msg.attempts, msg.attempts >= BOOKING_MAX_ATTEMPTS);
+        } catch (err) {
+          await recordQueueReceipt(env, data.orderId, msg.attempts, err);
+          throw err;
+        }
       }
 
       msg.ack();
@@ -342,6 +350,13 @@ async function triggerAutoRefund(
 }
 
 // ── PAYMENT_CAPTURED ──────────────────────────────────────────────
+
+// Books a paid booking with the supplier. Used by the queue and, directly, by the
+// Admin retry and the stalled-booking recovery on the customer's confirmation page.
+export async function processPaidBooking(env: Env, data: PaymentCapturedMsg, attempt = 1): Promise<void> {
+  const db = createDb(env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL);
+  await handlePaymentCaptured(db, env, data, attempt, false);
+}
 
 async function handlePaymentCaptured(
   db: ReturnType<typeof createDb>,
