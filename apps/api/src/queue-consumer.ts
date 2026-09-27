@@ -10,6 +10,7 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
 import { resolveFlightSuppliers } from "./routes/search.js";
+import { acquireBookingLock, recordBookingError, releaseBookingLock } from "./lib/booking-recovery.js";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
@@ -68,7 +69,7 @@ export async function handleBookingQueue(
       if (data.type === "INITIATE_PAYMENT") {
         await handleInitiatePayment(db, env, data);
       } else if (data.type === "PAYMENT_CAPTURED") {
-        await handlePaymentCaptured(db, env, data, msg.attempts >= BOOKING_MAX_ATTEMPTS);
+        await handlePaymentCaptured(db, env, data, msg.attempts, msg.attempts >= BOOKING_MAX_ATTEMPTS);
       }
 
       msg.ack();
@@ -346,6 +347,7 @@ async function handlePaymentCaptured(
   db: ReturnType<typeof createDb>,
   env: Env,
   data: PaymentCapturedMsg,
+  attempt = 1,
   finalAttempt = false,
 ): Promise<void> {
   // Find the booking from the payment record
@@ -371,6 +373,34 @@ async function handlePaymentCaptured(
     console.warn(`Booking ${booking.id} already confirmed, skipping`);
     return;
   }
+  if (booking.status !== "PAYMENT_PENDING" && booking.status !== "HELD") {
+    console.warn(`Booking ${booking.id} is ${booking.status}, not booking with the supplier`);
+    return;
+  }
+
+  // One supplier booking at a time per booking (queue retry + automatic re-send).
+  if (!(await acquireBookingLock(env, booking.id))) {
+    console.warn(`Booking ${booking.id} is already being booked with the supplier, skipping`);
+    return;
+  }
+  try {
+    console.info(`[booking] ${booking.id} attempt ${attempt}: booking with ${booking.supplier}`);
+    await bookPaidBooking(db, env, data, booking, finalAttempt);
+  } catch (err) {
+    await recordBookingError(env, booking.id, err, attempt);
+    throw err;
+  } finally {
+    await releaseBookingLock(env, booking.id);
+  }
+}
+
+async function bookPaidBooking(
+  db: ReturnType<typeof createDb>,
+  env: Env,
+  data: PaymentCapturedMsg,
+  booking: typeof bookings.$inferSelect,
+  finalAttempt: boolean,
+): Promise<void> {
 
   // Resolve suppliers exactly like search / checkout: the tenant DB rows plus the
   // Admin-saved TripJack integration (key + toggle) and Worker secrets. Using the
