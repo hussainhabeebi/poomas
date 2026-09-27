@@ -55,6 +55,14 @@ type NotifyQueueMsg    = NotifyBookingMsg | NotifyOtpMsg;
 
 // ── Booking Queue consumer ────────────────────────────────────────
 
+// Same connection as the HTTP API (tenant middleware). The Neon HTTP driver
+// cannot use the Hyperdrive connection string: its host only resolves over
+// Hyperdrive's TCP socket, so HTTP queries fail with 530 / error 1016 and paid
+// bookings never reached TripJack.
+function queueDb(env: Env) {
+  return createDb(env.DATABASE_URL);
+}
+
 // Matches max_retries = 3 on the poomas-bookings consumer (1 try + 3 retries).
 const BOOKING_MAX_ATTEMPTS = 4;
 
@@ -62,7 +70,7 @@ export async function handleBookingQueue(
   batch: MessageBatch<BookingQueueMsg>,
   env: Env,
 ): Promise<void> {
-  const db = createDb(env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL);
+  const db = queueDb(env);
 
   for (const msg of batch.messages) {
     try {
@@ -354,7 +362,7 @@ async function triggerAutoRefund(
 // Books a paid booking with the supplier. Used by the queue and, directly, by the
 // Admin retry and the stalled-booking recovery on the customer's confirmation page.
 export async function processPaidBooking(env: Env, data: PaymentCapturedMsg, attempt = 1): Promise<void> {
-  const db = createDb(env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL);
+  const db = queueDb(env);
   await handlePaymentCaptured(db, env, data, attempt, false);
 }
 
@@ -653,7 +661,7 @@ export async function handleNotifyQueue(
   batch: MessageBatch<NotifyQueueMsg>,
   env: Env,
 ): Promise<void> {
-  const db = createDb(env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL);
+  const db = queueDb(env);
 
   for (const msg of batch.messages) {
     try {
