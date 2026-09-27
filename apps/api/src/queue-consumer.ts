@@ -11,7 +11,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { getBookableAdapter } from "@poomas/suppliers";
 import { resolveFlightSuppliers } from "./routes/search.js";
 import {
-  acquireBookingLock, errorDetail, explainMissingPnr, logBookingEvent, recordBookingError, recordQueueReceipt, releaseBookingLock,
+  acquireBookingLock, errorDetail, explainMissingPnr, isTestBooking, logBookingEvent, recordBookingError, recordQueueReceipt, releaseBookingLock,
 } from "./lib/booking-recovery.js";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
@@ -607,12 +607,13 @@ async function bookPaidBooking(
         if (tickets.some(Boolean)) finalTickets = tickets;
         if (allTicketed) finalStatus = "TICKETED";
         const reason = explainMissingPnr(details);
+        const testBooking = isTestBooking(details.pnr);
         await logBookingEvent(env, booking.id, finalPnr && allTicketed ? "TICKET" : "BOOKING_DETAILS",
-          finalPnr && allTicketed ? "info" : i === delays.length - 1 ? "error" : "warn",
+          finalPnr && allTicketed ? "info" : testBooking ? "info" : i === delays.length - 1 ? "error" : "warn",
           `Booking details check ${i + 1}/${delays.length}: ${reason}`,
           { orderStatus: details.status, statusMessage: details.statusMessage, pnr: details.pnr || null,
             tickets: details.passengers.map((p) => ({ name: p.name, ticketNumber: p.ticketNumber || null })) });
-        if (finalPnr && allTicketed) break;
+        if ((finalPnr && allTicketed) || testBooking) break;
         if (["FAILED", "ABORTED", "CANCELLED"].includes(details.status.toUpperCase())) break;
       } catch (err) {
         await logBookingEvent(env, booking.id, "BOOKING_DETAILS", i === delays.length - 1 ? "error" : "warn",
@@ -626,7 +627,7 @@ async function bookPaidBooking(
       await logBookingEvent(env, booking.id, "PNR", "error",
         "Booking accepted by TripJack but no PNR yet — use \"Fetch booking details from TripJack\" later, or contact TripJack support with the booking ID",
         { bookingRef: bookResult.bookingRef });
-    } else if (finalStatus !== "TICKETED") {
+    } else if (finalStatus !== "TICKETED" && !isTestBooking(finalPnr)) {
       await logBookingEvent(env, booking.id, "TICKET", "warn",
         `PNR ${finalPnr} issued but ticket numbers are not issued yet — the airline/TripJack is still ticketing`,
         { bookingRef: bookResult.bookingRef });
