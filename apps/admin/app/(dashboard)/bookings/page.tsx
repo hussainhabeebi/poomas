@@ -1,3 +1,4 @@
+import { CertificationExport } from "./CertificationExport";
 const SERVER_API   = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const SERVER_TOKEN = process.env.ADMIN_SERVICE_TOKEN ?? "";
 
@@ -60,6 +61,8 @@ export default async function AdminBookingsPage({
         <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9" }}>All Bookings</h1>
         <span style={{ color: "#64748b", fontSize: 14 }}>{total.toLocaleString()} total</span>
       </div>
+
+      <CertificationExport />
 
       {/* Filters */}
       <form method="GET" style={{ display: "flex", gap: 12, marginBottom: 24 }}>
