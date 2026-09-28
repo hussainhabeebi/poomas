@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
+import styles from "./wallet.module.css";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
@@ -13,6 +14,23 @@ const TX_LABEL: Record<string, string> = {
 const DEBITS = new Set(["BOOKING_DEBIT", "COUPON_DEBIT"]);
 const STATUS_LABEL: Record<string, string> = { ACTIVE: "Active", REDEEMED: "Used", CANCELLED: "Cancelled", EXPIRED: "Expired · refunded" };
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function WalletIcon({ kind }: { kind: "wallet" | "share" | "redeem" | "flight" | "credit" | "debit" }) {
+  const paths: Record<typeof kind, React.ReactNode> = {
+    wallet: <><rect x="3" y="6" width="18" height="14" rx="2" /><path d="M3 9V5a2 2 0 0 1 2-2h13" /><path d="M16 13h5" /></>,
+    share: <><circle cx="18" cy="5" r="2" /><circle cx="6" cy="12" r="2" /><circle cx="18" cy="19" r="2" /><path d="m8 11 8-5M8 13l8 5" /></>,
+    redeem: <><rect x="3" y="6" width="18" height="14" rx="2" /><path d="M12 6v14M3 11h18M12 6c-5 0-5-4-2-4 2 0 2 4 2 4Zm0 0c5 0 5-4 2-4-2 0-2 4-2 4Z" /></>,
+    flight: <path d="m21 3-7 18-3-8-8-3 18-7ZM11 13l10-10" />,
+    credit: <><circle cx="12" cy="12" r="9" /><path d="M12 8v8m-4-4h8" /></>,
+    debit: <><circle cx="12" cy="12" r="9" /><path d="M8 12h8" /></>,
+  };
+  return <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
+}
+
+function transactionIcon(type: string) {
+  if (type === "BOOKING_DEBIT" || type === "BOOKING_BONUS") return "flight";
+  return DEBITS.has(type) ? "debit" : "credit";
+}
 
 function readToken() {
   const m = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -100,17 +118,18 @@ export default function WalletPage() {
     else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   }
 
-  if (loading) return <main className="page-container" style={{ padding: "40px 16px" }}>Loading wallet…</main>;
+  if (loading) return <main className={styles.page}><p className={styles.loading}>Loading wallet…</p></main>;
 
   if (!token) {
     return (
-      <main className="page-container" style={{ padding: "40px 16px", maxWidth: 520 }}>
-        <section style={card}>
-          <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>FlyPoomas Wallet</h1>
-          <p style={{ color: "#64748b", margin: "0 0 18px" }}>Sign in to see your balance. Every confirmed booking earns you ₹50, and you can pay for flights with your wallet.</p>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <a href="/signup?next=/wallet" style={primaryBtn}>Create account</a>
-            <a href="/login?next=/wallet" style={secondaryBtn}>Sign in</a>
+      <main className={styles.page}>
+        <section className={styles.signInCard}>
+          <span className={styles.sectionIcon}><WalletIcon kind="wallet" /></span>
+          <h1>FlyPoomas Wallet</h1>
+          <p>Sign in to see your balance. Every confirmed booking earns you ₹50, and you can pay for flights with your wallet.</p>
+          <div className={styles.signInActions}>
+            <a className={styles.primaryButton} href="/signup?next=/wallet">Create account</a>
+            <a className={styles.secondaryButton} href="/login?next=/wallet">Sign in</a>
           </div>
         </section>
       </main>
@@ -118,82 +137,79 @@ export default function WalletPage() {
   }
 
   return (
-    <main className="page-container" style={{ padding: "24px 16px 48px", maxWidth: 760 }}>
-      <section style={{ ...card, background: "linear-gradient(135deg,#E31E24,#9f1239)", color: "#fff", border: 0 }}>
-        <p style={{ margin: 0, opacity: .85, fontSize: 13, fontWeight: 600 }}>Wallet balance</p>
-        <p style={{ margin: "4px 0 6px", fontSize: 36, fontWeight: 800 }}>{inr(balance)}</p>
-        <p style={{ margin: 0, opacity: .85, fontSize: 13 }}>+₹50 for every confirmed booking · usable when it covers the full fare</p>
+    <main className={styles.page}>
+      <section className={styles.balanceCard} aria-label="Wallet balance">
+        <div className={styles.balanceContent}>
+          <span className={styles.balanceEyebrow}><WalletIcon kind="wallet" /> Wallet balance</span>
+          <p className={styles.balanceAmount}>{inr(balance)}</p>
+          <p className={styles.balanceCaption}>Your available balance in INR</p>
+          <div className={styles.balanceNote}>₹50 for every confirmed booking · Pay for an INR flight when your balance covers the full fare</div>
+        </div>
       </section>
 
-      {error && <div style={{ ...banner, background: "#FEE2E2", color: "#991B1B" }}>{error}</div>}
-      {notice && <div style={{ ...banner, background: "#DCFCE7", color: "#166534" }}>{notice}</div>}
+      {error && <div className={`${styles.message} ${styles.error}`} role="alert">{error}</div>}
+      {notice && <div className={`${styles.message} ${styles.notice}`} role="status">{notice}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginTop: 14 }}>
-        <section style={card}>
-          <h2 style={h2}>Share balance</h2>
-          <p style={muted}>Turn part of your balance into a one-time code for a friend. Unused codes return to you after 30 days.</p>
-          <form onSubmit={createCoupon} style={{ display: "flex", gap: 8 }}>
-            <input type="number" min="10" step="1" inputMode="numeric" placeholder="₹ amount" value={couponAmount} onChange={(e) => setCouponAmount(e.target.value)} style={input} />
-            <button type="submit" disabled={busy || balance < 10} style={{ ...primaryBtn, opacity: busy || balance < 10 ? .6 : 1 }}>Create code</button>
+      <div className={styles.actionGrid}>
+        <section className={styles.actionCard}>
+          <div className={styles.cardTitle}><span className={styles.sectionIcon}><WalletIcon kind="share" /></span><div><h2>Share balance</h2><p>Turn part of your balance into a one-time code for a friend. Unused codes return to you after 30 days.</p></div></div>
+          <form className={styles.actionForm} onSubmit={createCoupon}>
+            <label className={styles.srOnly} htmlFor="wallet-share-amount">Amount to share in rupees</label>
+            <input id="wallet-share-amount" type="number" min="10" step="1" inputMode="numeric" placeholder="₹ amount" value={couponAmount} onChange={(e) => setCouponAmount(e.target.value)} />
+            <button className={styles.primaryButton} type="submit" disabled={busy || balance < 10}>Create code <span aria-hidden="true">→</span></button>
           </form>
         </section>
-        <section style={card}>
-          <h2 style={h2}>Redeem a code</h2>
-          <p style={muted}>Got a FlyPoomas wallet code from someone? Add it here.</p>
-          <form onSubmit={redeem} style={{ display: "flex", gap: 8 }}>
-            <input placeholder="PM-XXXXX-XXXXX" value={redeemCode} onChange={(e) => setRedeemCode(e.target.value.toUpperCase())} style={{ ...input, textTransform: "uppercase" }} />
-            <button type="submit" disabled={busy} style={{ ...primaryBtn, opacity: busy ? .6 : 1 }}>Redeem</button>
+        <section className={styles.actionCard}>
+          <div className={styles.cardTitle}><span className={styles.sectionIcon}><WalletIcon kind="redeem" /></span><div><h2>Redeem a code</h2><p>Got a FlyPoomas wallet code from someone? Add it here.</p></div></div>
+          <form className={styles.actionForm} onSubmit={redeem}>
+            <label className={styles.srOnly} htmlFor="wallet-redeem-code">Wallet code</label>
+            <input id="wallet-redeem-code" placeholder="PM-XXXXX-XXXXX" value={redeemCode} onChange={(e) => setRedeemCode(e.target.value.toUpperCase())} style={{ textTransform: "uppercase" }} />
+            <button className={styles.primaryButton} type="submit" disabled={busy}>Redeem <span aria-hidden="true">→</span></button>
           </form>
         </section>
       </div>
 
+      <section className={styles.infoStrip} aria-label="Wallet benefits">
+        <span className={styles.infoIcon}><WalletIcon kind="wallet" /></span>
+        <div><h2>Why use FlyPoomas Wallet?</h2><p>Earn ₹50 after a confirmed booking, pay for eligible INR flights with a sufficient balance, or share balance with a one-time code.</p></div>
+      </section>
+
       {coupons.length > 0 && (
-        <section style={{ ...card, marginTop: 14 }}>
-          <h2 style={h2}>Your codes</h2>
-          {coupons.map((c) => (
-            <div key={c.id} style={rowStyle}>
-              <span style={{ minWidth: 0 }}>
-                <strong style={{ fontFamily: "monospace", fontSize: 15, letterSpacing: .5 }}>{c.code}</strong>
-                <small style={{ display: "block", color: "#64748b" }}>
-                  {inr(Number(c.amount))} · {STATUS_LABEL[c.status] ?? c.status}
-                  {c.status === "ACTIVE" ? ` · expires ${new Date(c.expiresAt).toLocaleDateString("en-IN")}` : ""}
-                </small>
-              </span>
-              {c.status === "ACTIVE" && (
-                <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button onClick={() => share(c)} style={smallBtn}>Share</button>
-                  <button onClick={() => cancelCoupon(c)} disabled={busy} style={{ ...smallBtn, color: "#991B1B" }}>Cancel</button>
-                </span>
-              )}
-            </div>
-          ))}
+        <section className={styles.panel}>
+          <div className={styles.panelHeading}><div><h2>Your codes</h2><p>Manage codes you have created from your wallet balance.</p></div></div>
+          <div className={styles.list}>
+            {coupons.map((c) => (
+              <div key={c.id} className={styles.codeRow}>
+                <div className={styles.codeDetails}>
+                  <strong className={styles.code}>{c.code}</strong>
+                  <span>{inr(Number(c.amount))} · {STATUS_LABEL[c.status] ?? c.status}{c.status === "ACTIVE" ? ` · expires ${new Date(c.expiresAt).toLocaleDateString("en-IN")}` : ""}</span>
+                </div>
+                {c.status === "ACTIVE" && <div className={styles.codeActions}>
+                  <button className={styles.subtleButton} onClick={() => share(c)}>Share</button>
+                  <button className={styles.cancelButton} onClick={() => cancelCoupon(c)} disabled={busy}>Cancel</button>
+                </div>}
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
-      <section style={{ ...card, marginTop: 14 }}>
-        <h2 style={h2}>History</h2>
-        {transactions.length === 0 ? <p style={muted}>No activity yet. Book a flight to earn your first ₹50.</p> : transactions.map((t) => (
-          <div key={t.id} style={rowStyle}>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: 600 }}>{TX_LABEL[t.type] ?? t.type}</span>
-              <small style={{ display: "block", color: "#64748b" }}>{new Date(t.createdAt).toLocaleString("en-IN")}{t.note ? ` · ${t.note}` : ""}</small>
-            </span>
-            <strong style={{ color: DEBITS.has(t.type) ? "#b91c1c" : "#15803d", whiteSpace: "nowrap" }}>
-              {DEBITS.has(t.type) ? "−" : "+"}{inr(Number(t.amount))}
-            </strong>
-          </div>
-        ))}
+      <section className={styles.panel}>
+        <div className={styles.panelHeading}><div><h2>History</h2><p>Your recent wallet activity</p></div></div>
+        {transactions.length === 0 ? <p className={styles.empty}>No activity yet. Book a flight to earn your first ₹50.</p> :
+          <div className={styles.list}>{transactions.map((t) => (
+            <div key={t.id} className={styles.transactionRow}>
+              <span className={`${styles.transactionIcon} ${DEBITS.has(t.type) ? styles.debitIcon : styles.creditIcon}`}><WalletIcon kind={transactionIcon(t.type)} /></span>
+              <div className={styles.transactionDetails}>
+                <strong>{TX_LABEL[t.type] ?? t.type}</strong>
+                <span>{new Date(t.createdAt).toLocaleString("en-IN")}{t.note ? ` · ${t.note}` : ""}</span>
+              </div>
+              <strong className={`${styles.transactionAmount} ${DEBITS.has(t.type) ? styles.debit : styles.credit}`}>
+                {DEBITS.has(t.type) ? "−" : "+"}{inr(Number(t.amount))}
+              </strong>
+            </div>
+          ))}</div>}
       </section>
     </main>
   );
 }
-
-const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 18 };
-const h2: React.CSSProperties = { margin: "0 0 6px", fontSize: 16, fontWeight: 800, color: "#0f172a" };
-const muted: React.CSSProperties = { margin: "0 0 12px", color: "#64748b", fontSize: 13 };
-const banner: React.CSSProperties = { marginTop: 14, padding: "10px 14px", borderRadius: 10, fontSize: 14 };
-const input: React.CSSProperties = { flex: 1, minWidth: 0, padding: "11px 12px", border: "1.5px solid #e2e8f0", borderRadius: 10, fontSize: 15, fontFamily: "inherit" };
-const primaryBtn: React.CSSProperties = { background: "#E31E24", color: "#fff", border: 0, borderRadius: 10, padding: "11px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer", textDecoration: "none", whiteSpace: "nowrap", fontFamily: "inherit" };
-const secondaryBtn: React.CSSProperties = { ...primaryBtn, background: "#fff", color: "#0f172a", border: "1.5px solid #e2e8f0" };
-const smallBtn: React.CSSProperties = { background: "#f1f5f9", border: 0, borderRadius: 8, padding: "7px 10px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" };
-const rowStyle: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "10px 0", borderTop: "1px solid #f1f5f9" };
