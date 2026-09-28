@@ -125,7 +125,12 @@ export async function certificationSummary(db: Db, b: Booking) {
 // Builds the files for one booking (optionally under a folder).
 export async function certificationPack(env: Env, db: Db, b: Booking, environment: "UAT" | "PRODUCTION", folder = ""): Promise<PackFile[]> {
   const host = tripjackHost(environment);
-  const rows = await db.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt));
+  const all = await db.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt));
+  // Booking details is polled every few seconds until the PNR / ticket arrive;
+  // the certification pack keeps only the last (final-status) call. Every call
+  // stays available individually in Admin.
+  const lastDetails = [...all].reverse().find((x) => tripjackPath(x.endpoint) === "/oms/v1/booking-details" && x.responseKey);
+  const rows = all.filter((x) => tripjackPath(x.endpoint) !== "/oms/v1/booking-details" || x === lastDetails);
   const files: PackFile[] = [{
     name: `${folder}00-booking-summary.json`,
     data: enc.encode(JSON.stringify(await certificationSummary(db, b), null, 2)),

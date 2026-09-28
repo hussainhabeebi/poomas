@@ -39,18 +39,18 @@ export default function BookingDetailPage() {
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
-  async function fetchFile(path: string) {
+  async function fetchFile(path: string, fallbackName: string) {
     const res = await fetch(`${API}/api/admin/bookings/${id}/${path}`, { headers: apiHeaders() });
     if (!res.ok) { const t = await res.text(); throw new Error(safeError(t) ?? `HTTP ${res.status}`); }
     const cd = res.headers.get("content-disposition") ?? "";
-    const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? "log.json";
+    const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? fallbackName;
     return { res, name };
   }
 
   async function view(x: any, part: "request" | "response") {
     setBusy(`${x.id}-${part}`); setError("");
     try {
-      const { res, name } = await fetchFile(`exchanges/${x.id}/${part}`);
+      const { res, name } = await fetchFile(`exchanges/${x.id}/${part}`, `${part}.json`);
       setViewer({ title: `${ENDPOINT_LABEL[x.endpoint] ?? x.endpoint} — ${part}`, name, text: await res.text(), pretty: false });
     } catch (e: any) { setError(e.message); } finally { setBusy(""); }
   }
@@ -58,9 +58,11 @@ export default function BookingDetailPage() {
   async function download(path: string, key: string) {
     setBusy(key); setError("");
     try {
-      const { res, name } = await fetchFile(path);
+      const { res, name } = await fetchFile(path,
+        path.endsWith(".zip") ? `booking-${String(id).slice(0, 8)}-tripjack-logs.zip` : `${path.replace(/[^a-z0-9]+/gi, "-")}.json`);
       const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+      const a = document.createElement("a"); a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (e: any) { setError(e.message); } finally { setBusy(""); }
   }
