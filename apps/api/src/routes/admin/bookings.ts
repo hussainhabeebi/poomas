@@ -8,6 +8,8 @@ import { eq, and, asc, desc, or } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
 import { buildZip } from "../../lib/zip.js";
+import { certificationPack, certificationRequest, packFolderName, tripjackHost } from "../../lib/certification.js";
+import { tripjackEnvironment } from "../../lib/hotels.js";
 import {
   describeError, errorDetail, explainMissingPnr, isTestBooking, logBookingEvent, paidBookingMessage,
   readBookingError, readBookingEvents, readQueueReceipt,
@@ -79,6 +81,25 @@ function exchangeFilter(b: typeof bookings.$inferSelect) {
     : eq(supplierExchanges.bookingId, b.id);
 }
 
+// TripJack certification logs for several bookings: one folder per booking with
+// a summary plus numbered request / response JSON files (see lib/certification).
+bookingsAdminRoutes.get("/certification.zip", async (c) => {
+  const db = c.get("db");
+  const ids = (c.req.query("ids") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 30);
+  if (!ids.length) throw new HTTPException(400, { message: "Pass ?ids=<bookingId>,<bookingId>…" });
+  const environment = await tripjackEnvironment(c.env, c.get("tenantId"));
+  const files: { name: string; data: Uint8Array; date: Date }[] = [];
+  for (const [i, id] of ids.entries()) {
+    const b = await loadBooking(c, id);
+    files.push(...await certificationPack(c.env, db, b, environment, packFolderName(i + 1, b)));
+  }
+  return new Response(buildZip(files), { headers: {
+    "Content-Type": "application/zip",
+    "Content-Disposition": `attachment; filename="tripjack-certification-${environment.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.zip"`,
+    "Cache-Control": "private, no-store",
+  } });
+});
+
 bookingsAdminRoutes.get("/:id", async (c) => {
   const db = c.get("db");
   const b = await loadBooking(c, c.req.param("id"));
@@ -116,29 +137,31 @@ bookingsAdminRoutes.get("/:id/exchanges/:exchangeId/:part", async (c) => {
   const obj = await c.env.DOCUMENTS_R2.get(key);
   if (!obj) throw new HTTPException(404, { message: "Log file missing from storage" });
   const name = key.split("/").pop()!;
+  if (part === "request") {
+    // As TripJack received it: TripJack URL, apikey header, body — no gateway secret.
+    let stored: Record<string, any> = {};
+    try { stored = JSON.parse(await obj.text()); } catch { /* empty */ }
+    const host = tripjackHost(await tripjackEnvironment(c.env, c.get("tenantId")));
+    return new Response(JSON.stringify(certificationRequest(stored, host), null, 2), { headers: {
+      "Content-Type": "application/json", "Content-Disposition": `attachment; filename="${name}"`, "Cache-Control": "private, no-store",
+    } });
+  }
   return new Response(obj.body, { headers: {
     "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream",
     "Content-Disposition": `attachment; filename="${name}"`, "Cache-Control": "private, no-store",
   } });
 });
 
-// All request/response files for the booking as one ZIP (each file unchanged).
+// TripJack certification pack for this booking: summary + numbered request /
+// response JSON files (responses unchanged; requests as TripJack received them).
 bookingsAdminRoutes.get("/:id/exchanges.zip", async (c) => {
   const db = c.get("db");
   const b = await loadBooking(c, c.req.param("id"));
-  const rows = await db.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt));
-  const files: { name: string; data: Uint8Array; date: Date }[] = [];
-  for (const x of rows) {
-    for (const key of [x.requestKey, x.responseKey]) {
-      if (!key) continue;
-      const obj = await c.env.DOCUMENTS_R2.get(key);
-      if (obj) files.push({ name: key.split("/").pop()!, data: new Uint8Array(await obj.arrayBuffer()), date: x.startedAt });
-    }
-  }
-  if (!files.length) throw new HTTPException(404, { message: "No API logs stored for this booking yet" });
+  const files = await certificationPack(c.env, db, b, await tripjackEnvironment(c.env, c.get("tenantId")));
+  if (files.length <= 1) throw new HTTPException(404, { message: "No API logs stored for this booking yet" });
   return new Response(buildZip(files), { headers: {
     "Content-Type": "application/zip",
-    "Content-Disposition": `attachment; filename="booking-${b.pnr ?? b.id.slice(0, 8)}-api-logs.zip"`,
+    "Content-Disposition": `attachment; filename="booking-${b.pnr ?? b.id.slice(0, 8)}-tripjack-logs.zip"`,
     "Cache-Control": "private, no-store",
   } });
 });
