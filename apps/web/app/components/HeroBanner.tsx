@@ -4,24 +4,21 @@ import { useEffect, useRef, useState } from "react";
 
 const SLIDES = [
   {
-    image: "https://images.unsplash.com/photo-1528690041201-a8217b45b970?auto=format&fit=crop&w=1600&q=72",
-    source: "https://unsplash.com/photos/burj-khalifa-dubai-UQ_61DeiHss",
+    image: "/hero/airplane-wing-clouds.webp",
     eyebrow: "India ↔ Gulf specialists",
     title: "Your next journey starts here",
     sub: "Compare live fares, share passenger details securely and complete your booking in minutes.",
     cta: "Search live flights",
   },
   {
-    image: "https://images.unsplash.com/photo-1678609040604-18b458a420ff?auto=format&fit=crop&w=1600&q=72",
-    source: "https://unsplash.com/photos/the-wing-of-an-airplane-flying-above-the-clouds--01Xl8gIg1E",
+    image: "/hero/kerala-backwaters.webp",
     eyebrow: "Smart flight comparison",
     title: "Three better choices. Zero confusion.",
     sub: "See the best overall, lowest fare and fastest journey—with baggage and duration included.",
     cta: "Find my best flight",
   },
   {
-    image: "https://images.unsplash.com/photo-1637299401827-a4216dc1561b?auto=format&fit=crop&w=1600&q=72",
-    source: "https://unsplash.com/photos/a-view-of-a-city-from-a-distance-Jyl0z4kAutI",
+    image: "/hero/dubai-skyline.webp",
     eyebrow: "Travel beyond borders",
     title: "Gulf, India and the world",
     sub: "Book confidently with secure checkout, WhatsApp updates and human support when you need it.",
@@ -68,7 +65,7 @@ export default function HeroBanner({ banners }: { banners: unknown[] }) {
         loading={idx === 0 ? "eager" : "lazy"}
         fetchPriority={idx === 0 ? "high" : "auto"}
       />
-      <div className="hero-shade" />
+      <div className={`hero-shade hero-shade-${idx + 1}`} />
       <button className="hero-arrow hero-arrow-left" onClick={() => move(-1)} aria-label="Previous offer">‹</button>
       <div className="hero-inner hero-copy">
         <div className="hero-badge">{slide.eyebrow}</div>
