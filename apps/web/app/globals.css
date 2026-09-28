@@ -2236,6 +2236,11 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
 
 /* Compact shared customer navigation. The search forms retain their own currency controls. */
 .site-nav-icon { flex: none; }
+.site-account-icon-wrap { flex: none; }
+.site-account-label { display: block; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1023px) {
+  .home-menu-account-link .site-account-label { max-width: min(240px, calc(100vw - 100px)); }
+}
 @media (min-width: 1024px) {
   body .site-header,
   body:has(.home-phase1) .site-header {

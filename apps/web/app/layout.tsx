@@ -5,7 +5,6 @@ import SiteNav from "./components/SiteNav";
 export const metadata: Metadata = {
   title: "FlyPoomas",
   description: "Book flights at best prices — India, Gulf & beyond",
-  icons: { icon: "/favicon.ico", apple: "/logo.png" },
   manifest: "/manifest.json",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "FlyPoomas" },
 };

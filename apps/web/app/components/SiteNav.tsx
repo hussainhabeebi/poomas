@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { apiCall, readCustomerToken } from "../lib/customer-api";
 
 function flightSearchUrl() {
   // Match the existing popular-route search date rule without a dated link that expires.
@@ -15,6 +17,26 @@ function flightSearchUrl() {
 
 export default function SiteNav() {
   const pathname = usePathname();
+  const [accountName, setAccountName] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAccountName() {
+      const token = readCustomerToken();
+      if (!token) { setAccountName(""); return; }
+      try {
+        const { account } = await apiCall<{ account: { name: string | null } }>("/api/profile/account");
+        if (!cancelled && readCustomerToken() === token) setAccountName(account.name?.trim() ?? "");
+      } catch {
+        if (!cancelled) setAccountName("");
+      }
+    }
+    void loadAccountName();
+    window.addEventListener("poomas:profile-updated", loadAccountName);
+    return () => { cancelled = true; window.removeEventListener("poomas:profile-updated", loadAccountName); };
+  }, [pathname]);
+
+  const accountLabel = accountName || "Account";
   const active = pathname === "/search" || pathname.startsWith("/search/") || pathname === "/book" || pathname.startsWith("/book/") || pathname === "/checkout" || pathname.startsWith("/checkout/")
     ? "flights"
     : pathname === "/hotels" || pathname.startsWith("/hotels/")
@@ -55,7 +77,7 @@ export default function SiteNav() {
   return (
     <nav className="site-nav" aria-label="Main navigation">
       <div className="site-nav-links">{navigationItems()}</div>
-      <a href="/account" className="nav-link home-account-link"><span className="site-account-icon-wrap">{accountIcon}</span><span>Account</span></a>
+      <a href="/account" className="nav-link home-account-link"><span className="site-account-icon-wrap">{accountIcon}</span><span className="site-account-label" title={accountLabel}>{accountLabel}</span></a>
       <details className="home-mobile-menu">
         <summary aria-label="Navigation menu">
           <span className="home-mobile-menu-icon" aria-hidden="true"><i /><i /><i /></span>
@@ -63,7 +85,7 @@ export default function SiteNav() {
         </summary>
         <div className="home-mobile-menu-panel">
           {navigationItems()}
-          <a href="/account" className="nav-link home-menu-account-link"><span className="site-account-icon-wrap">{accountIcon}</span><span>Account</span></a>
+          <a href="/account" className="nav-link home-menu-account-link"><span className="site-account-icon-wrap">{accountIcon}</span><span className="site-account-label" title={accountLabel}>{accountLabel}</span></a>
         </div>
       </details>
     </nav>
