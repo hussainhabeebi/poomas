@@ -18,3 +18,8 @@ export type {
 export { SerpAdapter }   from "./serp/adapter.js";
 export { DuffelAdapter } from "./duffel/adapter.js";
 export type { SupplierExchange, ExchangeRecorder } from "./tripjack/client.js";
+export {
+  parseTripjackReview, reviewTotalFare, ssrTotal,
+  type ReviewSummary, type ReviewSegment, type ReviewConditions, type SsrOption,
+} from "./tripjack/review.js";
+export { searchLegs } from "./tripjack/client.js";

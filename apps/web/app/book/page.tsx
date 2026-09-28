@@ -11,6 +11,25 @@ type Passenger = {
   dob: string; gender: "M" | "F";
   nationality: string;
   passportNumber: string; passportExpiry: string;
+  passportIssueDate: string; panNumber: string; documentId: string;
+  // Chosen SSR per TripJack segment key → SSR code.
+  bag: Record<string, string>; meal: Record<string, string>;
+};
+
+type SsrOption = { code: string; amount: number; desc: string };
+type ReviewSegment = { key: string; airline: string; flightNumber: string; origin: string; destination: string; departureTime: string; ssr: { baggage: SsrOption[]; meal: SsrOption[]; extra: SsrOption[] } };
+type Review = {
+  bookingId: string; totalFare?: number; expiresAt?: string;
+  fareIdentifiers: string[];
+  fareAlert?: { oldFare?: number; newFare?: number; message?: string };
+  segments: ReviewSegment[];
+  conditions: {
+    holdAllowed: boolean; seatApplicable: boolean; emergencyContactRequired: boolean;
+    gstMandatory: boolean; gstApplicable: boolean;
+    passportMandatory: boolean; passportExpiryRequired: boolean;
+    dobRequired: { ADULT: boolean; CHILD: boolean; INFANT: boolean };
+    panApplicable: boolean; documentIdApplicable: boolean; documentIdMandatory: boolean;
+  };
 };
 
 type FareInfo = {
@@ -35,6 +54,7 @@ type SavedPassenger = {
 const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
   type, firstName: "", lastName: "", dob: "", gender: "M", nationality: "IN",
   passportNumber: "", passportExpiry: "",
+  passportIssueDate: "", panNumber: "", documentId: "", bag: {}, meal: {},
 });
 
 const AIRPORT_COUNTRY: Record<string, string> = {
@@ -74,6 +94,14 @@ export default function BookPage() {
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
   const [confirmation, setConfirmation] = useState<any>(null);
+  // TripJack review (run on load): conditions, SSR options, fare alerts.
+  const [review, setReview] = useState<Review | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [tripType, setTripType] = useState<"ONEWAY" | "ROUNDTRIP" | "MULTICITY">("ONEWAY");
+  const [useGst, setUseGst] = useState(false);
+  const [gst, setGst] = useState({ gstNumber: "", registeredName: "", email: "", mobile: "", address: "" });
+  const [emergency, setEmergency] = useState({ name: "", phone: "", email: "" });
 
   // Auth state
   const [token, setToken] = useState("");
@@ -115,6 +143,21 @@ export default function BookPage() {
       isRefundable:  q.get("ref") === "1",
       cabinChecked:  q.get("bag") ?? "15 KG",
     });
+
+    const tt = q.get("tripType");
+    if (tt === "ROUNDTRIP" || tt === "MULTICITY") setTripType(tt);
+    if (supplier.toUpperCase() === "TRIPJACK") {
+      const priceIds = (q.get("priceIds") ?? fareId).split(",").filter(Boolean);
+      setReviewLoading(true);
+      fetch(`${apiUrl}/api/book/review`, {
+        method: "POST", headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify({ priceIds, ...(q.get("sid") ? { searchId: q.get("sid") } : {}) }),
+      })
+        .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error ?? "We couldn't confirm availability."), { code: d.errorCode }); return d as Review; })
+        .then((d) => { setReview(d); if (d.conditions.gstMandatory) setUseGst(true); })
+        .catch((e) => { if (e.code === "FARE_EXPIRED") setFareExpired(true); else setReviewError(e.message); })
+        .finally(() => setReviewLoading(false));
+    }
 
     // Offer AED when the admin has set a rate; start with the customer's chosen currency.
     let wanted = q.get("pc");
@@ -221,6 +264,19 @@ export default function BookPage() {
 
   const upd = (i: number, k: keyof Passenger, v: string) =>
     setPassengers((p) => p.map((x, n) => n === i ? { ...x, [k]: v } : x));
+  const updSsr = (i: number, kind: "bag" | "meal", key: string, code: string) =>
+    setPassengers((p) => p.map((x, n) => n === i ? { ...x, [kind]: { ...x[kind], [key]: code } } : x));
+
+  const cond = review?.conditions;
+  const passportNeeded = isInternational || !!cond?.passportMandatory;
+  const ssrSegments = (review?.segments ?? []).filter((s) => s.ssr.baggage.length || s.ssr.meal.length);
+  const ssrPrice = (kind: "baggage" | "meal", key: string, code: string) =>
+    review?.segments.find((s) => s.key === key)?.ssr[kind].find((o) => o.code === code)?.amount ?? 0;
+  const ssrSum = passengers.reduce((n, p) =>
+    n + Object.entries(p.bag).reduce((m, [k, c]) => m + (c ? ssrPrice("baggage", k, c) : 0), 0)
+      + Object.entries(p.meal).reduce((m, [k, c]) => m + (c ? ssrPrice("meal", k, c) : 0), 0), 0);
+  const grandTotal = (fare?.totalFare ?? 0) + ssrSum;
+  const picks = (m: Record<string, string>) => Object.entries(m).filter(([, c]) => c).map(([key, code]) => ({ key, code }));
 
   const t = (s?: string) =>
     s ? new Date(s).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "--:--";
@@ -306,6 +362,13 @@ export default function BookPage() {
       const problem = passengerNameProblem(p.firstName, "First name") ?? passengerNameProblem(p.lastName, "Last name");
       if (problem) { setError(`Traveller ${i + 1}: ${problem}`); setReviewing(false); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     }
+    if (cond) {
+      const problem = cond.gstMandatory && !(useGst && gst.gstNumber.trim() && gst.registeredName.trim()) ? "GST number and registered name are mandatory for this fare."
+        : useGst && gst.gstNumber.trim() && !/^\d{2}[A-Z0-9]{13}$/i.test(gst.gstNumber.trim()) ? "GSTIN must be 15 characters (e.g. 29ABCDE1234F1Z5)."
+        : cond.emergencyContactRequired && !(emergency.name.trim() && emergency.phone.trim()) ? "Emergency contact name and phone are mandatory for this fare."
+        : null;
+      if (problem) { setError(problem); setReviewing(false); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    }
     if (!reviewing) { setReviewing(true); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     // The main button pays from the wallet while the wallet choice is showing.
     if (pendingPayment && walletOffer) { await payWithWallet(); return; }
@@ -336,14 +399,32 @@ export default function BookPage() {
           departureDate: fare.departureTime.slice(0, 10),
           totalFare:     fare.totalFare,
           currency:      fare.currency,
+          tripType,
+          ...(review ? { reviewBookingId: review.bookingId } : {}),
+          ...(useGst && gst.gstNumber.trim() ? { gstInfo: {
+            gstNumber: gst.gstNumber.trim().toUpperCase(), registeredName: gst.registeredName.trim(),
+            ...(gst.email.trim() ? { email: gst.email.trim() } : {}), ...(gst.mobile.trim() ? { mobile: gst.mobile.replace(/\D/g, "") } : {}),
+            ...(gst.address.trim() ? { address: gst.address.trim() } : {}),
+          } } : {}),
+          ...(cond?.emergencyContactRequired || emergency.name.trim() ? { emergencyContact: {
+            name: emergency.name.trim(), phone: emergency.phone.trim(), ...(emergency.email.trim() ? { email: emergency.email.trim() } : {}),
+          } } : {}),
           ...(new URLSearchParams(window.location.search).get("sid") ? { searchId: new URLSearchParams(window.location.search).get("sid") } : {}),
           passengers:    passengers.map((p) => ({
-            ...p,
+            type:           p.type,
+            gender:         p.gender,
+            dob:            p.dob || undefined,
             firstName:      p.firstName.trim(),
             lastName:       p.lastName.trim(),
             nationality:    p.nationality.trim().toUpperCase().slice(0, 2) || "IN",
             passportNumber: p.passportNumber.trim() || undefined,
             passportExpiry: p.passportExpiry || undefined,
+            passportIssueDate: p.passportNumber.trim() && p.passportIssueDate ? p.passportIssueDate : undefined,
+            panNumber:      p.panNumber.trim() ? p.panNumber.trim().toUpperCase() : undefined,
+            documentId:     p.documentId.trim() || undefined,
+            ...(p.type !== "INFANT" && (picks(p.bag).length || picks(p.meal).length)
+              ? { ssr: { ...(picks(p.bag).length ? { baggage: picks(p.bag) } : {}), ...(picks(p.meal).length ? { meal: picks(p.meal) } : {}) } }
+              : {}),
           })),
         }),
       }).catch(() => {
@@ -503,7 +584,7 @@ export default function BookPage() {
         <section className="card flight">
           <div className="fh">
             <div><b>{fare.airlineName}</b><span>{fare.flightNumber}</span></div>
-            <strong>{shownTotal(fare.totalFare)}</strong>
+            <strong>{shownTotal(grandTotal)}</strong>
           </div>
           {aedRate && fare.currency === "INR" && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
@@ -514,7 +595,7 @@ export default function BookPage() {
                   {cur === "INR" ? "₹ INR" : "AED"}
                 </button>
               ))}
-              {payCurrency === "AED" && <span style={{ color: "#64748b" }}>≈ {money.format(fare.totalFare)} · 1 AED = ₹{aedRate}</span>}
+              {payCurrency === "AED" && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 AED = ₹{aedRate}</span>}
             </div>
           )}
           <div className="route">
@@ -530,6 +611,17 @@ export default function BookPage() {
         </section>
       )}
 
+      {reviewLoading && <div className="prebook-banner" style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1d4ed8", borderRadius: 12, padding: "10px 12px", marginBottom: 12, fontSize: 13 }}>Checking live availability and fare rules with the airline…</div>}
+      {reviewError && <div className="err"><b>Couldn't confirm this fare</b><span>{reviewError} You can still continue; availability is re-checked when you book.</span></div>}
+      {review?.fareAlert && (
+        <div className="err" role="alert" style={{ background: "#fffbeb", borderColor: "#fcd34d", color: "#92400e" }}>
+          <b>The airline changed this fare</b>
+          <span>{review.fareAlert.message ?? `Fare changed${review.fareAlert.oldFare ? ` from ₹${review.fareAlert.oldFare}` : ""}${review.fareAlert.newFare ? ` to ₹${review.fareAlert.newFare}` : ""}.`} Please check the total before paying.</span>
+        </div>
+      )}
+      {review && review.fareIdentifiers.length > 0 && !review.fareIdentifiers.every((f) => f === "PUBLISHED") && (
+        <p className="checkoutProgress" style={{ marginTop: 0 }}>Fare type: <b>{review.fareIdentifiers.map((f) => ({ SPECIAL_RETURN: "Special Return", TJ_FLEX: "Flex", STUDENT: "Student", SENIOR_CITIZEN: "Senior Citizen" } as Record<string, string>)[f] ?? f).join(" + ")}</b></p>
+      )}
       <form onSubmit={submit}>
         {reviewing ? (
           <section className="card">
@@ -580,7 +672,7 @@ export default function BookPage() {
               <div className="grid">
                 <Input l="First name"             v={p.firstName}      c={(v) => upd(i, "firstName",      v)} r />
                 <Input l="Last name"              v={p.lastName}       c={(v) => upd(i, "lastName",       v)} r />
-                <Input l="Date of birth"  t="date" v={p.dob}           c={(v) => upd(i, "dob",            v)} r={p.type !== "ADULT" || isInternational} />
+                <Input l="Date of birth"  t="date" v={p.dob}           c={(v) => upd(i, "dob",            v)} r={p.type !== "ADULT" || isInternational || !!cond?.dobRequired[p.type]} />
                 <label>Gender
                   <select value={p.gender} onChange={(e) => upd(i, "gender", e.target.value as "M" | "F")}>
                     <option value="M">Male</option>
@@ -589,14 +681,50 @@ export default function BookPage() {
                 </label>
               </div>
               <div className="passportSection">
-                {isInternational && (
-                  <p className="intlBadge">✈ International flight — passport details required</p>
+                {passportNeeded && (
+                  <p className="intlBadge">✈ {cond?.passportMandatory ? "The airline requires passport details for this fare" : "International flight — passport details required"}</p>
                 )}
                 <div className="grid">
-                  <Input l="Nationality (e.g. IN, AE)" v={p.nationality} c={(v) => upd(i, "nationality", v.toUpperCase().slice(0, 2))} max={2} r={isInternational} />
-                  <Input l="Passport number" v={p.passportNumber} c={(v) => upd(i, "passportNumber", v)} r={isInternational} />
-                  <Input l="Passport expiry" t="date" v={p.passportExpiry} c={(v) => upd(i, "passportExpiry", v)} r={isInternational} />
+                  <Input l="Nationality (e.g. IN, AE)" v={p.nationality} c={(v) => upd(i, "nationality", v.toUpperCase().slice(0, 2))} max={2} r={passportNeeded} />
+                  <Input l="Passport number" v={p.passportNumber} c={(v) => upd(i, "passportNumber", v)} r={passportNeeded} />
+                  <Input l="Passport expiry" t="date" v={p.passportExpiry} c={(v) => upd(i, "passportExpiry", v)} r={passportNeeded || (!!cond?.passportExpiryRequired && !!p.passportNumber)} />
+                  {(passportNeeded || p.passportNumber) && (
+                    <Input l="Passport issue date" t="date" v={p.passportIssueDate} c={(v) => upd(i, "passportIssueDate", v)} />
+                  )}
+                  {cond?.panApplicable && (
+                    <Input l="PAN (optional)" v={p.panNumber} c={(v) => upd(i, "panNumber", v.toUpperCase().slice(0, 10))} ph="ABCDE1234F" max={10} />
+                  )}
+                  {cond?.documentIdApplicable && p.type !== "INFANT" && (
+                    <Input l={review?.fareIdentifiers.includes("SENIOR_CITIZEN") ? "Senior citizen ID number" : review?.fareIdentifiers.includes("STUDENT") ? "Student ID number" : "Document ID"}
+                      v={p.documentId} c={(v) => upd(i, "documentId", v.replace(/[^A-Za-z0-9]/g, ""))} r={cond.documentIdMandatory} />
+                  )}
                 </div>
+                {p.type !== "INFANT" && ssrSegments.length > 0 && (
+                  <div className="ssrBox">
+                    <b style={{ fontSize: 13 }}>Meals &amp; extra baggage (optional)</b>
+                    {ssrSegments.map((seg) => (
+                      <div key={seg.key} className="grid" style={{ marginTop: 8 }}>
+                        <span style={{ fontSize: 12, color: "#667085", gridColumn: "1 / -1" }}>{seg.origin} → {seg.destination} · {seg.airline} {seg.flightNumber}</span>
+                        {seg.ssr.baggage.length > 0 && (
+                          <label>Extra baggage
+                            <select value={p.bag[seg.key] ?? ""} onChange={(e) => updSsr(i, "bag", seg.key, e.target.value)}>
+                              <option value="">No extra baggage</option>
+                              {seg.ssr.baggage.map((o) => <option key={o.code} value={o.code}>{o.desc}{o.amount ? ` · ${money.format(o.amount)}` : " · included on connecting flight"}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        {seg.ssr.meal.length > 0 && (
+                          <label>Meal
+                            <select value={p.meal[seg.key] ?? ""} onChange={(e) => updSsr(i, "meal", seg.key, e.target.value)}>
+                              <option value="">No meal</option>
+                              {seg.ssr.meal.map((o) => <option key={o.code} value={o.code}>{o.desc}{o.amount ? ` · ${money.format(o.amount)}` : ""}</option>)}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -620,6 +748,45 @@ export default function BookPage() {
             <Input l="Mobile number" t="tel"   v={phone} c={setPhone} r ph="+91…" />
           </div>
         </section>
+        {(cond?.gstApplicable || cond?.gstMandatory || !review) && (
+          <section className="card">
+            <div className="title">
+              <span>🧾</span>
+              <div><h2>GST details</h2><p>{cond?.gstMandatory ? "The airline requires GST details for this fare." : "Optional — claim GST input credit for business travel."}</p></div>
+            </div>
+            {!cond?.gstMandatory && (
+              <label className="saveCheck">
+                <input type="checkbox" checked={useGst} onChange={(e) => setUseGst(e.target.checked)} />
+                Use GST for this booking
+              </label>
+            )}
+            {(useGst || cond?.gstMandatory) && (
+              <div className="grid">
+                <Input l="GSTIN" v={gst.gstNumber} c={(v) => setGst((g) => ({ ...g, gstNumber: v.toUpperCase().slice(0, 15) }))} r max={15} ph="29ABCDE1234F1Z5" />
+                <Input l="Registered company name" v={gst.registeredName} c={(v) => setGst((g) => ({ ...g, registeredName: v.slice(0, 35) }))} r max={35} />
+                <Input l="GST email" t="email" v={gst.email} c={(v) => setGst((g) => ({ ...g, email: v }))} />
+                <Input l="GST mobile" t="tel" v={gst.mobile} c={(v) => setGst((g) => ({ ...g, mobile: v }))} />
+                <Input l="Company address" v={gst.address} c={(v) => setGst((g) => ({ ...g, address: v.slice(0, 70) }))} max={70} />
+              </div>
+            )}
+          </section>
+        )}
+        {cond?.emergencyContactRequired && (
+          <section className="card">
+            <div className="title">
+              <span>🆘</span>
+              <div><h2>Emergency contact</h2><p>Required by the airline for this fare — someone not travelling with you.</p></div>
+            </div>
+            <div className="grid">
+              <Input l="Full name" v={emergency.name} c={(v) => setEmergency((x) => ({ ...x, name: v }))} r />
+              <Input l="Mobile number" t="tel" v={emergency.phone} c={(v) => setEmergency((x) => ({ ...x, phone: v }))} r ph="+91…" />
+              <Input l="Email" t="email" v={emergency.email} c={(v) => setEmergency((x) => ({ ...x, email: v }))} />
+            </div>
+          </section>
+        )}
+        {ssrSum > 0 && (
+          <p className="checkoutProgress">Meals &amp; baggage: <b>{money.format(ssrSum)}</b> added to the fare.</p>
+        )}
 
         </>)}
 
@@ -627,7 +794,7 @@ export default function BookPage() {
         <div className="pay">
           <div>
             <span>Total</span>
-            <b>{fare ? shownTotal(fare.totalFare) : "—"}</b>
+            <b>{fare ? shownTotal(grandTotal) : "—"}</b>
           </div>
           <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
             {submitting ? (walletOffer ? "Paying from wallet…" : pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : walletOffer ? `Pay ₹${walletOffer.amount.toLocaleString("en-IN")} from wallet` : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}
@@ -653,6 +820,6 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const checkoutCss = `.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}`;
+const checkoutCss = `.ssrBox{margin-top:12px;padding:12px;border:1px dashed #d0d5dd;border-radius:12px;background:#fcfcfd}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}`;
 
 const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.checkError{justify-content:space-between;background:#fff7ed;border-color:#fed7aa;color:#9a3412}.checkError button{border:0;background:#ea580c;color:#fff;border-radius:8px;padding:7px 12px;font-weight:800;cursor:pointer}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.typeSelect{height:32px;border:1px solid #fecdd3;border-radius:99px;padding:0 10px;background:#fff1f2;color:#be123c;font-size:11px;font-weight:800;cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23be123c'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}.typeSelect:focus{outline:none;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;

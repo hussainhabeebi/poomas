@@ -62,7 +62,10 @@ type CurrencyCode = "INR" | "AED" | "USD";
 type Airport = typeof AIRPORTS[number];
 type TripType = "One Way" | "Round Trip" | "Multi-city";
 
-const SPECIAL_FARES = ["Regular", "Student", "Senior Citizen", "Armed Forces"] as const;
+// TripJack passenger fare types (searchModifiers.pfts).
+const SPECIAL_FARES = ["Regular", "Student", "Senior Citizen"] as const;
+const FARE_TYPE_PARAM: Record<string, string> = { Regular: "REGULAR", Student: "STUDENT", "Senior Citizen": "SENIOR_CITIZEN" };
+type ExtraLeg = { origin: Airport | null; dest: Airport | null; date: string };
 type SpecialFare = typeof SPECIAL_FARES[number];
 
 function AirportInput({
@@ -164,6 +167,9 @@ export default function SearchWidget() {
   const [searchStage,   setSearchStage]   = useState(0);
   const [directOnly,    setDirectOnly]    = useState(false);
   const [specialFare,   setSpecialFare]   = useState<SpecialFare>("Regular");
+  // Multi-city: legs after the first (2–6 legs in total).
+  const [extraLegs,     setExtraLegs]     = useState<ExtraLeg[]>([{ origin: null, dest: null, date: "" }]);
+  const updLeg = (i: number, patch: Partial<ExtraLeg>) => setExtraLegs((ls) => ls.map((l, n) => n === i ? { ...l, ...patch } : l));
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
@@ -202,20 +208,26 @@ export default function SearchWidget() {
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!origin || !dest) return;
+    const multi = tripType === "Multi-city";
+    if (multi && extraLegs.some((l) => !l.origin || !l.dest || !l.date)) return;
     const params = new URLSearchParams({
       origin:        origin.code,
-      destination:   dest.code,
+      destination:   multi ? extraLegs[extraLegs.length - 1].dest!.code : dest.code,
       departureDate: departDate,
       adults:        String(adults),
       children:      String(children),
       infants:       String(infants),
       cabinClass:    CABIN_MAP[cabinClass] ?? "ECONOMY",
-      tripType:      tripType === "Round Trip" ? "ROUNDTRIP" : "ONEWAY",
+      tripType:      multi ? "MULTICITY" : tripType === "Round Trip" ? "ROUNDTRIP" : "ONEWAY",
       currency,
+      ...(FARE_TYPE_PARAM[specialFare] !== "REGULAR" ? { fareType: FARE_TYPE_PARAM[specialFare] } : {}),
       ...(directOnly ? { stops: "0" } : {}),
       ...(tripType === "Round Trip" && returnDate ? { returnDate } : {}),
+      // legs=DEL-BOM-2026-10-01,BOM-GOI-2026-10-05
+      ...(multi ? { legs: [`${origin.code}-${dest.code}-${departDate}`, ...extraLegs.map((l) => `${l.origin!.code}-${l.dest!.code}-${l.date}`)].join(",") } : {}),
     });
-    const url = `/search?${params.toString()}`;
+    // Round trips and multi-city pick one fare per leg (or a combined fare).
+    const url = `${tripType === "One Way" ? "/search" : "/search/journey"}?${params.toString()}`;
     setSearching(true);
     router.prefetch(url);
     // Give mobile Safari one frame to paint the loading state before navigation.
@@ -337,6 +349,35 @@ export default function SearchWidget() {
               </div>
             )}
           </div>
+
+          {tripType === "Multi-city" && (
+            <div className="sw-multicity">
+              {extraLegs.map((leg, i) => (
+                <div key={i} className="sw-route-row sw-leg-row">
+                  <AirportInput id={`sw-leg-${i}-from`} label={`Flight ${i + 2} from`} value={leg.origin}
+                    onChange={(a) => updLeg(i, { origin: a })} placeholder="City or airport" />
+                  <AirportInput id={`sw-leg-${i}-to`} label="To" value={leg.dest}
+                    onChange={(a) => updLeg(i, { dest: a })} placeholder="City or airport" />
+                  <div className="search-field">
+                    <label htmlFor={`sw-leg-${i}-date`}>Date</label>
+                    <input id={`sw-leg-${i}-date`} className="search-input" type="date" required
+                      min={(i === 0 ? departDate : extraLegs[i - 1].date) || today}
+                      value={leg.date} onChange={(e) => updLeg(i, { date: e.target.value })} />
+                  </div>
+                  {extraLegs.length > 1 && (
+                    <button type="button" className="swap-btn" aria-label={`Remove flight ${i + 2}`}
+                      onClick={() => setExtraLegs((ls) => ls.filter((_, n) => n !== i))}>✕</button>
+                  )}
+                </div>
+              ))}
+              {extraLegs.length < 5 && (
+                <button type="button" className="toggle-pill"
+                  onClick={() => setExtraLegs((ls) => [...ls, { origin: ls[ls.length - 1]?.dest ?? null, dest: null, date: "" }])}>
+                  + Add another flight
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Extras bar: direct-flights + special fares + cabin (always) */}
           <div className="sw-extras-bar">

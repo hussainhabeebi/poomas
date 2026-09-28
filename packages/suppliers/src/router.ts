@@ -116,7 +116,12 @@ function deduplicate(fares: NormalizedFare[]): NormalizedFare[] {
   const seen = new Map<string, NormalizedFare>();
 
   for (const fare of fares) {
-    const key = `${fare.flightNumber}_${fare.departureTime}_${fare.cabinClass}`;
+    // Journey (round trip / multi-city) fares keep one price per leg and fare type:
+    // Special Return pairing needs both the SPECIAL_RETURN and PUBLISHED prices.
+    const journey = fare.tripKey
+      ? `${fare.tripKey}_${fare.fareIdentifier ?? ""}_${fare.sri ?? ""}_${fare.msri?.join("|") ?? ""}_${fare.segments?.map((s) => s.flightNumber).join("-") ?? ""}_`
+      : "";
+    const key = `${journey}${fare.flightNumber}_${fare.departureTime}_${fare.cabinClass}`;
     const existing = seen.get(key);
 
     if (!existing || fare.totalFare < existing.totalFare) {
