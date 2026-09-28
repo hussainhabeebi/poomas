@@ -3,14 +3,29 @@
 import { FormEvent, useEffect, useState } from "react";
 
 type HotelInfo = {
-  optionId: string; name: string; stars: number;
+  optionId: string; hid: string; correlationId: string; adults: number; nationality: string; expiresAt: string;
+  name: string; stars: number;
   price: number; currency: string;
   checkIn: string; checkOut: string; nights: number;
   rooms: number; roomType: string; mealPlan: string;
   isRefundable: boolean; city: string; address: string;
 };
 
-type Guest = { title: string; firstName: string; lastName: string };
+type Guest = { title: string; firstName: string; lastName: string; pan: string; passport: string };
+
+type Pricing = { totalPrice: number; basePrice: number; discount: number; taxes: number; mf: number; mft: number; currency: string };
+type Review = {
+  bookingId: string;
+  priceChanged: boolean;
+  optionChanged: boolean;
+  option: {
+    optionId: string; mealBasis: string; bookingNotes?: string; inclusions: string[];
+    roomInfo: { name: string }[];
+    pricing: Pricing;
+    compliance: { gstType: string; panRequired: boolean; passportRequired: boolean };
+    cancellation: { isRefundable: boolean; penalties: { from: string; to: string; amount: number }[]; deadlineDateTime?: string };
+  };
+};
 type SavedPassenger = { id: string; firstName: string; lastName: string; isDefault: boolean };
 
 function friendlyHotelError(msg: string, status: number): string {
@@ -20,7 +35,7 @@ function friendlyHotelError(msg: string, status: number): string {
   return "Booking failed. Please check your details and try again.";
 }
 
-const emptyGuest = (): Guest => ({ title: "Mr", firstName: "", lastName: "" });
+const emptyGuest = (): Guest => ({ title: "Mr", firstName: "", lastName: "", pan: "", passport: "" });
 
 function getToken(): string {
   try {
@@ -37,11 +52,12 @@ export default function HotelBookPage() {
   const [prebooked,   setPrebooked]   = useState(false);
   const [prebookErr,  setPrebookErr]  = useState("");
   const [confirmedPrice, setConfirmedPrice] = useState<number | null>(null);
+  const [review,         setReview]         = useState<Review | null>(null);
 
   const [contactName,  setContactName]  = useState("");
   const [email,        setEmail]        = useState("");
   const [phone,        setPhone]        = useState("");
-  const [guests,       setGuests]       = useState<Guest[]>([emptyGuest()]);
+  const [guests,       setGuests]       = useState<Guest[][]>([[emptyGuest()]]);
 
   const [submitting,   setSubmitting]   = useState(false);
   const [error,        setError]        = useState("");
@@ -73,9 +89,9 @@ export default function HotelBookPage() {
         setSavedPassengers(d.passengers ?? []);
         const def = d.passengers.find((p) => p.isDefault);
         if (def) {
-          setGuests((gs) => gs.map((g, i) => i !== 0 ? g : {
+          setGuests((gs) => gs.map((room, ri) => ri !== 0 ? room : room.map((g, gi) => gi !== 0 ? g : {
             ...g, firstName: def.firstName, lastName: def.lastName,
-          }));
+          })));
         }
       }
     } catch { /* non-fatal */ }
@@ -109,9 +125,15 @@ export default function HotelBookPage() {
     const optionId = q.get("optionId") ?? "";
     if (!optionId) return;
 
-    const roomCount = parseInt(q.get("rooms") ?? "1");
+    const roomCount = Math.max(1, parseInt(q.get("rooms") ?? "1"));
+    const adults    = Math.max(1, parseInt(q.get("adults") ?? "1"));
     const info: HotelInfo = {
       optionId,
+      hid:           q.get("hid") ?? "",
+      correlationId: q.get("sid") ?? "",
+      adults,
+      nationality:   q.get("nat") ?? "IN",
+      expiresAt:     q.get("exp") ?? "",
       name:        q.get("name")     ?? "",
       stars:       parseInt(q.get("stars")  ?? "0"),
       price:       parseFloat(q.get("price") ?? "0"),
@@ -127,19 +149,37 @@ export default function HotelBookPage() {
       address:     q.get("address") ?? "",
     };
     setHotel(info);
-    setGuests(Array.from({ length: roomCount }, emptyGuest));
+    setGuests(Array.from({ length: roomCount }, () => Array.from({ length: adults }, emptyGuest)));
 
-    // Pre-book price check
+    if (!info.hid || !info.correlationId) {
+      setPrebookErr("This hotel link is from an older search. Please search again.");
+      return;
+    }
+    if (info.expiresAt && Date.parse(info.expiresAt) < Date.now()) {
+      setPrebookErr("Your search has expired. Please search again for live prices.");
+      return;
+    }
+
+    // TripJack Review: re-validates availability + price and returns the booking ID.
     setPrebooking(true);
-    fetch(`${apiUrl}/api/hotels/prebook`, {
+    fetch(`${apiUrl}/api/hotels/review`, {
       method:  "POST",
       headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
-      body: JSON.stringify({ optionId }),
+      body: JSON.stringify({
+        correlationId: info.correlationId, hid: info.hid, optionId,
+        checkIn: info.checkIn, checkOut: info.checkOut,
+        rooms: Array.from({ length: roomCount }, () => ({ adults, children: 0 })),
+        nationality: info.nationality, currency: info.currency,
+      }),
     })
-      .then((r) => r.json())
-      .then((d: any) => {
-        if (d.isAvailable === false) throw new Error("Hotel is no longer available for these dates");
-        setConfirmedPrice(d.totalFare > 0 ? d.totalFare : null);
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error ?? "This room is no longer available");
+        return d as Review;
+      })
+      .then((d) => {
+        setReview(d);
+        setConfirmedPrice(d.option.pricing.totalPrice);
         setPrebooked(true);
       })
       .catch((err) => setPrebookErr(err?.message ?? "Price check failed"))
@@ -155,12 +195,29 @@ export default function HotelBookPage() {
     }
   };
 
-  const updGuest = (i: number, k: keyof Guest, v: string) =>
-    setGuests((gs) => gs.map((g, n) => n === i ? { ...g, [k]: v } : g));
+  const updGuest = (room: number, i: number, k: keyof Guest, v: string) =>
+    setGuests((gs) => gs.map((rm, ri) => ri !== room ? rm : rm.map((g, n) => n === i ? { ...g, [k]: v } : g)));
+
+  // TripJack confirms hotel bookings asynchronously (up to ~3 minutes).
+  async function followBooking(bookingId: string) {
+    const started = Date.now();
+    while (Date.now() - started < 180_000) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const res = await fetch(`${apiUrl}/api/hotels/bookings/${encodeURIComponent(bookingId)}`, { headers: { "x-tenant-slug": "poomas" } });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok) {
+          setConfirmation((c: any) => ({ ...c, status: d.status, details: d, pending: d.pending }));
+          if (!d.pending) return;
+        }
+      } catch { /* keep polling */ }
+    }
+    setConfirmation((c: any) => ({ ...c, pending: false, timedOut: true }));
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!hotel || submitting || prebooking || (!prebooked && !prebookErr)) return;
+    if (!hotel || !review || submitting || prebooking) return;
     setError("");
     setSubmitting(true);
     try {
@@ -168,26 +225,30 @@ export default function HotelBookPage() {
         method:  "POST",
         headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
         body: JSON.stringify({
-          optionId:     hotel.optionId,
-          contactName:  contactName.trim(),
+          bookingId:    review.bookingId,
+          amount:       review.option.pricing.totalPrice,
           contactEmail: email.trim(),
           contactPhone: phone.trim(),
-          guests: guests.map((g, i) => ({
-            roomIndex: i,
-            title:     g.title,
-            firstName: g.firstName.trim(),
-            lastName:  g.lastName.trim(),
-            type:      "ADULT",
+          rooms: guests.map((room) => ({
+            guests: room.map((g) => ({
+              title:     g.title,
+              firstName: g.firstName.trim(),
+              lastName:  g.lastName.trim(),
+              type:      "ADULT",
+              ...(review.option.compliance.panRequired && g.pan.trim() ? { pan: g.pan.trim().toUpperCase() } : {}),
+              ...(review.option.compliance.passportRequired && g.passport.trim() ? { passport: g.passport.trim() } : {}),
+            })),
           })),
         }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = (d as any).error ?? "";
-        throw new Error(friendlyHotelError(msg, res.status));
+        throw new Error(res.status === 409 || res.status === 410 ? msg : friendlyHotelError(msg, res.status));
       }
       setConfirmation(d);
       window.scrollTo({ top: 0, behavior: "smooth" });
+      if ((d as any).pending) void followBooking((d as any).bookingId);
     } catch (x: any) {
       setError(x?.message ?? "Booking failed");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -202,24 +263,29 @@ export default function HotelBookPage() {
   };
 
   if (confirmation) {
+    const st = String(confirmation.status ?? "");
+    const ok = st === "SUCCESS";
+    const onHold = st === "ON_HOLD";
+    const failed = ["FAILED", "ABORTED"].includes(st);
     return (
       <main className="ck success"><style>{css}</style>
-        <div className="ok">✓</div>
-        <h1>Hotel Booked!</h1>
-        {confirmation.bookingRef && (
-          <p style={{ fontSize: 22, fontWeight: 800 }}>
-            Ref: <span style={{ color: "#E31E24" }}>{confirmation.bookingRef}</span>
-          </p>
-        )}
+        <div className="ok" style={failed ? { background: "#fee2e2", color: "#b91c1c" } : undefined}>{failed ? "×" : confirmation.pending ? "…" : "✓"}</div>
+        <h1>{ok ? "Hotel booked!" : onHold ? "Hotel reserved (on hold)" : failed ? "Booking could not be completed" : "Confirming with the hotel…"}</h1>
         <p style={{ color: "#667085" }}>
-          Confirmation details sent to {email}.
+          {ok ? `Your booking is confirmed. Details sent to ${email}.`
+            : onHold ? (confirmation.note ?? "Your room is held. It will be confirmed before the hold deadline.")
+            : failed ? "The hotel could not confirm this booking. You have not been charged for it by the hotel."
+            : confirmation.timedOut ? "The hotel is taking longer than usual. We'll email you as soon as it's confirmed."
+            : "Keep this page open — hotels can take up to 3 minutes to confirm."}
         </p>
         <div className="receipt">
-          <Row l="Hotel"       v={hotel?.name         ?? "—"} />
-          <Row l="Booking Ref" v={confirmation.bookingRef ?? "—"} />
-          <Row l="Status"      v={confirmation.status  ?? "CONFIRMED"} />
+          <Row l="Hotel"       v={confirmation.details?.hotelName || hotel?.name || "—"} />
+          <Row l="Booking ID"  v={confirmation.bookingId ?? "—"} />
+          {confirmation.details?.confirmationNo && <Row l="Confirmation no." v={confirmation.details.confirmationNo} />}
+          <Row l="Status"      v={st || "IN_PROGRESS"} />
           <Row l="Check-in"    v={hotel?.checkIn       ?? "—"} />
           <Row l="Check-out"   v={hotel?.checkOut      ?? "—"} />
+          {onHold && confirmation.details?.holdDeadline && <Row l="Hold until" v={String(confirmation.details.holdDeadline).replace("T", " ")} />}
         </div>
         <a className="home" href="/hotels">Search another hotel</a>
       </main>
@@ -272,15 +338,16 @@ export default function HotelBookPage() {
       )}
       {!prebooking && prebooked && (
         <div className="prebook-banner prebook-ok">
-          ✓ Available — price confirmed
-          {confirmedPrice !== null && hotel?.price !== confirmedPrice && (
-            <b> · Updated to {money(confirmedPrice)}</b>
+          ✓ Available — price confirmed with the hotel
+          {review?.priceChanged && confirmedPrice !== null && (
+            <b> · Price updated to {money(confirmedPrice)}</b>
           )}
+          {review?.optionChanged && <b> · Room option updated</b>}
         </div>
       )}
       {!prebooking && prebookErr && (
         <div className="prebook-banner prebook-warn">
-          ⚠ {prebookErr} — you can still try to book
+          ⚠ {prebookErr} <a href="/hotels" style={{ fontWeight: 700 }}>Search again</a>
         </div>
       )}
 
@@ -308,6 +375,30 @@ export default function HotelBookPage() {
         </section>
       )}
 
+      {review && (
+        <section className="card">
+          <div className="title"><span>₹</span><div><h2>Price breakup</h2><p>{review.option.roomInfo.map((r) => r.name).join(" · ")} · {review.option.mealBasis}</p></div></div>
+          <div className="receipt" style={{ margin: 0 }}>
+            <Row l="Room charges" v={money(review.option.pricing.basePrice)} />
+            {review.option.pricing.discount > 0 && <Row l="Discount" v={`− ${money(review.option.pricing.discount)}`} />}
+            <Row l="Taxes" v={money(review.option.pricing.taxes)} />
+            <Row l="Management fee" v={money(review.option.pricing.mf)} />
+            <Row l="Management fee tax" v={money(review.option.pricing.mft)} />
+            <Row l="Total" v={money(review.option.pricing.totalPrice)} />
+          </div>
+          {review.option.inclusions.length > 0 && <p style={{ fontSize: 12, color: "#475467" }}>Includes: {review.option.inclusions.join(", ")}</p>}
+          <h3 style={{ fontSize: 14, margin: "14px 0 6px" }}>Cancellation policy</h3>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#475467" }}>
+            {review.option.cancellation.penalties.map((p, i) => (
+              <li key={i}>{p.from.replace("T", " ").slice(0, 16)} → {p.to.replace("T", " ").slice(0, 16)}: {p.amount > 0 ? `${money(p.amount)} charge` : "Free cancellation"}</li>
+            ))}
+            {!review.option.cancellation.penalties.length && <li>{review.option.cancellation.isRefundable ? "Refundable" : "Non-refundable"}</li>}
+          </ul>
+          <p style={{ fontSize: 11, color: "#98a2b3" }}>Times are India time (GMT+5:30).</p>
+          {review.option.bookingNotes && <p style={{ fontSize: 12, color: "#b54708", whiteSpace: "pre-line" }}>{review.option.bookingNotes}</p>}
+        </section>
+      )}
+
       <form onSubmit={submit}>
         {/* Contact details */}
         <section className="card">
@@ -328,43 +419,49 @@ export default function HotelBookPage() {
             <span>👤</span>
             <div>
               <h2>Guest details</h2>
-              <p>Enter name as on government ID · one lead guest per room.</p>
+              <p>Enter names as on government ID for every guest.</p>
             </div>
           </div>
-          {guests.map((g, i) => (
-            <div className="pax" key={i}>
+          {guests.map((room, ri) => room.map((g, i) => (
+            <div className="pax" key={`${ri}-${i}`}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <div className="chip">Room {i + 1} — Lead guest</div>
+                <div className="chip">Room {ri + 1} — {i === 0 ? "Lead guest" : `Guest ${i + 1}`}</div>
                 {savedPassengers.length > 0 && (
                   <select
                     className="profileSelect"
                     value=""
                     onChange={(e) => {
-                      const sp = savedPassengers.find((s) => s.id === e.target.value);
-                      if (sp) setGuests((gs) => gs.map((x, n) => n === i ? { ...x, firstName: sp.firstName, lastName: sp.lastName } : x));
+                      const sp = savedPassengers.find((x) => x.id === e.target.value);
+                      if (sp) { updGuest(ri, i, "firstName", sp.firstName); updGuest(ri, i, "lastName", sp.lastName); }
                     }}
                   >
                     <option value="">Use saved profile…</option>
-                    {savedPassengers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.firstName} {s.lastName}{s.isDefault ? " ★" : ""}</option>
+                    {savedPassengers.map((x) => (
+                      <option key={x.id} value={x.id}>{x.firstName} {x.lastName}{x.isDefault ? " ★" : ""}</option>
                     ))}
                   </select>
                 )}
               </div>
               <div className="grid">
                 <label>Title
-                  <select value={g.title} onChange={(e) => updGuest(i, "title", e.target.value)}>
+                  <select value={g.title} onChange={(e) => updGuest(ri, i, "title", e.target.value)}>
                     <option value="Mr">Mr</option>
                     <option value="Ms">Ms</option>
                     <option value="Mrs">Mrs</option>
-                    <option value="Dr">Dr</option>
+                    <option value="Miss">Miss</option>
                   </select>
                 </label>
-                <Input l="First name" v={g.firstName} c={(v) => updGuest(i, "firstName", v)} r />
-                <Input l="Last name"  v={g.lastName}  c={(v) => updGuest(i, "lastName",  v)} r />
+                <Input l="First name" v={g.firstName} c={(v) => updGuest(ri, i, "firstName", v)} r />
+                <Input l="Last name"  v={g.lastName}  c={(v) => updGuest(ri, i, "lastName",  v)} r />
+                {review?.option.compliance.panRequired && (
+                  <Input l="PAN (required by the hotel)" v={g.pan} c={(v) => updGuest(ri, i, "pan", v.toUpperCase())} r={i === 0} ph="ABCDE1234F" max={10} />
+                )}
+                {review?.option.compliance.passportRequired && (
+                  <Input l="Passport number" v={g.passport} c={(v) => updGuest(ri, i, "passport", v)} r />
+                )}
               </div>
             </div>
-          ))}
+          )))}
         </section>
 
         <div className="spacer" />
@@ -373,7 +470,7 @@ export default function HotelBookPage() {
             <span>Total · {hotel?.nights ?? 0} nights</span>
             <b>{money(displayPrice)}</b>
           </div>
-          <button disabled={!hotel || submitting || prebooking}>
+          <button disabled={!hotel || !review || submitting || prebooking}>
             {submitting ? "Booking…" : "Confirm Booking"}
           </button>
         </div>

@@ -13,10 +13,14 @@ type NormalizedHotel = {
   nights: number; rooms: number; roomType: string; mealPlan: string;
   isRefundable: boolean; baseFare: number; taxes: number; totalFare: number;
   currency: string; images: string[]; amenities: string[];
+  hid?: string; correlationId?: string; strikethrough?: number;
 };
 
 type HotelSearchResult = {
   hotels: NormalizedHotel[];
+  searchId?: string;
+  expiresAt?: string;
+  errorCode?: string;
   supplier?: string;
   fromCache?: boolean;
   error?: string;
@@ -34,6 +38,7 @@ async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
       headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
       body: JSON.stringify({
         cityCode:    params.city ?? "",
+        ...(params.cityName ? { cityName: params.cityName } : {}),
         checkIn:     params.checkIn ?? "",
         checkOut:    params.checkOut ?? "",
         rooms:       Array.from({ length: rooms }, () => ({ adults, children: 0 })),
@@ -41,10 +46,10 @@ async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
         currency:    params.currency ?? "INR",
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(45_000),
     });
     const data = await res.json().catch(() => ({})) as HotelSearchResult;
-    if (!res.ok) return { hotels: [], error: (data as any).error ?? `API error ${res.status}` };
+    if (!res.ok) return { hotels: [], error: (data as any).error ?? `API error ${res.status}`, errorCode: (data as any).errorCode };
     return data;
   } catch (err) {
     return { hotels: [], error: err instanceof Error ? err.message : "Search unavailable" };
@@ -60,8 +65,13 @@ function formatMoney(amount: number, currency: string): string {
   }
 }
 
-function buildBookUrl(hotel: NormalizedHotel, rooms: number): string {
+function buildBookUrl(hotel: NormalizedHotel, rooms: number, adults: number, expiresAt?: string): string {
   const p = new URLSearchParams({
+    hid:       hotel.hid ?? hotel.hotelCode,
+    sid:       hotel.correlationId ?? "",
+    adults:    String(adults),
+    nat:       "IN",
+    exp:       expiresAt ?? "",
     optionId:  hotel.id,
     name:      hotel.name,
     stars:     String(hotel.starRating),
@@ -95,6 +105,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
   const result  = await searchHotels(params);
   const hotels  = result.hotels ?? [];
   const rooms   = parseInt(params.rooms ?? "1");
+  const adults  = parseInt(params.adults ?? "1");
   const nights  = hotels[0]?.nights ?? (
     params.checkIn && params.checkOut
       ? Math.max(1, Math.round((new Date(params.checkOut).getTime() - new Date(params.checkIn).getTime()) / 86400000))
@@ -143,7 +154,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
             {hotels.length} hotel{hotels.length !== 1 ? "s" : ""} found
           </p>
           {hotels.map((hotel, i) => (
-            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} />
+            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} adults={adults} expiresAt={result.expiresAt} />
           ))}
         </div>
       )}
@@ -151,7 +162,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
   );
 }
 
-function HotelCard({ hotel, rooms }: { hotel: NormalizedHotel; rooms: number }) {
+function HotelCard({ hotel, rooms, adults, expiresAt }: { hotel: NormalizedHotel; rooms: number; adults: number; expiresAt?: string }) {
   const price = hotel.totalFare;
   const bookable = Boolean(hotel.id);
 
@@ -160,6 +171,11 @@ function HotelCard({ hotel, rooms }: { hotel: NormalizedHotel; rooms: number }) 
       border: "1.5px solid #e5e7eb", borderRadius: 10, padding: 16, background: "white",
       display: "flex", flexDirection: "column", gap: 10,
     }}>
+      {hotel.images?.[0] && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={hotel.images[0]} alt={hotel.name} loading="lazy"
+          style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8 }} />
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 3 }}>{hotel.name || "—"}</div>
@@ -169,6 +185,9 @@ function HotelCard({ hotel, rooms }: { hotel: NormalizedHotel; rooms: number }) 
           )}
         </div>
         <div style={{ textAlign: "right", flexShrink: 0 }}>
+          {hotel.strikethrough && hotel.strikethrough > price && (
+            <div style={{ fontSize: 12, color: "#9ca3af", textDecoration: "line-through" }}>{formatMoney(hotel.strikethrough, hotel.currency)}</div>
+          )}
           <div style={{ fontWeight: 800, fontSize: 20, color: "#E31E24" }}>
             {formatMoney(price, hotel.currency)}
           </div>
@@ -184,7 +203,7 @@ function HotelCard({ hotel, rooms }: { hotel: NormalizedHotel; rooms: number }) 
             {hotel.roomType}
           </span>
         )}
-        {hotel.mealPlan && hotel.mealPlan !== "EP" && (
+        {hotel.mealPlan && hotel.mealPlan !== "EP" && hotel.mealPlan !== "Room Only" && (
           <span style={{ background: "#f0fdf4", color: "#166534", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>
             {hotel.mealPlan === "CP" ? "Breakfast included" : hotel.mealPlan === "MAP" ? "Half board" : hotel.mealPlan === "AP" ? "Full board" : hotel.mealPlan}
           </span>
@@ -202,7 +221,7 @@ function HotelCard({ hotel, rooms }: { hotel: NormalizedHotel; rooms: number }) 
 
       {bookable ? (
         <Link
-          href={buildBookUrl(hotel, rooms)}
+          href={buildBookUrl(hotel, rooms, adults, expiresAt)}
           className="fare-card-book-btn"
           style={{ textDecoration: "none", textAlign: "center" }}
         >

@@ -30,6 +30,49 @@ export const ROUTES = new Map([
   ["/hotel-cancel/v1", "/hotel-cancel/v1"],
 ]);
 
+// TripJack Hotel API v3 lives on separate hosts: search / content on "hms"
+// (apitest-hms / hms-search) and booking on "booker" (apitest-hotel-booker /
+// hms-booker). Flight ROUTES above are unchanged and keep using `upstream`.
+export const HOTEL_ROUTES = [
+  { path: "/hms/v3/hotel/listing",                       upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/hotel/pricing",                       upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/hotel/review",                        upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/hotel/static-detail",                 upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/nationality-info",                    upstream: "hms",    method: "GET" },
+  { path: "/hms/v3/content/fetch-hotel-mapping",         upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/content/fetch-hotel-content",         upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/content/fetch-countries",             upstream: "hms",    method: "GET" },
+  { path: "/hms/v3/content/fetch-city-regionIds",        upstream: "hms",    method: "GET" },
+  { path: "/hms/v3/content/fetch-hotel-mapping-sync",    upstream: "hms",    method: "POST" },
+  { path: "/hms/v3/content/fetch-deleted-hotel-mapping", upstream: "hms",    method: "POST" },
+  { path: "/oms/v3/hotel/book",                          upstream: "booker", method: "POST" },
+  { path: "/oms/v3/hotel/confirm-book",                  upstream: "booker", method: "POST" },
+  { path: "/oms/v3/hotel/booking-details",               upstream: "booker", method: "POST" },
+  { path: "/oms/v1/hotel/bookings",                      upstream: "booker", method: "POST" },
+  { path: "/oms/v3/hotel/cancel-booking/",               upstream: "booker", method: "POST", prefix: true },
+  // UAT documents nationality-info on the flight host; keep it reachable there too.
+  { path: "/tj-main/hms/v3/nationality-info", upstreamPath: "/hms/v3/nationality-info", upstream: "main", method: "GET" },
+];
+
+// Resolves an incoming gateway path to { upstreamPath, upstream, method }.
+export function resolveRoute(pathname) {
+  const flight = ROUTES.get(pathname);
+  if (flight) return { upstreamPath: flight, upstream: "main", method: "POST" };
+  for (const route of HOTEL_ROUTES) {
+    if (route.prefix ? pathname.startsWith(route.path) && pathname.length > route.path.length
+      && /^[A-Za-z0-9_-]+$/.test(pathname.slice(route.path.length)) : pathname === route.path) {
+      return { upstreamPath: route.upstreamPath ?? pathname, upstream: route.upstream, method: route.method };
+    }
+  }
+  return null;
+}
+
+function httpsUrl(value, name) {
+  const url = new URL(value);
+  if (url.protocol !== "https:") throw new Error(`${name} must use HTTPS`);
+  return url;
+}
+
 export function loadConfig(env = process.env) {
   const required = ["POOMAS_GATEWAY_KEY"];
   const missing = required.filter((name) => !env[name]);
@@ -41,6 +84,8 @@ export function loadConfig(env = process.env) {
   return {
     port: Number(env.PORT ?? 3000),
     upstream,
+    hmsUpstream: httpsUrl(env.TRIPJACK_HMS_UPSTREAM ?? "https://apitest-hms.tripjack.com", "TRIPJACK_HMS_UPSTREAM"),
+    hotelBookerUpstream: httpsUrl(env.TRIPJACK_HOTEL_BOOKER_UPSTREAM ?? "https://apitest-hotel-booker.tripjack.com", "TRIPJACK_HOTEL_BOOKER_UPSTREAM"),
     // Optional fallback for self-hosted callers. Cloudflare normally supplies
     // the TripJack key per request after authenticating to this gateway.
     tripjackApiKey: env.TRIPJACK_API_KEY ?? "",
@@ -60,6 +105,12 @@ export function secretsEqual(provided, expected) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-export function upstreamUrl(upstream, pathname) {
-  return new URL(pathname, `${upstream.origin}/`).toString();
+export function upstreamUrl(upstream, pathname, search = "") {
+  const url = new URL(pathname, `${upstream.origin}/`);
+  if (search) url.search = search;
+  return url.toString();
+}
+
+export function upstreamFor(config, name) {
+  return name === "hms" ? config.hmsUpstream : name === "booker" ? config.hotelBookerUpstream : config.upstream;
 }

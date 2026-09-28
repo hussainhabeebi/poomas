@@ -2,7 +2,7 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ROUTES, loadConfig, secretsEqual, upstreamUrl } from "./gateway.mjs";
+import { loadConfig, resolveRoute, secretsEqual, upstreamFor, upstreamUrl } from "./gateway.mjs";
 
 const config = loadConfig();
 const rateBuckets = new Map();
@@ -85,31 +85,32 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    if (req.method !== "POST") return json(res, 405, { error: "METHOD_NOT_ALLOWED", requestId }, requestId);
+    if (req.method !== "POST" && req.method !== "GET") return json(res, 405, { error: "METHOD_NOT_ALLOWED", requestId }, requestId);
     if (!secretsEqual(String(req.headers["x-poomas-gateway-key"] ?? ""), config.gatewayKey)) {
       return json(res, 401, { error: "GATEWAY_AUTHENTICATION_FAILED", requestId }, requestId);
     }
     if (rateLimited(clientIp(req))) return json(res, 429, { error: "GATEWAY_RATE_LIMITED", requestId }, requestId);
     if (circuitOpen()) return json(res, 503, { error: "TRIPJACK_CIRCUIT_OPEN", requestId }, requestId);
 
-    const upstreamPath = ROUTES.get(url.pathname);
-    if (!upstreamPath) return json(res, 404, { error: "UNSUPPORTED_TRIPJACK_ROUTE", requestId }, requestId);
+    const route = resolveRoute(url.pathname);
+    if (!route) return json(res, 404, { error: "UNSUPPORTED_TRIPJACK_ROUTE", requestId }, requestId);
+    if (req.method !== route.method) return json(res, 405, { error: "METHOD_NOT_ALLOWED", requestId }, requestId);
 
     const tripjackApiKey = String(req.headers["apikey"] ?? config.tripjackApiKey ?? "");
     if (!tripjackApiKey) {
       return json(res, 502, { error: "TRIPJACK_CREDENTIAL_MISSING", requestId }, requestId);
     }
 
-    const body = await readJson(req);
-    const response = await fetch(upstreamUrl(config.upstream, upstreamPath), {
-      method: "POST",
+    const body = route.method === "POST" ? await readJson(req) : undefined;
+    const response = await fetch(upstreamUrl(upstreamFor(config, route.upstream), route.upstreamPath, route.method === "GET" ? url.search : ""), {
+      method: route.method,
       headers: {
         "accept": "application/json",
-        "content-type": "application/json",
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
         "apikey": tripjackApiKey,
         "x-request-id": requestId,
       },
-      body: JSON.stringify(body),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
 
@@ -133,6 +134,7 @@ const server = http.createServer(async (req, res) => {
       event: "tripjack_request",
       requestId,
       route: url.pathname,
+      upstreamHost: upstreamFor(config, route.upstream).hostname,
       upstreamStatus: response.status,
       durationMs: Math.round(performance.now() - startedAt),
     });

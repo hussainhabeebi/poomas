@@ -33,11 +33,16 @@ const ENDPOINT_LABEL: Record<string, string> = {
   "/oms/v1/booking-details":      "PNR Status",
   "/oms/v1/air/amendment/submit-amendment": "Cancel",
   "db:bookings:insert":           "DB Save",
-  "/hotel-search/v1":             "Hotel Search",
-  "/hotel-prebook/v1":            "Hotel Price Check",
-  "/hotel-book/v1":               "Hotel Book",
-  "/hotel-booking-detail/v1":     "Hotel Booking Details",
-  "/hotel-cancel/v1":             "Hotel Cancel",
+  "/hms/v3/hotel/listing":        "Hotel Search",
+  "/hms/v3/hotel/pricing":        "Hotel Detail",
+  "/hms/v3/hotel/review":         "Hotel Review",
+  "/oms/v3/hotel/book":           "Hotel Book",
+  "/oms/v3/hotel/confirm-book":   "Hotel Confirm Hold",
+  "/oms/v3/hotel/booking-details": "Hotel Booking Details",
+  "/oms/v3/hotel/cancel-booking": "Hotel Cancel",
+  "/oms/v1/hotel/bookings":       "Hotel Booking List",
+  "/hms/v3/nationality-info":     "Hotel Nationalities",
+  "/hms/v3/content/fetch-city-regionIds": "Hotel City Sync",
 };
 
 async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; fetchError?: string }> {

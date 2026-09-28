@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { API, apiHeaders } from "@/lib/api";
+import { HotelCitySync } from "./HotelCitySync";
 
 type Env = "UAT" | "PRODUCTION";
 
@@ -245,6 +246,8 @@ export default function IntegrationsPage() {
             <Toggle label="Enable Cabs" description="Ground transfers linked to itineraries"
               checked={tj.cabs} onChange={(v) => setTj((s) => ({ ...s, cabs: v }))} color="#0ea5e9" />
           </div>
+
+          <HotelCitySync />
 
           {tj.error && <ErrorBanner>{tj.error}</ErrorBanner>}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
