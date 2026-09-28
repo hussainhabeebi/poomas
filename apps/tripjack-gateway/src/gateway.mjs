@@ -17,6 +17,12 @@ export const ROUTES = new Map([
   ["/oms/v1/air/amendment/submit-amendment", "/oms/v1/air/amendment/submit-amendment"],
   ["/oms/v1/air/amendment/amendment-charges", "/oms/v1/air/amendment/amendment-charges"],
   ["/oms/v1/air/amendment/amendment-details", "/oms/v1/air/amendment/amendment-details"],
+  // Flights v2: seat map, fare validation, hold confirm / release.
+  ["/fms/v1/seat", "/fms/v1/seat"],
+  ["/oms/v1/air/book/fare-validate", "/oms/v1/air/book/fare-validate"],
+  ["/oms/v1/air/fare-validate", "/oms/v1/air/fare-validate"],
+  ["/oms/v1/air/confirm-book", "/oms/v1/air/confirm-book"],
+  ["/oms/v1/air/unhold", "/oms/v1/air/unhold"],
   // Legacy paths kept for backwards compatibility
   ["/air-fare-detail/v2", "/fms/v2/farerule"],
   ["/air-book/v2", "/oms/v1/air/book"],
@@ -50,6 +56,7 @@ export const HOTEL_ROUTES = [
   { path: "/oms/v3/hotel/booking-details",               upstream: "booker", method: "POST" },
   { path: "/oms/v1/hotel/bookings",                      upstream: "booker", method: "POST" },
   { path: "/oms/v3/hotel/cancel-booking/",               upstream: "booker", method: "POST", prefix: true },
+  { path: "/ums/v1/user-detail",                         upstream: "main",   method: "GET" },
   // UAT documents nationality-info on the flight host; keep it reachable there too.
   { path: "/tj-main/hms/v3/nationality-info", upstreamPath: "/hms/v3/nationality-info", upstream: "main", method: "GET" },
 ];

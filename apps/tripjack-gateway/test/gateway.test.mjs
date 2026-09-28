@@ -62,3 +62,10 @@ test("routes TripJack hotel v3 calls to the hotel hosts without changing flight 
 test("rejects insecure hotel upstreams", () => {
   assert.throws(() => loadConfig({ POOMAS_GATEWAY_KEY: "k", TRIPJACK_HMS_UPSTREAM: "http://apitest-hms.tripjack.com" }), /must use HTTPS/);
 });
+
+test("routes Flights v2 seat map, fare validation and hold endpoints", () => {
+  for (const path of ["/fms/v1/seat", "/oms/v1/air/book/fare-validate", "/oms/v1/air/fare-validate", "/oms/v1/air/confirm-book", "/oms/v1/air/unhold"]) {
+    assert.deepEqual(resolveRoute(path), { upstreamPath: path, upstream: "main", method: "POST" });
+  }
+  assert.deepEqual(resolveRoute("/ums/v1/user-detail"), { upstreamPath: "/ums/v1/user-detail", upstream: "main", method: "GET" });
+});

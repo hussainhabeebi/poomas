@@ -14,6 +14,23 @@ export interface SearchParams {
   tripType:     "ONEWAY" | "ROUNDTRIP" | "MULTICITY";
   currency:     "INR" | "AED" | "USD";
   sessionId?:   string;
+  // Multi-city (2–6 legs). Round trips may use legs or origin/destination + returnDate.
+  legs?:        { origin: string; destination: string; date: string }[];
+  // TripJack passenger fare type (searchModifiers.pfts).
+  fareType?:    "REGULAR" | "STUDENT" | "SENIOR_CITIZEN";
+}
+
+export interface FareSegment {
+  id?:           string;   // TripJack segment id (SSR key)
+  airline:       string;
+  airlineName:   string;
+  flightNumber:  string;
+  origin:        string;
+  destination:   string;
+  departureTime: string;
+  arrivalTime:   string;
+  duration:      number;
+  isReturn?:     boolean;
 }
 
 export interface NormalizedFare {
@@ -39,6 +56,14 @@ export interface NormalizedFare {
   baggage:       BaggageInfo;
   fareClass:     string;
   seatsLeft?:    number;
+  // Journey context (TripJack): which search leg this price belongs to.
+  tripKey?:        string;    // ONWARD | RETURN | COMBO | "0".."5"
+  legIndex?:       number;
+  fareIdentifier?: string;    // PUBLISHED | SPECIAL_RETURN | TJ_FLEX | STUDENT | SENIOR_CITIZEN ...
+  sri?:            string;    // Special Return id (onward)
+  msri?:           string[];  // Special Return ids this price pairs with (return)
+  refundableType?: number;    // 0 non-refundable, 1 refundable, 2 partial
+  segments?:       FareSegment[];
   fareRules?:    FareRule[];
   raw:           unknown;        // Original supplier response (kept for debugging)
 }
@@ -75,6 +100,24 @@ export interface PassengerInfo {
   nationality?:  string;
   passportNumber?: string;
   passportExpiry?: string;
+  passportIssueDate?: string;
+  panNumber?:      string;
+  documentId?:     string;   // Student / senior citizen fares (TripJack "di")
+  frequentFlyer?:  Record<string, string>;
+  ssr?: {
+    baggage?: { key: string; code: string }[];
+    meal?:    { key: string; code: string }[];
+    seat?:    { key: string; code: string }[];
+    extra?:   { key: string; code: string }[];
+  };
+}
+
+export interface GstDetails {
+  gstNumber:      string;
+  registeredName: string;
+  email?:         string;
+  mobile?:        string;
+  address?:       string;
 }
 
 export interface HoldResult {
@@ -102,6 +145,8 @@ export interface BookParams extends HoldParams {
   contactPhone:   string;
   paymentRef:     string;
   paymentAmount?: number;  // Total fare from review — required for TripJack instant ticketing
+  gstInfo?:       GstDetails;
+  emergencyContact?: { name: string; email?: string; phone?: string };
 }
 
 export interface BookResult {

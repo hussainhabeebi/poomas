@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import SearchResultControls, { ChangeDatesAction } from "./SearchResultControls";
 
 type SearchParams = {
@@ -7,6 +8,7 @@ type SearchParams = {
   cabinClass?: string; tripType?: string; currency?: "INR" | "AED" | "USD"; all?: string;
   sort?: "price" | "duration" | "departure" | "best"; stops?: string;
   refundable?: string; baggage?: string; airlines?: string; depBand?: string;
+  fareType?: string; legs?: string;
 };
 
 type SearchResult = {
@@ -76,7 +78,8 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
         children: parseInt(params.children ?? "0"),
         infants: parseInt(params.infants ?? "0"),
         cabinClass: params.cabinClass ?? "ECONOMY",
-        tripType: params.tripType ?? "ONEWAY",
+        tripType: "ONEWAY",
+        ...(params.fareType ? { fareType: params.fareType } : {}),
         ...(params.currency ? { currency: params.currency } : {}),
       }),
       cache: "no-store",
@@ -102,6 +105,10 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
 
 export default async function SearchResultsPage({ searchParams }: SearchPageProps) {
   const params = await searchParams;
+  // Round trips / multi-city choose a fare per leg on the journey page.
+  if (params.tripType === "ROUNDTRIP" || params.tripType === "MULTICITY") {
+    redirect(`/search/journey?${new URLSearchParams(Object.entries(params).filter(([, v]) => typeof v === "string") as [string, string][])}`);
+  }
   let sessionId: string | null = null;
   try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
 
@@ -393,6 +400,9 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
         {/* Tags */}
         <div className="fare-card-v2-tags">
           {fare.isRefundable && <span className="fare-card-v2-tag tag-refundable">✓ Refundable</span>}
+          {fare.fareIdentifier && fare.fareIdentifier !== "PUBLISHED" && (
+            <span className="fare-card-v2-tag">{({ STUDENT: "Student fare", SENIOR_CITIZEN: "Senior citizen fare", TJ_FLEX: "Flex fare", SPECIAL_RETURN: "Special Return" } as Record<string, string>)[fare.fareIdentifier] ?? fare.fareIdentifier.replaceAll("_", " ")}</span>
+          )}
           {fare.baggage?.checked && <span className="fare-card-v2-tag tag-baggage">🧳 {fare.baggage.checked}</span>}
           {fare.seatsLeft > 0 && fare.seatsLeft <= 5 && (
             <span className="fare-card-v2-tag tag-seats">🔥 {fare.seatsLeft} left</span>

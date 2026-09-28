@@ -526,6 +526,19 @@ async function bookPaidBooking(
   }
 
   const paymentAmount = Math.round((Number(booking.totalAmount) - Number(booking.markup ?? 0)) * 100) / 100;
+  // Checkout extras saved with the booking (GST, emergency contact, PAN, student /
+  // senior ID, passport issue date, meal / baggage SSR) — matched to passengers by name.
+  const tjExtras = ((flightData.tripjack ?? {}) as {
+    gstInfo?: { gstNumber: string; registeredName: string; email?: string; mobile?: string; address?: string };
+    emergencyContact?: { name: string; phone?: string; email?: string };
+    pax?: { type: string; firstName: string; lastName: string; passportIssueDate?: string; panNumber?: string; documentId?: string; ssr?: any }[];
+  });
+  const paxExtras = [...(tjExtras.pax ?? [])];
+  const extrasFor = (p: { passengerType: string; firstName: string; lastName: string }) => {
+    const i = paxExtras.findIndex((x) => x.type === p.passengerType
+      && x.firstName.toLowerCase() === p.firstName.trim().toLowerCase() && x.lastName.toLowerCase() === p.lastName.trim().toLowerCase());
+    return i >= 0 ? paxExtras.splice(i, 1)[0] : undefined;
+  };
   await logBookingEvent(env, booking.id, "BOOK", "info", `Sending book request to ${booking.supplier}`, {
     supplierBookingId: tripjackHoldId || booking.supplierBookingRef, paymentAmount, passengers: paxRows.length,
   });
@@ -540,7 +553,18 @@ async function bookPaidBooking(
       paymentRef:    data.gatewayPaymentId,
       // TripJack must be paid its reviewed net fare; totalAmount includes our markup.
       paymentAmount,
+      ...(tjExtras.gstInfo ? { gstInfo: tjExtras.gstInfo } : {}),
+      ...(tjExtras.emergencyContact ? { emergencyContact: tjExtras.emergencyContact } : {}),
       passengers: paxRows.map((p) => ({
+        ...(() => {
+          const x = extrasFor(p);
+          return x ? {
+            ...(x.passportIssueDate ? { passportIssueDate: x.passportIssueDate } : {}),
+            ...(x.panNumber ? { panNumber: x.panNumber } : {}),
+            ...(x.documentId ? { documentId: x.documentId } : {}),
+            ...(x.ssr ? { ssr: x.ssr } : {}),
+          } : {};
+        })(),
         type:           p.passengerType as "ADULT" | "CHILD" | "INFANT",
         firstName:      p.firstName,
         lastName:       p.lastName,

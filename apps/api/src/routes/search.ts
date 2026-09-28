@@ -18,6 +18,19 @@ const searchSchema = z.object({
   cabinClass:    z.enum(["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"]).default("ECONOMY"),
   tripType:      z.enum(["ONEWAY", "ROUNDTRIP", "MULTICITY"]).default("ONEWAY"),
   currency:      z.enum(["INR", "AED", "USD"]).optional(),
+  // Multi-city legs (2–6); round trips can use returnDate instead.
+  legs: z.array(z.object({
+    origin:        z.string().length(3).toUpperCase(),
+    destination:   z.string().length(3).toUpperCase(),
+    departureDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })).min(2).max(6).optional(),
+  // TripJack passenger fare type (Student / Senior Citizen fares).
+  fareType:      z.enum(["REGULAR", "STUDENT", "SENIOR_CITIZEN"]).default("REGULAR"),
+}).superRefine((p, ctx) => {
+  if (p.tripType === "ROUNDTRIP" && !p.returnDate && !p.legs) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["returnDate"], message: "returnDate is required for a round trip" });
+  if (p.tripType === "MULTICITY" && !p.legs) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["legs"], message: "legs are required for multi-city" });
+  if (p.infants > p.adults) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["infants"], message: "Infants cannot exceed adults" });
+  if (p.adults + p.children + p.infants > 9) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["adults"], message: "Passengers cannot exceed 9" });
 });
 
 const SERP_TRIAL_TTL = 60 * 60 * 24;
@@ -291,7 +304,10 @@ async function runSearch(
   // Capture the raw TripJack exchange(s) for this search (certification logs).
   const collector = collectExchanges();
   const result = await searchFares(
-    { ...params, currency },
+    {
+      ...params, currency,
+      legs: params.legs?.map((l) => ({ origin: l.origin, destination: l.destination, date: l.departureDate })),
+    },
     supplierConfigs.map((s) => s.name === "TRIPJACK" && s.credentials ? { ...s, credentials: { ...s.credentials, recorder: collector.recorder } } : s),
     { platformCredentials: { ...platformCredentials, ...(platformCredentials.TRIPJACK ? { TRIPJACK: { ...platformCredentials.TRIPJACK, recorder: collector.recorder } as typeof platformCredentials.TRIPJACK } : {}) } },
   );

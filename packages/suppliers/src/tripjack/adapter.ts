@@ -36,31 +36,46 @@ export class TripjackAdapter implements SupplierAdapter {
       );
     }
 
-    // TripJack keys one-way results as "ONWARD" in v2, but some proxy/API versions
-    // key by route string (e.g. "DEL-DXB") or another label. "ONWARD" may also be
-    // present as an empty array [] rather than undefined, so ?? alone isn't enough —
-    // check for a non-empty array explicitly before falling back.
-    const onwardKey = searchResult.tripInfos["ONWARD"];
-    const tripInfoKeys = Object.keys(searchResult.tripInfos);
-    const trips: unknown[] =
-      (Array.isArray(onwardKey) && onwardKey.length > 0 ? onwardKey : null) ??
-      Object.values(searchResult.tripInfos).find((v) => Array.isArray(v) && v.length > 0) ??
-      [];
-    console.info(`[tripjack-search] tripInfos keys=${JSON.stringify(tripInfoKeys)} trips=${trips.length}`);
-    // TripJack puts the bookable fare id and price inside totalPriceList, not
-    // on the itinerary wrapper. Expand every price option so the client receives
-    // the real id required by fare rules and checkout instead of an empty id.
-    return trips.flatMap((trip) => {
+    const expand = (trips: unknown[], context: { tripKey?: string; legIndex?: number }) => trips.flatMap((trip) => {
       const row = trip as Record<string, unknown>;
+      // TripJack puts the bookable fare id and price inside totalPriceList, not
+      // on the itinerary wrapper. Expand every price option so the client receives
+      // the real id required by fare rules and checkout instead of an empty id.
       const prices = Array.isArray(row.totalPriceList) ? row.totalPriceList as Record<string, unknown>[] : [];
-      if (!prices.length) return [normalizeTripjackFare(row)];
+      if (!prices.length) return [normalizeTripjackFare(row, context)];
       return prices.map((price) => normalizeTripjackFare({
         ...row,
         ...price,
         id: price.id,
         totalPriceInfo: price,
-      }));
+      }, context));
     });
+
+    const tripInfoKeys = Object.keys(searchResult.tripInfos);
+    // Round trip / multi-city: keep every leg. Domestic return → ONWARD + RETURN
+    // (2 priceIds at review); international return / multi-city → COMBO (1 priceId);
+    // domestic multi-city → indexed keys "0".."5".
+    if (params.tripType === "ROUNDTRIP" || params.tripType === "MULTICITY" || (params.legs?.length ?? 0) > 1) {
+      console.info(`[tripjack-search] journey tripInfos keys=${JSON.stringify(tripInfoKeys)}`);
+      return tripInfoKeys.flatMap((key) => {
+        const trips = searchResult.tripInfos![key];
+        if (!Array.isArray(trips)) return [];
+        const legIndex = key === "ONWARD" || key === "COMBO" ? 0 : key === "RETURN" ? 1 : /^\d+$/.test(key) ? Number(key) : undefined;
+        return expand(trips, { tripKey: key, legIndex });
+      });
+    }
+
+    // TripJack keys one-way results as "ONWARD" in v2, but some proxy/API versions
+    // key by route string (e.g. "DEL-DXB") or another label. "ONWARD" may also be
+    // present as an empty array [] rather than undefined, so ?? alone isn't enough —
+    // check for a non-empty array explicitly before falling back.
+    const onwardKey = searchResult.tripInfos["ONWARD"];
+    const trips: unknown[] =
+      (Array.isArray(onwardKey) && onwardKey.length > 0 ? onwardKey : null) ??
+      Object.values(searchResult.tripInfos).find((v) => Array.isArray(v) && v.length > 0) ??
+      [];
+    console.info(`[tripjack-search] tripInfos keys=${JSON.stringify(tripInfoKeys)} trips=${trips.length}`);
+    return expand(trips, {});
   }
 
   async getFareRules(fareId: string): Promise<FareRule[]> {

@@ -139,14 +139,15 @@ export class TripjackClient {
           CHILD:  params.children,
           INFANT: params.infants,
         },
-        routeInfos: [
-          {
-            fromCityOrAirport: { code: params.origin },
-            toCityOrAirport:   { code: params.destination },
-            travelDate:        params.departureDate,
-          },
-        ],
-        searchModifiers: { isDirectFlight: false },
+        routeInfos: searchLegs(params).map((leg) => ({
+          fromCityOrAirport: { code: leg.origin },
+          toCityOrAirport:   { code: leg.destination },
+          travelDate:        leg.date,
+        })),
+        searchModifiers: {
+          isDirectFlight: false,
+          ...(params.fareType && params.fareType !== "REGULAR" ? { pfts: params.fareType } : {}),
+        },
       },
     });
   }
@@ -156,9 +157,14 @@ export class TripjackClient {
   }
 
   async validateFare(fareId: string) {
+    return this.review([fareId]);
+  }
+
+  // Review one or more price IDs (1 one-way / COMBO, 2 domestic return, up to 6 multi-city).
+  async review(priceIds: string[]) {
     const requestId = crypto.randomUUID();
     try {
-      const raw = await this.request<any>("/fms/v1/review", { priceIds: [fareId] }, AbortSignal.timeout(15000));
+      const raw = await this.request<any>("/fms/v1/review", { priceIds }, AbortSignal.timeout(20000));
       const result = raw?.data ?? raw?.result ?? raw;
       if (raw?.status?.success === false || result?.status?.success === false || result?.errors?.length) {
         throw reviewFailure(200, raw?.status?.success === false ? raw : result, requestId);
@@ -195,8 +201,17 @@ export class TripjackClient {
         pNum: p.passportNumber,
         ...(p.passportExpiry ? { eD: p.passportExpiry }                  : {}),
         ...(p.nationality    ? { pNat: p.nationality }                   : {}),
+        ...(p.passportIssueDate ? { pid: p.passportIssueDate }           : {}),
       } : {}),
+      ...(p.panNumber  ? { pan: p.panNumber.toUpperCase() } : {}),
+      ...(p.documentId ? { di: p.documentId }               : {}),
+      ...(p.frequentFlyer && Object.keys(p.frequentFlyer).length ? { ff: p.frequentFlyer } : {}),
+      ...(p.ssr?.baggage?.length ? { ssrBaggageInfos:      p.ssr.baggage } : {}),
+      ...(p.ssr?.meal?.length    ? { ssrMealInfos:         p.ssr.meal }    : {}),
+      ...(p.ssr?.seat?.length    ? { ssrSeatInfos:         p.ssr.seat }    : {}),
+      ...(p.ssr?.extra?.length   ? { ssrExtraServiceInfos: p.ssr.extra }   : {}),
     }));
+    const emergencyPhone = params.emergencyContact?.phone?.replace(/\D/g, "") ?? "";
 
     // paymentInfos.amount must equal the exact TF from the review response.
     // TripJack B2B deducts from the agent wallet, but the field is required.
@@ -208,9 +223,30 @@ export class TripjackClient {
         contacts: [contact],
       },
       travellerInfo,
+      ...(params.gstInfo ? {
+        gstInfo: {
+          gstNumber:      params.gstInfo.gstNumber.toUpperCase(),
+          registeredName: params.gstInfo.registeredName.slice(0, 35),
+          ...(params.gstInfo.email   ? { email: params.gstInfo.email }                     : {}),
+          ...(params.gstInfo.mobile  ? { mobile: params.gstInfo.mobile.replace(/\D/g, "") } : {}),
+          ...(params.gstInfo.address ? { address: params.gstInfo.address.slice(0, 70) }   : {}),
+        },
+      } : {}),
+      ...(params.emergencyContact ? {
+        contactInfo: {
+          ecn: params.emergencyContact.name,
+          ...(params.emergencyContact.email ? { emails: [params.emergencyContact.email] } : {}),
+          ...(emergencyPhone ? { contacts: [emergencyPhone.length > 10 ? `+${emergencyPhone}` : `+91${emergencyPhone.slice(-10)}`] } : {}),
+        },
+      } : {}),
       // Some TripJack partner accounts require a remarks field; harmless when not required.
       remarks: "Direct booking",
     }, AbortSignal.timeout(25000));
+  }
+
+  // Seat map for a reviewed booking — only when review conditions.isa = true.
+  async seatMap(bookingId: string) {
+    return this.request<any>("/fms/v1/seat", { bookingId }, AbortSignal.timeout(20000));
   }
 
   async pnrStatus(bookingId: string) {
@@ -318,4 +354,14 @@ export class TripjackClient {
   async hotelCancel(bookingId: string) {
     return this.request("/hotel-cancel/v1", { bookingId });
   }
+}
+
+// Search legs: explicit multi-city legs, else one-way / round trip from origin + dates.
+export function searchLegs(params: SearchParams): { origin: string; destination: string; date: string }[] {
+  if (params.legs?.length) return params.legs.slice(0, 6);
+  const out = [{ origin: params.origin, destination: params.destination, date: params.departureDate }];
+  if (params.tripType === "ROUNDTRIP" && params.returnDate) {
+    out.push({ origin: params.destination, destination: params.origin, date: params.returnDate });
+  }
+  return out;
 }

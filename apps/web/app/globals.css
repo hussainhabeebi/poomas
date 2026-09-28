@@ -2420,3 +2420,8 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
   .flight-results-page .date-navigation { grid-template-columns: 44px minmax(0,1fr) 44px; gap: 6px; }
   .flight-results-page .date-navigation .date-switcher button { min-height: 56px; }
 }
+
+/* Multi-city legs in the search widget */
+.sw-multicity{display:flex;flex-direction:column;gap:10px;grid-column:1/-1}
+.sw-leg-row{display:grid;grid-template-columns:1fr 1fr minmax(140px,.8fr) auto;gap:8px;align-items:end}
+@media (max-width:640px){.sw-leg-row{grid-template-columns:1fr 1fr}.sw-leg-row .search-field{grid-column:1/-1}}
