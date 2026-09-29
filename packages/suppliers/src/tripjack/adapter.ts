@@ -36,7 +36,9 @@ export class TripjackAdapter implements SupplierAdapter {
       );
     }
 
-    const expand = (trips: unknown[], context: { tripKey?: string; legIndex?: number }) => trips.flatMap((trip) => {
+    const pax = { adults: params.adults, children: params.children, infants: params.infants };
+    const expand = (trips: unknown[], leg: { tripKey?: string; legIndex?: number }) => trips.flatMap((trip) => {
+      const context = { ...leg, pax };
       const row = trip as Record<string, unknown>;
       // TripJack puts the bookable fare id and price inside totalPriceList, not
       // on the itinerary wrapper. Expand every price option so the client receives

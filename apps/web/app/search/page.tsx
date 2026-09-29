@@ -420,6 +420,7 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
           <div className="fare-card-v2-price-note">
             {shown.converted ? `≈ ${formatMoney(price, fareCurrency)}` : fareCurrency}
             {!fare.isBookable && " · indicative"}
+            {adults + children + infants > 1 && ` · total for ${adults + children + infants} travellers`}
           </div>
           {isBookable ? (
             <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined, searchId)} className="fare-card-v2-book">
