@@ -262,10 +262,10 @@ export default function SearchWidget() {
           {paxOpen && (
             <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 50, background: "#fff", border: "1px solid #d0d5dd", borderRadius: 14, padding: "14px 16px", minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,.12)" }}>
               {([
-                // Airline rules: max 9 passengers, and each infant sits on an adult's lap.
-                { label: "Adults", sub: "12+ years", val: adults, set: (n: number) => { setAdults(n); setInfants((i) => Math.min(i, n)); }, min: 1, max: 9 - children - infants },
-                { label: "Children", sub: "2–11 years", val: children, set: setChildren, min: 0, max: Math.min(6, 9 - adults - infants) },
-                { label: "Infants", sub: "Under 2 · 1 per adult", val: infants, set: setInfants, min: 0, max: Math.min(4, adults, 9 - adults - children) },
+                // Airline rules: max 9 seats (adults + children); infants sit on an adult's lap, 1 per adult.
+                { label: "Adults", sub: "12+ years", val: adults, set: (n: number) => { setAdults(n); setInfants((i) => Math.min(i, n)); }, min: 1, max: 9 - children },
+                { label: "Children", sub: "2–11 years", val: children, set: setChildren, min: 0, max: Math.min(6, 9 - adults) },
+                { label: "Infants", sub: "Under 2 · 1 per adult", val: infants, set: setInfants, min: 0, max: Math.min(4, adults) },
               ] as const).map(({ label, sub, val, set, min, max }) => (
                 <div key={label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: label !== "Infants" ? "1px solid #f2f4f7" : "none" }}>
                   <div>
