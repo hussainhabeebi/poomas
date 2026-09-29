@@ -69,3 +69,13 @@ test("routes Flights v2 seat map, fare validation and hold endpoints", () => {
   }
   assert.deepEqual(resolveRoute("/ums/v1/user-detail"), { upstreamPath: "/ums/v1/user-detail", upstream: "main", method: "GET" });
 });
+
+test("routes TripSafe insurance v2 endpoints to the main host", () => {
+  for (const path of ["/insurance/v2/search", "/insurance/v2/booking", "/insurance/v2/amendment/raise", "/insurance/v2/amendment/confirm"]) {
+    assert.deepEqual(resolveRoute(path), { upstreamPath: path, upstream: "main", method: "POST" });
+  }
+  assert.deepEqual(resolveRoute("/insurance/v2/booking/TJS70360001517547"),
+    { upstreamPath: "/insurance/v2/booking/TJS70360001517547", upstream: "main", method: "GET" });
+  assert.equal(resolveRoute("/insurance/v2/booking/TJS1/../x"), null);
+  assert.equal(resolveRoute("/insurance/v2/search/"), null);
+});

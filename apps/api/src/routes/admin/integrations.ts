@@ -79,6 +79,8 @@ const tripjackSchema = z.object({
   environment:      z.enum(["UAT", "PRODUCTION"]).default("UAT"),
   tripsafeEnabled:  z.boolean().default(false),
   cabsEnabled:      z.boolean().default(false),
+  // TripJack user ID whose wallet pays for TripSafe policies (paymentOptions.payUserId).
+  tripsafePayUserId: z.string().trim().regex(/^[0-9]*$/, "Numeric TripJack user ID").optional(),
 });
 
 integrationsAdminRoutes.get("/tripjack", async (c) => {
@@ -91,6 +93,7 @@ integrationsAdminRoutes.get("/tripjack", async (c) => {
     environment:     saved.environment ?? "UAT",
     tripsafeEnabled: saved.tripsafeEnabled ?? false,
     cabsEnabled:     saved.cabsEnabled ?? false,
+    tripsafePayUserId: saved.tripsafePayUserId ?? "",
   });
 });
 
@@ -108,6 +111,7 @@ integrationsAdminRoutes.post("/tripjack", zValidator("json", tripjackSchema), as
     baseUrl,
     tripsafeEnabled: body.tripsafeEnabled,
     cabsEnabled:     body.cabsEnabled,
+    tripsafePayUserId: body.tripsafePayUserId ?? existing.tripsafePayUserId,
   };
   await save(c.env, tenantId, "tripjack", merged);
   const tenant = c.get("tenant");

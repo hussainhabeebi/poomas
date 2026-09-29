@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { href: "/dashboard",    label: "Overview",      icon: "📊" },
   { href: "/tenants",      label: "Tenants",       icon: "🏢" },
   { href: "/bookings",     label: "Bookings",      icon: "📋" },
+  { href: "/tripsafe",     label: "TripSafe",      icon: "🛡️" },
   { href: "/agents",       label: "Agents",        icon: "👥" },
   { href: "/suppliers",    label: "Suppliers",     icon: "🔌" },
   { href: "/finance",      label: "Finance",       icon: "💰" },

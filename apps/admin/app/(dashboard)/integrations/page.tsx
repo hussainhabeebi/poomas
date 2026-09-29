@@ -7,15 +7,11 @@ type Env = "UAT" | "PRODUCTION";
 
 /* ── Reference data ─────────────────────────────────────────────── */
 const TRIPSAFE_APIS = [
-  { name: "Search",            path: "/api/v1/tripsafe/search",          desc: "Fetch available TripSafe plans" },
-  { name: "Review",            path: "/api/v1/tripsafe/review",          desc: "Coverage details & premium calculation" },
-  { name: "Booking",           path: "/api/v1/tripsafe/booking",         desc: "Issue policies instantly" },
-  { name: "Booking Details",   path: "/api/v1/tripsafe/booking/details", desc: "Access issued policy info" },
-  { name: "Amendment",         path: "/api/v1/tripsafe/amendment",       desc: "Manage policy modifications" },
-  { name: "Cancellation",      path: "/api/v1/tripsafe/cancellation",    desc: "Process policy cancellations" },
-  { name: "Embedded",          path: "/api/v1/tripsafe/embedded",        desc: "Issue policy with TripJack Flight ID" },
-  { name: "Student",           path: "/api/v1/tripsafe/student",         desc: "Long-duration student insurance" },
-  { name: "Annual Multi-Trip", path: "/api/v1/tripsafe/amt",            desc: "Unlimited 12-month coverage" },
+  { name: "Search",           path: "POST /insurance/v2/search",            desc: "Plans for Standalone / Domestic / Student / AMT / Embedded" },
+  { name: "Create Booking",   path: "POST /insurance/v2/booking",           desc: "Issue policies (WALLET with payUserId)" },
+  { name: "Booking Detail",   path: "GET /insurance/v2/booking/{bookingId}", desc: "Policy IDs and COI links" },
+  { name: "Raise Amendment",  path: "POST /insurance/v2/amendment/raise",   desc: "Cancellation / correction quote" },
+  { name: "Confirm Amendment", path: "POST /insurance/v2/amendment/confirm", desc: "Execute the raised amendment" },
 ];
 
 const CABS_APIS = [
@@ -48,7 +44,7 @@ const SERP_WIRING = [
 
 /* ── Page ───────────────────────────────────────────────────────── */
 export default function IntegrationsPage() {
-  const [tj, setTj] = useState({ apiKey: "", configured: false, env: "UAT" as Env, enabled: false, tripsafe: false, cabs: false, saving: false, saved: false, error: "" });
+  const [tj, setTj] = useState({ apiKey: "", configured: false, env: "UAT" as Env, enabled: false, tripsafe: false, payUserId: "", cabs: false, saving: false, saved: false, error: "" });
   const [duffel, setDuffel] = useState({ apiKey: "", env: "test" as "test" | "live", enabled: false, saving: false, saved: false, error: "" });
   const [serp, setSerp] = useState({ apiKey: "", saving: false, saved: false, error: "" });
 
@@ -59,7 +55,7 @@ export default function IntegrationsPage() {
         if (!res.ok) throw new Error(`Unable to load TripJack configuration (${res.status})`);
         const data = await res.json() as {
           enabled?: boolean; apiKey?: string; environment?: Env;
-          tripsafeEnabled?: boolean; cabsEnabled?: boolean;
+          tripsafeEnabled?: boolean; cabsEnabled?: boolean; tripsafePayUserId?: string;
         };
         setTj((s) => ({
           ...s,
@@ -67,6 +63,7 @@ export default function IntegrationsPage() {
           enabled: data.enabled === true,
           env: data.environment ?? "UAT",
           tripsafe: data.tripsafeEnabled === true,
+          payUserId: data.tripsafePayUserId ?? "",
           cabs: data.cabsEnabled === true,
         }));
       } catch (err) {
@@ -81,7 +78,7 @@ export default function IntegrationsPage() {
     try {
       const res = await fetch(`${API}/api/admin/integrations/tripjack`, {
         method: "POST", headers: apiHeaders(),
-        body: JSON.stringify({ enabled: tj.enabled, apiKey: tj.apiKey, environment: tj.env, tripsafeEnabled: tj.tripsafe, cabsEnabled: tj.cabs }),
+        body: JSON.stringify({ enabled: tj.enabled, apiKey: tj.apiKey, environment: tj.env, tripsafeEnabled: tj.tripsafe, tripsafePayUserId: tj.payUserId.trim(), cabsEnabled: tj.cabs }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string; message?: string };
@@ -241,11 +238,20 @@ export default function IntegrationsPage() {
           </div>
 
           <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
-            <Toggle label="Enable TripSafe" description="Travel insurance added to bookings"
+            <Toggle label="Enable TripSafe" description="Travel insurance at /insurance (manage in Admin → TripSafe)"
               checked={tj.tripsafe} onChange={(v) => setTj((s) => ({ ...s, tripsafe: v }))} color="#6366f1" />
             <Toggle label="Enable Cabs" description="Ground transfers linked to itineraries"
               checked={tj.cabs} onChange={(v) => setTj((s) => ({ ...s, cabs: v }))} color="#0ea5e9" />
           </div>
+
+          {tj.tripsafe && (
+            <div style={{ marginBottom: 16, maxWidth: 420 }}>
+              <Label>TripSafe payUserId (TripJack user ID)</Label>
+              <input value={tj.payUserId} inputMode="numeric" placeholder="e.g. 614507"
+                onChange={(e) => setTj((s) => ({ ...s, payUserId: e.target.value.replace(/[^0-9]/g, "") }))} style={inputStyle} />
+              <p style={hint}>Policies are paid from this TripJack wallet. Without it TripJack leaves bookings PAYMENT_PENDING. UAT issues policies instantly; in Production customer requests wait for “Issue policy” in Admin → TripSafe.</p>
+            </div>
+          )}
 
           <HotelCitySync />
 

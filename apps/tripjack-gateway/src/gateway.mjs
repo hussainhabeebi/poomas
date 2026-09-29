@@ -57,6 +57,12 @@ export const HOTEL_ROUTES = [
   { path: "/oms/v1/hotel/bookings",                      upstream: "booker", method: "POST" },
   { path: "/oms/v3/hotel/cancel-booking/",               upstream: "booker", method: "POST", prefix: true },
   { path: "/ums/v1/user-detail",                         upstream: "main",   method: "GET" },
+  // TripSafe (insurance) API v2 — TripJack main host.
+  { path: "/insurance/v2/search",                        upstream: "main",   method: "POST" },
+  { path: "/insurance/v2/booking",                       upstream: "main",   method: "POST" },
+  { path: "/insurance/v2/booking/",                      upstream: "main",   method: "GET", prefix: true },
+  { path: "/insurance/v2/amendment/raise",               upstream: "main",   method: "POST" },
+  { path: "/insurance/v2/amendment/confirm",             upstream: "main",   method: "POST" },
   // UAT documents nationality-info on the flight host; keep it reachable there too.
   { path: "/tj-main/hms/v3/nationality-info", upstreamPath: "/hms/v3/nationality-info", upstream: "main", method: "GET" },
 ];
