@@ -43,6 +43,10 @@ const ENDPOINT_LABEL: Record<string, string> = {
   "/oms/v1/hotel/bookings":       "Hotel Booking List",
   "/hms/v3/nationality-info":     "Hotel Nationalities",
   "/hms/v3/content/fetch-city-regionIds": "Hotel City Sync",
+  "/insurance/v2/search":         "TripSafe Search",
+  "/insurance/v2/booking":        "TripSafe Booking / Detail",
+  "/insurance/v2/amendment/raise": "TripSafe Raise Amendment",
+  "/insurance/v2/amendment/confirm": "TripSafe Confirm Amendment",
 };
 
 async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; fetchError?: string }> {

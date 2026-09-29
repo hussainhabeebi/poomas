@@ -11,7 +11,7 @@ export interface SupplierExchange {
   supplier:        "TRIPJACK";
   endpoint:        string;
   url:             string;
-  method:          "POST";
+  method:          "POST" | "GET";
   requestHeaders:  Record<string, string>;
   requestBody:     string;
   status:          number | null;          // null = no HTTP response (network error / timeout)

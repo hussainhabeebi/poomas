@@ -23,3 +23,12 @@ export {
   type ReviewSummary, type ReviewSegment, type ReviewConditions, type SsrOption,
 } from "./tripjack/review.js";
 export { searchLegs } from "./tripjack/client.js";
+export {
+  TripjackInsuranceClient, TripsafeError, tripsafeProblems, tripsafeSearchBody, normalizeTripsafeProduct,
+  parseTripsafeBooking, ageOn, addDays, daysBetween,
+  TRIPSAFE_STUDENT_DURATIONS, TRIPSAFE_AMT_DURATIONS, TRIPSAFE_REGIONS, TRIPSAFE_BLOCKED_COUNTRIES,
+  TRIPSAFE_MAX_TRAVELLERS, TRIPSAFE_MAX_AGE, TRIPSAFE_NOMINEE_RELATIONSHIPS, TRIPSAFE_TERMINAL_STATUSES,
+  type TripsafeJourney, type TripsafeDestination, type TripsafeSearchRequest, type TripsafeProduct,
+  type TripsafeTraveller, type TripsafeBookRequest, type TripsafeBookResult, type TripsafeAmendmentRequest,
+  type TripsafeConfirmRequest, type TripsafeAmendmentResult, type TripsafeBookingDetails, type TripsafeTripInput,
+} from "./tripjack/insurance.js";
