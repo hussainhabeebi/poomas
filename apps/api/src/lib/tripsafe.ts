@@ -240,46 +240,50 @@ export async function refreshDetails(c: any, client: TripjackInsuranceClient, re
 
 // ── Certification logs ──────────────────────────────────────────────────────
 
+// TripJack-style names: SearchRequest.json, BookingResponse.json, BookingDetailRequest.json …
 const STEP: Record<string, string> = {
-  "/insurance/v2/search": "search",
-  "/insurance/v2/booking": "booking",
-  "/insurance/v2/amendment/raise": "amendment-raise",
-  "/insurance/v2/amendment/confirm": "amendment-confirm",
+  "/insurance/v2/search": "Search",
+  "/insurance/v2/booking": "Booking",
+  "/insurance/v2/amendment/raise": "AmendmentRaise",
+  "/insurance/v2/amendment/confirm": "AmendmentConfirm",
 };
 
 function stepName(endpoint: string, method: string | undefined) {
-  if (endpoint.startsWith("/insurance/v2/booking/") || (endpoint === "/insurance/v2/booking" && method === "GET")) return "booking-detail";
-  return STEP[endpoint] ?? endpoint.replace(/^\//, "").replace(/[^a-zA-Z0-9]+/g, "-");
+  if (endpoint.startsWith("/insurance/v2/booking/") || (endpoint === "/insurance/v2/booking" && method === "GET")) return "BookingDetail";
+  return STEP[endpoint] ?? endpoint.replace(/^\//, "").split(/[^a-zA-Z0-9]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
 }
 
 const enc = new TextEncoder();
 
 async function exchangeFiles(env: Env, rows: (typeof supplierExchanges.$inferSelect)[], host: string, folder: string): Promise<PackFile[]> {
   const files: PackFile[] = [];
-  let n = 0;
+  const used = new Map<string, number>();
   for (const x of rows) {
-    n += 1;
     let stored: Record<string, any> = {};
     if (x.requestKey) {
       const obj = await env.DOCUMENTS_R2.get(x.requestKey);
       if (obj) { try { stored = JSON.parse(await obj.text()); } catch { /* keep empty */ } }
     }
-    const base = `${folder}${String(n).padStart(2, "0")}-${stepName(new URL(x.url).pathname, stored.method)}`;
+    const step = stepName(new URL(x.url).pathname, stored.method);
+    // A second call of the same service (e.g. two amendments) gets a _2 suffix.
+    const n = (used.get(step) ?? 0) + 1;
+    used.set(step, n);
+    const suffix = n > 1 ? `_${n}` : "";
     if (x.requestKey) {
       const req = certificationRequest(stored, host);
       // A GET has no body — keep the request file exactly as sent.
       const body = stored.method === "GET" ? { url: req.url, method: "GET", headers: { ...(req.headers.apikey ? { apikey: req.headers.apikey } : {}) } } : req;
-      files.push({ name: `${base}-request.json`, data: enc.encode(JSON.stringify(body, null, 2)), date: x.startedAt });
+      files.push({ name: `${folder}${step}Request${suffix}.json`, data: enc.encode(JSON.stringify(body, null, 2)), date: x.startedAt });
     }
     if (x.responseKey) {
       const obj = await env.DOCUMENTS_R2.get(x.responseKey);
-      if (obj) files.push({ name: `${base}-response.${x.responseKey.endsWith(".txt") ? "txt" : "json"}`, data: new Uint8Array(await obj.arrayBuffer()), date: x.startedAt });
+      if (obj) files.push({ name: `${folder}${step}Response${suffix}.${x.responseKey.endsWith(".txt") ? "txt" : "json"}`, data: new Uint8Array(await obj.arrayBuffer()), date: x.startedAt });
     }
   }
   return files;
 }
 
-// Summary + numbered request / response files for one TripSafe booking.
+// Summary + request / response files (TripJack names) for one TripSafe booking.
 export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, folder = ""): Promise<PackFile[]> {
   const host = tripjackHost(record.environment);
   const all = await db.select().from(supplierExchanges).where(and(
@@ -289,10 +293,15 @@ export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, fol
       ? or(eq(supplierExchanges.bookingId, record.reference), inArray(supplierExchanges.searchId, record.searchIds))
       : eq(supplierExchanges.bookingId, record.reference),
   )).orderBy(asc(supplierExchanges.startedAt));
-  // Keep the searches that led to this booking and only the final booking detail call.
+  // One Search (the one the booking used), the Booking, every amendment, and
+  // only the final Booking Detail call.
+  const searches = all.filter((x) => x.endpoint === "/insurance/v2/search");
+  const search = searches.filter((x) => x.searchId === record.searchId).pop() ?? searches.pop();
   const details = all.filter((x) => x.endpoint.startsWith("/insurance/v2/booking/"));
   const lastDetail = details[details.length - 1];
-  const rows = all.filter((x) => !x.endpoint.startsWith("/insurance/v2/booking/") || x === lastDetail);
+  const books = all.filter((x) => x.endpoint === "/insurance/v2/booking");
+  const book = books[books.length - 1];
+  const rows = all.filter((x) => x === search || x === book || x === lastDetail || x.endpoint.startsWith("/insurance/v2/amendment/"));
   const summary = {
     reference:          record.reference,
     tripjackBookingId:  record.tripjack?.bookingId ?? null,
@@ -306,9 +315,13 @@ export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, fol
     policies:           record.policies ?? [],
     amendments:         record.amendments ?? [],
     createdAt:          record.createdAt,
+    ...(() => {
+      const missing = [search ? "" : "Search", book ? "" : "Booking", lastDetail ? "" : "BookingDetail"].filter(Boolean);
+      return missing.length ? { missingServices: missing } : {};
+    })(),
   };
   return [
-    { name: `${folder}00-booking-summary.json`, data: enc.encode(JSON.stringify(summary, null, 2)), date: new Date(record.createdAt) },
+    { name: `${folder}BookingSummary.json`, data: enc.encode(JSON.stringify(summary, null, 2)), date: new Date(record.createdAt) },
     ...await exchangeFiles(env, rows, host, folder),
   ];
 }
