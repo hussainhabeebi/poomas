@@ -44,11 +44,19 @@ export default function AccountPage() {
 
   if (signedIn === false) {
     return (
-      <main className="page-container" style={{ padding: "32px 16px", maxWidth: 520 }}>
-        <section style={card}>
-          <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>Your account</h1>
-          <p style={{ color: "#64748b", margin: "0 0 16px" }}>Sign in to manage your profile, saved travellers, trips and wallet.</p>
-          <div style={{ display: "flex", gap: 10 }}><a href="/login?next=/account" style={btn}>Sign in</a><a href="/signup?next=/account" style={btn2}>Create account</a></div>
+      <main className="account-entry-page">
+        <section className="account-entry-card" aria-labelledby="account-entry-title">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="account-entry-logo" src="/logo.png" alt="" width="64" height="60" />
+          <p className="account-entry-eyebrow">WELCOME TO FLYPOOMAS</p>
+          <h1 id="account-entry-title">Your FlyPoomas account</h1>
+          <p className="account-entry-intro">Manage your bookings, saved travellers, wallet and travel details in one place.</p>
+          <div className="account-entry-actions"><a href="/login?next=/account" className="account-entry-primary">Sign in</a><a href="/signup?next=/account" className="account-entry-secondary">Create account</a></div>
+          <div className="account-entry-benefits" aria-label="Your account can help you">
+            <span>Manage your trips</span>
+            <span>Save traveller details</span>
+            <span>Access your wallet</span>
+          </div>
         </section>
       </main>
     );

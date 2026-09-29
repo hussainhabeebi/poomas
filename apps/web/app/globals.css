@@ -643,27 +643,66 @@ select.search-input {
 
 /* ── Desktop fallback card ───────────────────────────────────────────────── */
 .wa-desktop-fallback {
-  min-height: 100vh;
+  min-height: calc(100dvh - 66px);
   align-items: center;
   justify-content: center;
-  background: #f9fafb;
-  padding: 24px 16px;
+  background: #f3f7fb;
+  padding: 40px 20px;
   box-sizing: border-box;
 }
 
 .wa-desktop-card {
   background: white;
-  border-radius: 12px;
-  padding: 40px 48px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  border: 1px solid #e0e8f1;
+  border-radius: 18px;
+  padding: 36px 38px;
+  box-shadow: 0 14px 40px rgba(20, 35, 58, .07);
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
   box-sizing: border-box;
 }
 
 @media (max-width: 767px) {
-  .wa-desktop-fallback { min-height: calc(100dvh - 66px); }
-  .wa-desktop-card { padding: 28px 22px; }
+  .wa-desktop-fallback { padding: 24px 16px; }
+  .wa-desktop-card { padding: 28px 24px; }
+}
+
+.login-brand-logo { display: block; width: 72px; height: auto; margin: 0 auto 18px; }
+.login-title { margin: 0; color: #10233e; text-align: center; font-size: 27px; line-height: 1.18; letter-spacing: -.025em; }
+.login-intro { margin: 10px 0 26px; color: #60718a; text-align: center; font-size: 14px; line-height: 1.55; }
+.login-form { display: flex; flex-direction: column; gap: 16px; }
+.login-field { display: flex; flex-direction: column; gap: 8px; color: #243a55; font-size: 13px; font-weight: 700; }
+.login-field input { width: 100%; min-height: 48px; padding: 11px 14px; border: 1px solid #cad5e2; border-radius: 10px; outline: 0; background: #fff; color: #10233e; font: 400 16px var(--font-body); }
+.login-field input:focus-visible { border-color: var(--color-primary); box-shadow: 0 0 0 3px #fee2e2; }
+.login-submit { width: 100%; min-height: 48px; margin-top: 3px; border: 0; border-radius: 10px; background: var(--color-primary); color: #fff; font: 700 15px var(--font-body); cursor: pointer; transition: background .2s, box-shadow .2s; }
+.login-submit:hover:not(:disabled) { background: #c91a20; box-shadow: 0 6px 14px rgba(227, 30, 36, .16); }
+.login-submit:disabled { opacity: .7; cursor: default; }
+.login-submit:focus-visible, .login-signup-prompt a:focus-visible { outline: 3px solid #f7941d; outline-offset: 3px; }
+.login-signup-prompt { margin: 24px 0 0; color: #60718a; text-align: center; font-size: 14px; }
+.login-signup-prompt a { color: #c91a20; font-weight: 700; text-decoration: none; border-radius: 3px; }
+.login-signup-prompt a:hover { text-decoration: underline; }
+
+.account-entry-page { min-height: calc(100dvh - 66px); display: grid; place-items: center; padding: 42px 20px; background: #f3f7fb; }
+.account-entry-card { width: min(100%, 660px); padding: 38px 42px 30px; border: 1px solid #e0e8f1; border-radius: 18px; background: #fff; box-shadow: 0 14px 40px rgba(20, 35, 58, .07); text-align: center; }
+.account-entry-logo { display: block; width: 64px; height: auto; margin: 0 auto 19px; }
+.account-entry-eyebrow { margin: 0 0 10px; color: #b91c1c; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+.account-entry-card h1 { margin: 0; color: #10233e; font-size: clamp(25px, 3vw, 31px); line-height: 1.2; letter-spacing: -.03em; }
+.account-entry-intro { max-width: 470px; margin: 13px auto 25px; color: #60718a; font-size: 15px; line-height: 1.6; }
+.account-entry-actions { display: flex; justify-content: center; gap: 12px; }
+.account-entry-actions a { display: grid; place-items: center; min-width: 155px; min-height: 48px; padding: 10px 18px; border-radius: 10px; font-size: 14px; font-weight: 800; text-decoration: none; transition: background .2s, border-color .2s, box-shadow .2s; }
+.account-entry-primary { background: var(--color-primary); color: #fff; }
+.account-entry-primary:hover { background: #c91a20; box-shadow: 0 6px 14px rgba(227, 30, 36, .16); }
+.account-entry-secondary { border: 1px solid #cbd5e1; color: #b91c1c; background: #fff; }
+.account-entry-secondary:hover { border-color: #e31e24; background: #fff7f7; }
+.account-entry-actions a:focus-visible { outline: 3px solid #f7941d; outline-offset: 3px; }
+.account-entry-benefits { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 18px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9eef5; color: #526580; font-size: 12px; font-weight: 600; }
+.account-entry-benefits span::before { content: "✓"; margin-right: 6px; color: #c91a20; font-weight: 800; }
+@media (max-width: 480px) {
+  .account-entry-page { padding: 24px 16px; }
+  .account-entry-card { padding: 28px 22px 24px; }
+  .account-entry-actions { flex-direction: column; }
+  .account-entry-actions a { width: 100%; }
+  .account-entry-benefits { justify-content: flex-start; text-align: left; }
 }
 
 

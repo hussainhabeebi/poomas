@@ -40,7 +40,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (step !== "loading" && step !== "done") {
-      setTimeout(() => inputRef.current?.focus(), 100);
+      setTimeout(() => {
+        if (inputRef.current?.getClientRects().length) inputRef.current.focus();
+      }, 100);
     }
   }, [step]);
 
@@ -268,16 +270,16 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Desktop fallback — traditional card */}
+      {/* Conventional login form at every viewport */}
       <div className="wa-desktop-fallback">
         <div className="wa-desktop-card">
-          <img src="/logo.svg" alt="FlyPoomas logo" height={40} style={{ margin: "0 auto 24px", display: "block" }} />
-          <h1 style={{ textAlign: "center", marginBottom: 28, fontSize: 22, fontWeight: 700, color: "#1e293b" }}>
-            Sign in to FlyPoomas
-          </h1>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="FlyPoomas" className="login-brand-logo" width="72" height="68" />
+          <h1 className="login-title">Welcome back</h1>
+          <p className="login-intro">Sign in to continue to your FlyPoomas account.</p>
           <DesktopLoginForm />
-          <p style={{ textAlign: "center", marginTop: 18, fontSize: 14, color: "#64748b" }}>
-            New to FlyPoomas? <a href="/signup" style={{ color: "#E31E24", fontWeight: 700 }}>Create an account</a>
+          <p className="login-signup-prompt">
+            New to FlyPoomas? <a href="/signup">Create an account</a>
           </p>
         </div>
       </div>
@@ -318,25 +320,20 @@ function DesktopLoginForm() {
   }
 
   return (
-    <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <form onSubmit={submit} className="login-form">
       {error && (
         <div style={{ background: "#FEE2E2", color: "#991B1B", padding: "10px 14px", borderRadius: 6, fontSize: 13 }}>
           {error}
         </div>
       )}
-      <input
-        type="email" placeholder="Email address" value={email}
-        onChange={(e) => setEmail(e.target.value)} required
-        style={{ padding: "12px 14px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 15, width: "100%", boxSizing: "border-box" as const, outline: "none", fontFamily: "inherit" }}
-      />
-      <input
-        type="password" placeholder="Password" value={pass}
-        onChange={(e) => setPass(e.target.value)} required
-        style={{ padding: "12px 14px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 15, width: "100%", boxSizing: "border-box" as const, outline: "none", fontFamily: "inherit" }}
-      />
+      <label className="login-field">Email address
+        <input type="email" name="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+      </label>
+      <label className="login-field">Password
+        <input type="password" name="password" autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} required />
+      </label>
       <button
-        type="submit" disabled={loading}
-        style={{ background: "#075E54", color: "white", border: "none", borderRadius: 8, padding: "13px", fontWeight: 700, fontSize: 15, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1, fontFamily: "inherit" }}
+        type="submit" disabled={loading} className="login-submit"
       >
         {loading ? "Signing in…" : "Sign In"}
       </button>
