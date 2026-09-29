@@ -87,7 +87,7 @@ function Journey() {
         ...(fareType ? { fareType } : {}), ...(q.get("currency") ? { currency: q.get("currency") } : {}),
       }),
     })
-      .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error ?? `Search failed (${r.status})`); return d; })
+      .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error((typeof d.error === "string" ? d.error : d.error?.issues?.[0]?.message) ?? `Search failed (${r.status})`); return d; })
       .then((d) => { setFares((d.fares ?? []).filter((f: Fare) => f.supplier === "TRIPJACK" && f.tripKey)); setSearchId(d.searchId); })
       .catch((e) => { if (e.name !== "AbortError") setError(e.message); });
     return () => c.abort();
