@@ -301,7 +301,8 @@ export default function SearchWidget() {
       </div>
 
       <form onSubmit={handleSearch} aria-busy={searching}>
-        <div className="sw-grid">
+        <div className={tripType === "Multi-city" ? "sw-grid sw-grid-multicity" : "sw-grid"}>
+          {tripType === "Multi-city" && <div className="sw-flight-label">Flight 1</div>}
           {/* Route row: FROM ⇄ TO */}
           <div className="sw-route-row">
             <AirportInput
@@ -355,20 +356,25 @@ export default function SearchWidget() {
             <div className="sw-multicity">
               {extraLegs.map((leg, i) => (
                 <div key={i} className="sw-route-row sw-leg-row">
-                  <AirportInput id={`sw-leg-${i}-from`} label={`Flight ${i + 2} from`} value={leg.origin}
+                  <div className="sw-leg-heading">
+                    <span className="sw-flight-label">Flight {i + 2}</span>
+                    {extraLegs.length > 1 && (
+                      <button type="button" className="sw-leg-remove" aria-label={`Remove flight ${i + 2}`}
+                        onClick={() => setExtraLegs((ls) => ls.filter((_, n) => n !== i))}>✕</button>
+                    )}
+                  </div>
+                  <AirportInput id={`sw-leg-${i}-from`} label="From" value={leg.origin}
                     onChange={(a) => updLeg(i, { origin: a })} placeholder="City or airport" />
+                  <span className="sw-leg-direction" aria-hidden="true">→</span>
                   <AirportInput id={`sw-leg-${i}-to`} label="To" value={leg.dest}
                     onChange={(a) => updLeg(i, { dest: a })} placeholder="City or airport" />
                   <div className="search-field">
-                    <label htmlFor={`sw-leg-${i}-date`}>Date</label>
+                    <label htmlFor={`sw-leg-${i}-date`}>Depart</label>
                     <input id={`sw-leg-${i}-date`} className="search-input" type="date" required
                       min={(i === 0 ? departDate : extraLegs[i - 1].date) || today}
                       value={leg.date} onChange={(e) => updLeg(i, { date: e.target.value })} />
                   </div>
-                  {extraLegs.length > 1 && (
-                    <button type="button" className="swap-btn" aria-label={`Remove flight ${i + 2}`}
-                      onClick={() => setExtraLegs((ls) => ls.filter((_, n) => n !== i))}>✕</button>
-                  )}
+                  <div className="search-field sw-leg-class"><span className="sw-field-label">Class</span><span className="sw-leg-class-value">{cabinClass}</span></div>
                 </div>
               ))}
               {extraLegs.length < 5 && (
