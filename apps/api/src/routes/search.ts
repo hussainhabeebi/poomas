@@ -30,7 +30,8 @@ const searchSchema = z.object({
   if (p.tripType === "ROUNDTRIP" && !p.returnDate && !p.legs) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["returnDate"], message: "returnDate is required for a round trip" });
   if (p.tripType === "MULTICITY" && !p.legs) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["legs"], message: "legs are required for multi-city" });
   if (p.infants > p.adults) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["infants"], message: "Infants cannot exceed adults" });
-  if (p.adults + p.children + p.infants > 9) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["adults"], message: "Passengers cannot exceed 9" });
+  // 9 seats max; lap infants don't take a seat (limited to one per adult above).
+  if (p.adults + p.children > 9) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["adults"], message: "Adults and children cannot exceed 9" });
 });
 
 const SERP_TRIAL_TTL = 60 * 60 * 24;
