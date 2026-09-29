@@ -76,3 +76,20 @@ test('TripJack review contract and safe error handling', async (t) => {
     await assert.rejects(client.validateFare('price-1'), (err) => err.code === 'FARE_EXPIRED');
   });
 });
+
+test('TripJack seat map parsing and seat pricing', async () => {
+  const { parseTripjackSeatMap, seatTotal } = await import(moduleUrl('../src/tripjack/seat-map.ts'));
+  const maps = parseTripjackSeatMap({ tripSeatMap: { tripSeat: { SEG1: { sData: { row: 30, column: 6 }, sInfo: [
+    { seatNo: '1A', code: '1A', seatPosition: { row: 1, column: 1 }, isBooked: false, amount: 500, isLegroom: true },
+    { seatNo: '1B', code: '1B', seatPosition: { row: 1, column: 2 }, isBooked: true, amount: 0 },
+    { seatNo: '12C', code: '12C', amount: 250, isAisle: true },
+  ] } } } });
+  assert.equal(maps.length, 1);
+  assert.equal(maps[0].key, 'SEG1');
+  assert.equal(maps[0].rows, 30);
+  assert.deepEqual([maps[0].seats[2].row, maps[0].seats[2].column], [12, 3]);
+  assert.deepEqual(seatTotal(maps, [{ type: 'ADULT', ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }, { type: 'CHILD', ssr: { seat: [{ key: 'SEG1', code: '12C' }] } }]), { total: 750, invalid: [] });
+  assert.equal(seatTotal(maps, [{ type: 'ADULT', ssr: { seat: [{ key: 'SEG1', code: '1B' }] } }]).invalid.length, 1);
+  assert.equal(seatTotal(maps, [{ ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }, { ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }]).invalid.length, 1);
+  assert.equal(seatTotal(maps, [{ type: 'INFANT', ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }]).invalid.length, 1);
+});

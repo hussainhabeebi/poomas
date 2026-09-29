@@ -8,7 +8,7 @@ import { eq, and, asc, desc, or } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
 import { buildZip } from "../../lib/zip.js";
-import { certificationPack, certificationRequest, packFolderName, tripjackHost } from "../../lib/certification.js";
+import { certificationCoverage, certificationFileName, certificationPack, certificationRequest, packFolderName, tripjackHost } from "../../lib/certification.js";
 import { tripjackEnvironment } from "../../lib/hotels.js";
 import {
   describeError, errorDetail, explainMissingPnr, isTestBooking, logBookingEvent, paidBookingMessage,
@@ -121,6 +121,7 @@ bookingsAdminRoutes.get("/:id", async (c) => {
     booking: b, queueError, queueReceipt, paymentConfirmed, events: await readBookingEvents(c.env, b.id), customer: customer[0] ?? null, passengers, payments: paymentRows, cancellations: amendments,
     supportRequests: support, walletTransactions: walletTx,
     exchanges: exchanges.map((x) => ({ ...x, requestKey: undefined, responseKey: undefined, hasResponse: Boolean(x.responseKey) })),
+    ...(b.supplier === "TRIPJACK" ? { certification: await certificationCoverage(c.env, db, b, exchanges).catch(() => null) } : {}),
   });
 });
 
@@ -136,7 +137,7 @@ bookingsAdminRoutes.get("/:id/exchanges/:exchangeId/:part", async (c) => {
   if (!x || !key) throw new HTTPException(404, { message: "Log file not found" });
   const obj = await c.env.DOCUMENTS_R2.get(key);
   if (!obj) throw new HTTPException(404, { message: "Log file missing from storage" });
-  const name = key.split("/").pop()!;
+  const name = certificationFileName(x.endpoint, part, key);
   if (part === "request") {
     // As TripJack received it: TripJack URL, apikey header, body — no gateway secret.
     let stored: Record<string, any> = {};

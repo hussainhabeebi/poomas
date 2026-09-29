@@ -32,3 +32,4 @@ export {
   type TripsafeTraveller, type TripsafeBookRequest, type TripsafeBookResult, type TripsafeAmendmentRequest,
   type TripsafeConfirmRequest, type TripsafeAmendmentResult, type TripsafeBookingDetails, type TripsafeTripInput,
 } from "./tripjack/insurance.js";
+export { parseTripjackSeatMap, seatTotal, type SeatOption, type SegmentSeatMap } from "./tripjack/seat-map.js";

@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { getBookableAdapter, parseTripjackReview, ssrTotal, TripjackClient, type ReviewSummary } from "@poomas/suppliers";
+import { getBookableAdapter, parseTripjackReview, parseTripjackSeatMap, seatTotal, ssrTotal, TripjackClient, type ReviewSummary, type SegmentSeatMap } from "@poomas/suppliers";
 import { normalizeBookingResponse } from "../lib/booking-response.js";
 import { resolveFlightSuppliers } from "./search.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
@@ -36,6 +36,7 @@ const passengerSchema = z.object({
     baggage: z.array(ssrPick).max(6).optional(),
     meal:    z.array(ssrPick).max(6).optional(),
     extra:   z.array(ssrPick).max(6).optional(),
+    seat:    z.array(ssrPick).max(6).optional(),
   }).optional(),
 }).superRefine((p, ctx) => {
   for (const [field, label] of [["firstName", "First name"], ["lastName", "Last name"]] as const) {
@@ -159,20 +160,33 @@ bookDirectRoutes.post("/review", zValidator("json", z.object({
 });
 
 // POST /api/book/seat-map — TripJack seat map for a reviewed booking (conditions.isa).
-bookDirectRoutes.post("/seat-map", zValidator("json", z.object({ reviewBookingId: z.string().min(5) })), async (c) => {
-  const { reviewBookingId } = c.req.valid("json");
+// The parsed map is kept for the fare session so the booking can price the seats.
+const SEAT_MAP_KEY = (tenantId: string, bookingId: string) => `flight_seatmap:${tenantId}:${bookingId}`;
+
+bookDirectRoutes.post("/seat-map", zValidator("json", z.object({ reviewBookingId: z.string().min(5), searchId: z.string().uuid().optional() })), async (c) => {
+  const { reviewBookingId, searchId } = c.req.valid("json");
   const tenantId = c.get("tenantId");
   const stored = await c.env.SESSIONS_KV.get(REVIEW_KEY(tenantId, reviewBookingId), "json") as StoredReview | null;
   if (!stored) return c.json({ errorCode: "FARE_EXPIRED", error: "Your fare session expired. Please search again." }, 409);
   if (!stored.summary.conditions.seatApplicable) return c.json({ errorCode: "SEAT_NOT_APPLICABLE", error: "Seat selection is not available for this fare." }, 400);
+  const cached = await c.env.SESSIONS_KV.get(SEAT_MAP_KEY(tenantId, reviewBookingId), "json").catch(() => null) as SegmentSeatMap[] | null;
+  if (cached?.length) return c.json({ segments: cached });
   const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), tenantId);
   const config = supplierConfigs.find((s) => s.name === "TRIPJACK");
-  const client = new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(config?.credentials ?? {}) });
+  const collector = collectExchanges();
+  const client = new TripjackClient({ recorder: collector.recorder, ...(platformCredentials.TRIPJACK ?? {}), ...(config?.credentials ?? {}) });
+  const requestId = crypto.randomUUID();
   try {
     const raw = await client.seatMap(reviewBookingId) as any;
-    return c.json({ tripSeatMap: (raw?.data ?? raw)?.tripSeatMap ?? null });
+    const segments = parseTripjackSeatMap(raw);
+    const ttl = Math.max(60, Math.min(stored.summary.conditions.sessionSeconds ?? 900, 1800));
+    if (segments.length) await c.env.SESSIONS_KV.put(SEAT_MAP_KEY(tenantId, reviewBookingId), JSON.stringify(segments), { expirationTtl: ttl });
+    persistInBackground(c, persistExchanges(c.env, c.get("db"), tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
+    if (!segments.length) return c.json({ errorCode: "SEAT_MAP_EMPTY", error: "The airline hasn't released seats for this flight yet." }, 404);
+    return c.json({ segments });
   } catch (err: any) {
-    runInBackground(c, logSupplierCall(c.get("db"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/seat", level: "ERROR",
+    persistInBackground(c, persistExchanges(c.env, c.get("db"), tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
+    runInBackground(c, logSupplierCall(c.get("db"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/seat", level: "ERROR", requestId,
       httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined, requestSummary: { bookingId: reviewBookingId },
       errorCode: err?.code ?? "SEAT_MAP_FAILED", errorMessage: err?.message, responseSnippet: err?.responseSnippet }));
     return c.json({ errorCode: "SEAT_MAP_FAILED", error: "Seat map is unavailable right now." }, 502);
@@ -299,12 +313,22 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // Customer pays TripJack's reviewed fare plus the tenant markup (the same rules
     // search used for the displayed price). TripJack itself is paid the net fare.
     let ssrAmount = 0;
+    let seatAmount = 0;
     if (reviewSummary) {
       const problem = conditionProblem(reviewSummary, body);
       if (problem) return c.json({ errorCode: "BOOKING_DETAILS_INVALID", error: problem, requestId }, 400);
       const ssr = ssrTotal(reviewSummary.segments, body.passengers);
       if (ssr.invalid.length) return c.json({ errorCode: "BOOKING_DETAILS_INVALID", error: `Unavailable meal / baggage choice (${ssr.invalid[0]}). Please choose again.`, requestId }, 400);
       ssrAmount = ssr.total;
+      if (body.passengers.some((p) => p.ssr?.seat?.length)) {
+        if (!reviewSummary.conditions.seatApplicable) return c.json({ errorCode: "BOOKING_DETAILS_INVALID", error: "Seat selection is not available for this fare.", requestId }, 400);
+        const maps = await c.env.SESSIONS_KV.get(SEAT_MAP_KEY(tenantId, bookingSessionId!), "json").catch(() => null) as SegmentSeatMap[] | null;
+        if (!maps?.length) return c.json({ errorCode: "BOOKING_DETAILS_INVALID", error: "Your seat selection expired. Please choose your seats again.", requestId }, 400);
+        const seats = seatTotal(maps, body.passengers);
+        if (seats.invalid.length) return c.json({ errorCode: "BOOKING_DETAILS_INVALID", error: `Seat unavailable (${seats.invalid[0]}). Please choose another seat.`, requestId }, 400);
+        seatAmount = seats.total;
+        ssrAmount = Math.round((ssrAmount + seatAmount) * 100) / 100;
+      }
     }
     // TripJack is paid TF + chosen SSR (paymentInfos.amount); markup applies to the fare only.
     const fareAmount = reviewPaymentAmount ?? body.totalFare;
@@ -338,6 +362,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
             fareIdentifiers: reviewSummary?.fareIdentifiers ?? [],
             conditions: reviewSummary?.conditions ?? null,
             ssrAmount,
+            ...(seatAmount ? { seatAmount } : {}),
             ...(body.gstInfo ? { gstInfo: body.gstInfo } : {}),
             ...(body.emergencyContact ? { emergencyContact: body.emergencyContact } : {}),
             pax: body.passengers.map((p) => ({

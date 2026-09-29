@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { SeatPicker, seatCss, type SegmentSeatMap } from "./SeatPicker";
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
@@ -13,7 +14,7 @@ type Passenger = {
   passportNumber: string; passportExpiry: string;
   passportIssueDate: string; panNumber: string; documentId: string;
   // Chosen SSR per TripJack segment key → SSR code.
-  bag: Record<string, string>; meal: Record<string, string>;
+  bag: Record<string, string>; meal: Record<string, string>; seat: Record<string, string>;
 };
 
 type SsrOption = { code: string; amount: number; desc: string };
@@ -54,7 +55,7 @@ type SavedPassenger = {
 const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
   type, firstName: "", lastName: "", dob: "", gender: "M", nationality: "IN",
   passportNumber: "", passportExpiry: "",
-  passportIssueDate: "", panNumber: "", documentId: "", bag: {}, meal: {},
+  passportIssueDate: "", panNumber: "", documentId: "", bag: {}, meal: {}, seat: {},
 });
 
 const AIRPORT_COUNTRY: Record<string, string> = {
@@ -96,6 +97,9 @@ export default function BookPage() {
   const [confirmation, setConfirmation] = useState<any>(null);
   // TripJack review (run on load): conditions, SSR options, fare alerts.
   const [review, setReview] = useState<Review | null>(null);
+  const [seatMaps, setSeatMaps] = useState<SegmentSeatMap[] | null>(null);
+  const [seatLoading, setSeatLoading] = useState(false);
+  const [seatError, setSeatError] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [tripType, setTripType] = useState<"ONEWAY" | "ROUNDTRIP" | "MULTICITY">("ONEWAY");
@@ -275,7 +279,37 @@ export default function BookPage() {
   const ssrSum = passengers.reduce((n, p) =>
     n + Object.entries(p.bag).reduce((m, [k, c]) => m + (c ? ssrPrice("baggage", k, c) : 0), 0)
       + Object.entries(p.meal).reduce((m, [k, c]) => m + (c ? ssrPrice("meal", k, c) : 0), 0), 0);
-  const grandTotal = (fare?.totalFare ?? 0) + ssrSum;
+  const seatPrice = (key: string, code: string) => seatMaps?.find((m) => m.key === key)?.seats.find((s) => s.code === code)?.amount ?? 0;
+  const seatSum = passengers.reduce((n, p) => n + (p.type === "INFANT" ? 0 : Object.entries(p.seat).reduce((m, [k, c]) => m + (c ? seatPrice(k, c) : 0), 0)), 0);
+  const grandTotal = (fare?.totalFare ?? 0) + ssrSum + seatSum;
+
+  // A new fare session invalidates the seat map and any seats picked from it.
+  useEffect(() => {
+    setSeatMaps(null); setSeatError("");
+    setPassengers((ps) => ps.map((p) => (Object.keys(p.seat).length ? { ...p, seat: {} } : p)));
+  }, [review?.bookingId]);
+
+  async function loadSeatMap() {
+    if (!review) return;
+    setSeatLoading(true); setSeatError("");
+    try {
+      const sid = new URLSearchParams(window.location.search).get("sid");
+      const res = await fetch(`${apiUrl}/api/book/seat-map`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
+        body: JSON.stringify({ reviewBookingId: review.bookingId, ...(sid ? { searchId: sid } : {}) }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setSeatError(d.error ?? "Seat map is unavailable right now."); return; }
+      setSeatMaps(d.segments ?? []);
+    } catch {
+      setSeatError("Seat map is unavailable right now.");
+    } finally {
+      setSeatLoading(false);
+    }
+  }
+  const pickSeat = (i: number, key: string, code: string) =>
+    setPassengers((p) => p.map((x, n) => n === i ? { ...x, seat: { ...x.seat, [key]: code } } : x));
   const picks = (m: Record<string, string>) => Object.entries(m).filter(([, c]) => c).map(([key, code]) => ({ key, code }));
 
   const t = (s?: string) =>
@@ -422,8 +456,12 @@ export default function BookPage() {
             passportIssueDate: p.passportNumber.trim() && p.passportIssueDate ? p.passportIssueDate : undefined,
             panNumber:      p.panNumber.trim() ? p.panNumber.trim().toUpperCase() : undefined,
             documentId:     p.documentId.trim() || undefined,
-            ...(p.type !== "INFANT" && (picks(p.bag).length || picks(p.meal).length)
-              ? { ssr: { ...(picks(p.bag).length ? { baggage: picks(p.bag) } : {}), ...(picks(p.meal).length ? { meal: picks(p.meal) } : {}) } }
+            ...(p.type !== "INFANT" && (picks(p.bag).length || picks(p.meal).length || picks(p.seat).length)
+              ? { ssr: {
+                  ...(picks(p.bag).length ? { baggage: picks(p.bag) } : {}),
+                  ...(picks(p.meal).length ? { meal: picks(p.meal) } : {}),
+                  ...(picks(p.seat).length ? { seat: picks(p.seat) } : {}),
+                } }
               : {}),
           })),
         }),
@@ -749,6 +787,23 @@ export default function BookPage() {
           )}
         </section>
 
+        {cond?.seatApplicable && (
+          <section className="card">
+            <div className="title">
+              <span>💺</span>
+              <div><h2>Seats</h2><p>Optional · pick a seat for each traveller. Paid seats are added to your total.</p></div>
+            </div>
+            {seatMaps?.length ? (
+              <SeatPicker maps={seatMaps} segments={review?.segments ?? []} travellers={passengers} onPick={pickSeat} format={(n) => money.format(n)} />
+            ) : (
+              <button type="button" className="seatLoad" disabled={seatLoading} onClick={() => void loadSeatMap()}>
+                {seatLoading ? "Loading seat map…" : "Choose seats"}
+              </button>
+            )}
+            {seatError && <p className="seatError">{seatError} You can continue without choosing seats — the airline assigns them at check-in.</p>}
+          </section>
+        )}
+
         <section className="card">
           <div className="title">
             <span>☎</span>
@@ -798,6 +853,9 @@ export default function BookPage() {
         {ssrSum > 0 && (
           <p className="checkoutProgress">Meals &amp; baggage: <b>{money.format(ssrSum)}</b> added to the fare.</p>
         )}
+        {seatSum > 0 && (
+          <p className="checkoutProgress">Seats: <b>{money.format(seatSum)}</b> added to the fare.</p>
+        )}
 
         </>)}
 
@@ -831,6 +889,6 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}`;
+const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}${seatCss}`;
 
 const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.checkError{justify-content:space-between;background:#fff7ed;border-color:#fed7aa;color:#9a3412}.checkError button{border:0;background:#ea580c;color:#fff;border-radius:8px;padding:7px 12px;font-weight:800;cursor:pointer}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.typeSelect{height:32px;border:1px solid #fecdd3;border-radius:99px;padding:0 10px;background:#fff1f2;color:#be123c;font-size:11px;font-weight:800;cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23be123c'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}.typeSelect:focus{outline:none;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
