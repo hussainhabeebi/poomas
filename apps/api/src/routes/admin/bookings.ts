@@ -8,7 +8,7 @@ import { eq, and, asc, desc, or } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
 import { buildZip } from "../../lib/zip.js";
-import { certificationCoverage, certificationFileName, certificationPack, certificationRequest, packFolderName, tripjackHost } from "../../lib/certification.js";
+import { caseName, certificationCoverage, certificationFileName, certificationPack, certificationRequest, packFolderName, tripFolderName, tripjackHost } from "../../lib/certification.js";
 import { tripjackEnvironment } from "../../lib/hotels.js";
 import {
   describeError, errorDetail, explainMissingPnr, isTestBooking, logBookingEvent, paidBookingMessage,
@@ -89,9 +89,11 @@ bookingsAdminRoutes.get("/certification.zip", async (c) => {
   if (!ids.length) throw new HTTPException(400, { message: "Pass ?ids=<bookingId>,<bookingId>…" });
   const environment = await tripjackEnvironment(c.env, c.get("tenantId"));
   const files: { name: string; data: Uint8Array; date: Date }[] = [];
-  for (const [i, id] of ids.entries()) {
+  // oneway/DEL-BOM-1A-DIRECT/SearchRequest.json … (TripJack's folder layout)
+  const used = new Map<string, number>();
+  for (const id of ids) {
     const b = await loadBooking(c, id);
-    files.push(...await certificationPack(c.env, db, b, environment, packFolderName(i + 1, b)));
+    files.push(...await certificationPack(c.env, db, b, environment, packFolderName(b, used)));
   }
   return new Response(buildZip(files), { headers: {
     "Content-Type": "application/zip",
@@ -158,11 +160,12 @@ bookingsAdminRoutes.get("/:id/exchanges/:exchangeId/:part", async (c) => {
 bookingsAdminRoutes.get("/:id/exchanges.zip", async (c) => {
   const db = c.get("db");
   const b = await loadBooking(c, c.req.param("id"));
-  const files = await certificationPack(c.env, db, b, await tripjackEnvironment(c.env, c.get("tenantId")));
+  const name = caseName(b);
+  const files = await certificationPack(c.env, db, b, await tripjackEnvironment(c.env, c.get("tenantId")), `${tripFolderName(b)}/${name}/`);
   if (files.length <= 1) throw new HTTPException(404, { message: "No API logs stored for this booking yet" });
   return new Response(buildZip(files), { headers: {
     "Content-Type": "application/zip",
-    "Content-Disposition": `attachment; filename="booking-${b.pnr ?? b.id.slice(0, 8)}-tripjack-logs.zip"`,
+    "Content-Disposition": `attachment; filename="${tripFolderName(b)}-${name}.zip"`,
     "Cache-Control": "private, no-store",
   } });
 });

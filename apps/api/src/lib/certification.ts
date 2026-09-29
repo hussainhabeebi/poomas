@@ -214,7 +214,39 @@ export async function certificationCoverage(env: Env, db: Db, b: Booking, exchan
   return REQUIRED_STEPS.map((service) => ({ service, logged: have.has(service) }));
 }
 
-export function packFolderName(index: number, b: Booking) {
-  const clean = (v: string) => v.replace(/[^A-Za-z0-9-]+/g, "");
-  return `${String(index).padStart(2, "0")}-${clean(b.origin)}-${clean(b.destination)}-${clean(b.tripType)}-${clean(b.pnr ?? b.id.slice(0, 8))}/`;
+// TripJack's certification folder layout:
+//   oneway/DEL-BOM-1A-DIRECT/, oneway/BOM-SIN-2A-2C-CONNECTING/, roundtrip/…
+// Passenger counts that are zero are left out.
+export function tripFolderName(b: Booking) {
+  return b.tripType === "ROUNDTRIP" ? "roundtrip" : b.tripType === "MULTICITY" ? "multicity" : "oneway";
+}
+
+export function caseName(b: Booking) {
+  const clean = (v: string) => v.replace(/[^A-Za-z0-9]+/g, "").toUpperCase();
+  const fd = (b.flightData ?? {}) as Record<string, any>;
+  const segments: any[] = Array.isArray(fd.tripjack?.segments) ? fd.tripjack.segments : Array.isArray(fd.segments) ? fd.segments : [];
+  let connecting: boolean;
+  if (segments.length) {
+    if (b.tripType === "MULTICITY") {
+      const legs = Array.isArray(fd.legs) ? fd.legs.length : Array.isArray(fd.tripjack?.priceIds) ? fd.tripjack.priceIds.length : 1;
+      connecting = segments.length > Math.max(legs, 1);
+    } else {
+      const outbound = segments.filter((s) => !s?.isReturn).length;
+      const inbound = segments.length - outbound;
+      connecting = b.tripType === "ROUNDTRIP" && inbound === 0 ? segments.length > 2 : outbound > 1 || inbound > 1;
+    }
+  } else {
+    connecting = Number(fd.stops ?? 0) > 0;
+  }
+  const pax = [[b.adultCount, "A"], [b.childCount, "C"], [b.infantCount, "I"]]
+    .filter(([n]) => Number(n) > 0).map(([n, t]) => `${n}${t}`);
+  return [clean(b.origin), clean(b.destination), ...pax, connecting ? "CONNECTING" : "DIRECT"].join("-");
+}
+
+// Folder for one booking in a multi-booking ZIP; a repeated case gets "-2", "-3" …
+export function packFolderName(b: Booking, used: Map<string, number>) {
+  const base = `${tripFolderName(b)}/${caseName(b)}`;
+  const n = (used.get(base) ?? 0) + 1;
+  used.set(base, n);
+  return `${base}${n > 1 ? `-${n}` : ""}/`;
 }

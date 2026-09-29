@@ -75,7 +75,7 @@ export function CertificationExport() {
         <button type="button" onClick={() => setOpen(false)} style={{ background: "none", border: 0, color: "#94a3b8", cursor: "pointer" }}>Close</button>
       </div>
       <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px", lineHeight: 1.5 }}>
-        One folder per booking in TripJack's format: <code>SearchRequest.json</code> / <code>SearchResponse.json</code>, <code>Review…</code>, <code>Booking…</code>,
+        TripJack's layout: <code>oneway/DEL-BOM-1A-DIRECT/</code>, <code>roundtrip/…</code> (route, adults / children / infants, direct or connecting), each with <code>SearchRequest.json</code> / <code>SearchResponse.json</code>, <code>Review…</code>, <code>Booking…</code>,
         <code>BookingDetail…</code> (plus SeatMap etc. when used) and <code>BookingSummary.json</code> (case, passengers, fare type, GST / SSR / seat / passport, PNR,
         and any missing service) — TripJack URL and apikey in each request, responses exactly as received.
       </p>
