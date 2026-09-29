@@ -20,6 +20,7 @@ type SearchResult = {
   credentialAvailability?: Record<string, boolean>;
   supplierErrors?: Record<string, string>;
   apiError?: string;
+  validationError?: string;
   searchId?: string;
 };
 
@@ -91,10 +92,14 @@ async function searchFlights(params: SearchParams, sessionId: string | null): Pr
     let data: SearchResult | { error?: string } | null = null;
     try { data = raw ? JSON.parse(raw) : null; } catch {}
     if (!res.ok) {
+      // 400 = the search itself is invalid (e.g. more infants than adults): show why.
+      const err = data && "error" in data ? (data as { error?: unknown }).error : undefined;
+      const issue = (err as { issues?: { message?: string }[] } | undefined)?.issues?.[0]?.message;
       return {
         fares: [], isIndicative: false,
         searchId: data && "searchId" in data ? (data as SearchResult).searchId : undefined,
-        apiError: (data && "error" in data ? data.error : undefined) ?? `${res.status} ${res.statusText}${raw ? ` — ${raw.slice(0, 180)}` : ""}`,
+        apiError: (typeof err === "string" ? err : issue) ?? `${res.status} ${res.statusText}${raw ? ` — ${raw.slice(0, 180)}` : ""}`,
+        ...(res.status === 400 && issue ? { validationError: issue } : {}),
       };
     }
     return (data as SearchResult) ?? { fares: [], isIndicative: false, apiError: "Search API returned an empty response" };
@@ -202,7 +207,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
             <div className="no-results">
               <img className="no-results-illustration" src="/search/empty-flight.svg" alt="" aria-hidden="true" width="420" height="150" />
               <h2>No flights available right now</h2>
-              <p>{result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
+              <p>{result.validationError ? `${result.validationError}. Please change the passengers and search again.` : result.apiError || failingSuppliers.length > 0 ? "We're having trouble searching flights for this route. Please try again or choose different dates." : "Try different dates or a nearby airport."}</p>
               <div className="no-results-trip-card" aria-label="Searched journey">
                 <div className="no-results-route">
                   <div className="no-results-airport"><strong>{AIRPORT_CITIES[params.origin ?? ""] ?? params.origin ?? "—"} ({params.origin ?? "—"})</strong><span>Origin airport</span></div>
