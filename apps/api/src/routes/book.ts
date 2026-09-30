@@ -48,7 +48,8 @@ const passengerSchema = z.object({
 const directBookSchema = z.object({
   fareId:        z.string().min(1),
   supplier:      z.enum(["TRIPJACK", "RIYA"]),
-  passengers:    z.array(passengerSchema).min(1).max(9),
+  // Up to 9 seats (adults + children); lap infants come on top, one per adult.
+  passengers:    z.array(passengerSchema).min(1).max(18),
   contactEmail:  z.string().email(),
   contactPhone:  z.string().min(7),
   // Fare data for the DB record (sourced from the search result displayed to the user)
@@ -74,6 +75,11 @@ const directBookSchema = z.object({
     phone: z.string().min(7),
     email: z.string().email().optional(),
   }).optional(),
+}).superRefine((b, ctx) => {
+  const n = (t: string) => b.passengers.filter((p) => p.type === t).length;
+  if (n("ADULT") < 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["passengers"], message: "At least one adult is required" });
+  if (n("ADULT") + n("CHILD") > 9) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["passengers"], message: "Adults and children cannot exceed 9" });
+  if (n("INFANT") > n("ADULT")) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["passengers"], message: "Each infant must travel with an adult" });
 });
 
 // Review sessions kept server-side so /api/book can trust TF, conditions and SSR prices.

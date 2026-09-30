@@ -93,3 +93,13 @@ test('TripJack seat map parsing and seat pricing', async () => {
   assert.equal(seatTotal(maps, [{ ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }, { ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }]).invalid.length, 1);
   assert.equal(seatTotal(maps, [{ type: 'INFANT', ssr: { seat: [{ key: 'SEG1', code: '1A' }] } }]).invalid.length, 1);
 });
+
+test('TripJack search price covers every traveller', async () => {
+  const { normalizeTripjackFare } = await import(moduleUrl('../src/tripjack/normalizer.ts'));
+  const r = { id: 'P1', sI: [{ fD: { aI: { code: 'AI' }, fN: '996' }, da: { code: 'DXB' }, aa: { code: 'BKK' } }],
+    totalPriceInfo: { fd: { ADULT: { fC: { BF: 1500, TAF: 304.9, TF: 1804.9 } }, CHILD: { fC: { BF: 1200, TAF: 300, TF: 1500 } }, INFANT: { fC: { BF: 150, TAF: 50, TF: 200 } } } } };
+  const f = normalizeTripjackFare(r, { pax: { adults: 5, children: 3, infants: 2 } });
+  assert.equal(f.totalFare, 5 * 1804.9 + 3 * 1500 + 2 * 200);
+  assert.equal(f.perAdultFare, 1804.9);
+  assert.equal(normalizeTripjackFare(r).totalFare, 1804.9);   // no pax context: unchanged
+});

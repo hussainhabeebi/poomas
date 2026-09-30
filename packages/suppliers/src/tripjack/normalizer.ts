@@ -17,7 +17,25 @@ export function normalizeTripjackSegment(s: Rec): FareSegment {
   };
 }
 
-export function normalizeTripjackFare(r: Rec, context: { tripKey?: string; legIndex?: number } = {}): NormalizedFare {
+export interface PaxCounts { adults: number; children?: number; infants?: number }
+
+// TripJack search prices are per passenger type (fd.ADULT / fd.CHILD / fd.INFANT,
+// each for ONE traveller of that type). The trip price is the sum for everyone.
+function tripTotals(fd: Rec | undefined, pax?: PaxCounts): { BF: number; TAF: number; TF: number } | null {
+  if (!fd || !pax || fd.fC) return null;   // flat fd.fC is already a trip total
+  const lines: [string, number][] = [["ADULT", pax.adults], ["CHILD", pax.children ?? 0], ["INFANT", pax.infants ?? 0]];
+  let BF = 0, TAF = 0, TF = 0;
+  for (const [type, count] of lines) {
+    if (!count) continue;
+    const fC = fd[type]?.fC;
+    if (typeof fC?.TF !== "number") return null;   // a priced pax type is missing: don't guess
+    BF += (fC.BF ?? 0) * count; TAF += (fC.TAF ?? 0) * count; TF += fC.TF * count;
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return { BF: r2(BF), TAF: r2(TAF), TF: r2(TF) };
+}
+
+export function normalizeTripjackFare(r: Rec, context: { tripKey?: string; legIndex?: number; pax?: PaxCounts } = {}): NormalizedFare {
   const sI: Rec[] = Array.isArray(r.sI) ? r.sI : [];
   const fi = sI[0] ?? {};
   // COMBO (international return / multi-city) prices cover every leg; the
@@ -28,6 +46,7 @@ export function normalizeTripjackFare(r: Rec, context: { tripKey?: string; legIn
   // TripJack v2: fd is keyed by pax type (fd.ADULT.fC) or flat (fd.fC)
   const adultFd = totalPriceInfo.fd?.ADULT ?? totalPriceInfo.fd ?? {};
   const fC = totalPriceInfo.fd?.fC ?? adultFd.fC;
+  const totals = tripTotals(totalPriceInfo.fd, context.pax);
   const rT = typeof adultFd.rT === "number" ? adultFd.rT : undefined;
   const fareIdentifier = (r.fareIdentifier as string) ?? "";
   const msri = Array.isArray(r.msri) ? r.msri.map(String) : r.msri ? [String(r.msri)] : undefined;
@@ -48,9 +67,10 @@ export function normalizeTripjackFare(r: Rec, context: { tripKey?: string; legIn
     stops:         Math.max(0, (outbound.length || sI.length) - 1),
     stopDetails:   [],
     cabinClass:    adultFd.cc ?? r.cabinClass ?? "ECONOMY",
-    baseFare:      fC?.BF ?? 0,
-    taxes:         fC?.TAF ?? 0,
-    totalFare:     fC?.TF ?? 0,
+    baseFare:      totals?.BF ?? fC?.BF ?? 0,
+    taxes:         totals?.TAF ?? fC?.TAF ?? 0,
+    totalFare:     totals?.TF ?? fC?.TF ?? 0,
+    ...(typeof fC?.TF === "number" ? { perAdultFare: fC.TF } : {}),
     currency:      "INR",
     isRefundable:  rT !== undefined ? rT !== 0 : fareIdentifier !== "NONREFUNDABLE",
     baggage: {

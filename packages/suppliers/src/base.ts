@@ -51,6 +51,7 @@ export interface NormalizedFare {
   baseFare:      number;
   taxes:         number;
   totalFare:     number;
+  perAdultFare?: number;   // one adult's fare; totalFare covers every traveller searched
   currency:      string;
   isRefundable:  boolean;
   baggage:       BaggageInfo;

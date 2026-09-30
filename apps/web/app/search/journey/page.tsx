@@ -173,7 +173,7 @@ function Journey() {
           <p style={muted}>One fare covers every flight in this journey.</p>
           <div style={{ display: "grid", gap: 10 }}>
             {combo.slice(0, limit.COMBO ?? 20).map((f) => (
-              <FareRow key={f.id} fare={f} selected={comboPick?.id === f.id} onPick={() => { setComboPick(f); setPicked({}); }} showSegments />
+              <FareRow travellers={adults + children + infants} key={f.id} fare={f} selected={comboPick?.id === f.id} onPick={() => { setComboPick(f); setPicked({}); }} showSegments />
             ))}
           </div>
           {combo.length > (limit.COMBO ?? 20) && <button style={moreBtn} onClick={() => setLimit((l) => ({ ...l, COMBO: (l.COMBO ?? 20) + 20 }))}>Show more</button>}
@@ -192,7 +192,7 @@ function Journey() {
             {key === "RETURN" && !picked.ONWARD && <p style={muted}>Choose your departure flight first to see Special Return pairings.</p>}
             <div style={{ display: "grid", gap: 10 }}>
               {opts.slice(0, limit[key] ?? 15).map((f) => (
-                <FareRow key={f.id} fare={f} selected={picked[key]?.id === f.id} onPick={() => { pick(key, f); setComboPick(null); }} />
+                <FareRow travellers={adults + children + infants} key={f.id} fare={f} selected={picked[key]?.id === f.id} onPick={() => { pick(key, f); setComboPick(null); }} />
               ))}
               {!opts.length && <p style={muted}>No matching flights.</p>}
             </div>
@@ -214,7 +214,7 @@ function Journey() {
   );
 }
 
-function FareRow({ fare, selected, onPick, showSegments }: { fare: Fare; selected: boolean; onPick: () => void; showSegments?: boolean }) {
+function FareRow({ fare, selected, onPick, showSegments, travellers = 1 }: { fare: Fare; selected: boolean; onPick: () => void; showSegments?: boolean; travellers?: number }) {
   const segs = fare.segments ?? [];
   const outbound = segs.filter((s) => !s.isReturn);
   const inbound = segs.filter((s) => s.isReturn);
@@ -240,6 +240,7 @@ function FareRow({ fare, selected, onPick, showSegments }: { fare: Fare; selecte
         </div>
         <div style={{ textAlign: "right" }}>
           <b style={{ fontSize: 18, color: "#E31E24" }}>{money(price(fare), fare.currency)}</b>
+          {travellers > 1 && <small style={{ display: "block", color: "#667085", fontSize: 11 }}>total for {travellers} travellers</small>}
         </div>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 }}>

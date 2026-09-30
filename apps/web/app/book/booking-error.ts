@@ -13,7 +13,11 @@ export function bookingError(data: any, status: number): string {
   };
   const base = messages[data?.errorCode]
     ? diagnostics[data?.diagnosticCode] ?? messages[data.errorCode]
-    : status === 400 ? "Please check traveller names, contact details and travel dates."
+    : status === 400
+      // Show the actual reason: our own check (error) or the first validation issue.
+      ? (typeof data?.error === "string" && data.error.trim() ? data.error.trim()
+        : data?.error?.issues?.[0]?.message ? `Please check your details: ${data.error.issues[0].message}.`
+        : "Please check traveller names, contact details and travel dates.")
     : "We couldn't receive a valid booking result. Please contact support before trying again.";
   const supplier = typeof data?.supplierMessage === "string" && data.supplierMessage.trim()
     ? ` Supplier: ${data.supplierMessage.trim()}.`
