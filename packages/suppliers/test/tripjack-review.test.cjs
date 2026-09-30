@@ -103,3 +103,22 @@ test('TripJack search price covers every traveller', async () => {
   assert.equal(f.perAdultFare, 1804.9);
   assert.equal(normalizeTripjackFare(r).totalFare, 1804.9);   // no pax context: unchanged
 });
+
+test('Review total covers every traveller, never one adult', async () => {
+  const { reviewTotalFare } = await import(moduleUrl('../src/tripjack/review.ts'));
+  const perPax = { fd: { ADULT: { fC: { TF: 1800 } }, CHILD: { fC: { TF: 1500 } }, INFANT: { fC: { TF: 200 } } } };
+  // totalFareDetail wins over the per-adult fd
+  assert.equal(reviewTotalFare({ tripInfos: [{ totalPriceInfo: perPax }], totalPriceInfo: { totalFareDetail: { fC: { TF: 15400 } } } }).TF, 15400);
+  // only per-pax fd: summed over the passengers
+  assert.equal(reviewTotalFare({ tripInfos: [{ totalPriceInfo: perPax }] }, { adults: 5, children: 3, infants: 2 }).TF, 5 * 1800 + 3 * 1500 + 2 * 200);
+  // pax counts from the review's own searchQuery
+  assert.equal(reviewTotalFare({ tripInfos: [{ totalPriceInfo: perPax }], searchQuery: { paxInfo: { ADULT: 1, CHILD: 0, INFANT: 0 } } }).TF, 1800);
+  // unknown pax and no total: no guess
+  assert.equal(reviewTotalFare({ tripInfos: [{ totalPriceInfo: perPax }] }).TF, undefined);
+});
+
+test('TripJack error text comes from errors[]', async () => {
+  const { tripjackErrorText } = await import(moduleUrl('../src/tripjack/client.ts'));
+  assert.equal(tripjackErrorText({ errors: [{ errCode: '2023', message: 'Amount mismatch' }], status: { success: false } }), '2023: Amount mismatch');
+  assert.equal(tripjackErrorText({ status: { statusMessage: 'Session expired' } }), 'Session expired');
+});

@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { getBookableAdapter, parseTripjackReview, parseTripjackSeatMap, seatTotal, ssrTotal, TripjackClient, type ReviewSummary, type SegmentSeatMap } from "@poomas/suppliers";
+import { getBookableAdapter, parseTripjackReview, parseTripjackSeatMap, reviewTotalFare, seatTotal, ssrTotal, TripjackClient, type ReviewSummary, type SegmentSeatMap } from "@poomas/suppliers";
 import { normalizeBookingResponse } from "../lib/booking-response.js";
 import { resolveFlightSuppliers } from "./search.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
@@ -273,20 +273,9 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       const rrPrice = rr?.totalPriceInfo;
       const rrfd  = rrPrice?.fd;
       const rrtfd = rrPrice?.totalFareDetail;
-      reviewPaymentAmount = (
-        fd?.fC?.TF ??
-        fd?.ADULT?.fC?.TF ??
-        tfd?.fC?.TF ??
-        tfd?.ADULT?.fC?.TF ??
-        fg0fd?.fC?.TF ??
-        fg0fd?.ADULT?.fC?.TF ??
-        fg0tfd?.fC?.TF ??
-        fg0tfd?.ADULT?.fC?.TF ??
-        rrfd?.fC?.TF ??
-        rrfd?.ADULT?.fC?.TF ??
-        rrtfd?.fC?.TF ??
-        rrtfd?.ADULT?.fC?.TF
-      ) as number | undefined;
+      // The booking total for every traveller (never one adult's per-pax fare).
+      const n = (t: string) => body.passengers.filter((p) => p.type === t).length;
+      reviewPaymentAmount = reviewTotalFare(rr, { adults: n("ADULT"), children: n("CHILD"), infants: n("INFANT") }).TF;
       if (!reviewPaymentAmount) {
         // Log the raw structure so the next request tells us the correct path.
         console.warn("[book-review] TF not found; falling back to displayed fare. rr keys:",
