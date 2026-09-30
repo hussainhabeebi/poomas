@@ -262,7 +262,7 @@ function filterAndSortFares(fares: any[], params: SearchParams): any[] {
   const airlineFilter = (params.airlines ?? "").split(",").filter(Boolean);
   const filtered = fares.filter((fare) => {
     if (params.stops === "0" && Number(fare.stops ?? 0) !== 0) return false;
-    if (params.stops === "1" && Number(fare.stops ?? 0) > 1) return false;
+    if (params.stops === "1" && Number(fare.stops ?? 0) !== 1) return false;
     if (params.refundable === "1" && !fare.isRefundable) return false;
     if (params.baggage === "1" && !fare.baggage?.checked) return false;
     if (airlineFilter.length > 0 && !airlineFilter.includes(fare.airlineName)) return false;
