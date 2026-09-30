@@ -51,17 +51,32 @@ function ssrList(v: unknown): SsrOption[] {
     : [];
 }
 
-// TF sits in different places depending on API version / proxy wrapping.
-export function reviewTotalFare(rr: Rec): { TF?: number; BF?: number; TAF?: number } {
+// Booking total (TF) from a Review response — what paymentInfos.amount must be.
+// totalFareDetail is the total for every traveller. fd is keyed by pax type and
+// priced for ONE traveller of that type, so it is only used summed over the
+// passenger counts, never as the booking total on its own.
+export function reviewTotalFare(rr: Rec, pax?: { adults: number; children?: number; infants?: number }): { TF?: number; BF?: number; TAF?: number } {
   const first = rr?.results?.[0] ?? (Array.isArray(rr?.tripInfos) ? rr.tripInfos[0] : undefined);
-  const candidates = [
-    rr?.totalPriceInfo?.totalFareDetail, rr?.totalPriceInfo?.fd,
-    first?.totalPriceInfo?.totalFareDetail, first?.totalPriceInfo?.fd,
-    first?.fareGroups?.[0]?.totalPriceInfo?.totalFareDetail, first?.fareGroups?.[0]?.totalPriceInfo?.fd,
-  ];
-  for (const c of candidates) {
-    const fC = c?.fC ?? c?.ADULT?.fC;
+  const infos = [rr?.totalPriceInfo, first?.totalPriceInfo, first?.fareGroups?.[0]?.totalPriceInfo];
+  for (const info of infos) {
+    const fC = info?.totalFareDetail?.fC;
     if (typeof fC?.TF === "number") return { TF: fC.TF, BF: fC.BF, TAF: fC.TAF };
+  }
+  for (const info of infos) {
+    const fC = info?.fd?.fC;   // flat (not per pax type): already a total
+    if (typeof fC?.TF === "number") return { TF: fC.TF, BF: fC.BF, TAF: fC.TAF };
+  }
+  const q = rr?.searchQuery?.paxInfo ?? first?.searchQuery?.paxInfo;
+  pax ??= q ? { adults: Number(q.ADULT) || 0, children: Number(q.CHILD) || 0, infants: Number(q.INFANT) || 0 } : undefined;
+  if (pax) {
+    for (const info of infos) {
+      const fd = info?.fd;
+      if (!fd?.ADULT) continue;
+      const lines: [string, number][] = [["ADULT", pax.adults], ["CHILD", pax.children ?? 0], ["INFANT", pax.infants ?? 0]];
+      if (lines.some(([t, n]) => n > 0 && typeof fd[t]?.fC?.TF !== "number")) continue;
+      const sum = (k: "TF" | "BF" | "TAF") => Math.round(lines.reduce((t, [type, n]) => t + (n ? (fd[type].fC[k] ?? 0) * n : 0), 0) * 100) / 100;
+      return { TF: sum("TF"), BF: sum("BF"), TAF: sum("TAF") };
+    }
   }
   return {};
 }

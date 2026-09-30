@@ -23,6 +23,18 @@ export interface SupplierExchange {
 }
 export type ExchangeRecorder = (exchange: SupplierExchange) => void;
 
+// TripJack's own reason for a failed call: errors[].errCode / message
+// (e.g. "2002: Passenger name is invalid"), else status / order messages.
+export function tripjackErrorText(body: unknown): string | undefined {
+  const b = body as any;
+  const root = b?.data ?? b;
+  const errors: any[] = Array.isArray(b?.errors) ? b.errors : Array.isArray(root?.errors) ? root.errors : [];
+  const parts = errors.map((e) => [e?.errCode ?? e?.code, e?.message ?? e?.details ?? e?.errMessage].filter(Boolean).join(": ")).filter(Boolean);
+  if (parts.length) return parts.join(" | ").slice(0, 600);
+  const msg = b?.status?.statusMessage ?? root?.order?.statusMessage ?? b?.message ?? (typeof b?.error === "string" ? b.error : b?.error?.message);
+  return typeof msg === "string" && msg.trim() ? msg.trim().slice(0, 600) : undefined;
+}
+
 export class TripjackClient {
   private recorder?: ExchangeRecorder;
   private baseUrl: string;
@@ -98,7 +110,7 @@ export class TripjackClient {
         if (/expir|no longer available|booking session/i.test(statusMsg)) {
           throw new SupplierError("TRIPJACK", 409, "Booking session expired");
         }
-        const supplierDetail = String((bookDetail as any)?.status?.statusMessage ?? (bookDetail as any)?.data?.order?.statusMessage ?? "").trim() || undefined;
+        const supplierDetail = tripjackErrorText(bookDetail);
         const safeMsg = res.status === 401 || res.status === 403
           ? "Authentication or proxy IP whitelist rejected"
           : res.status === 404 ? "TripJack route is unavailable"
@@ -106,6 +118,8 @@ export class TripjackClient {
           : "Upstream request failed";
         const err = new SupplierError("TRIPJACK", res.status, safeMsg) as any;
         if (supplierDetail) err.supplierDetail = supplierDetail;
+        err.endpoint = path;
+        err.responseSnippet = text.slice(0, 1500);
         throw err;
       } else console.error(`[tripjack] ${path} failed with HTTP ${res.status}`, text.slice(0, 1000));
       const safeMessage = res.status === 401 || res.status === 403
@@ -117,9 +131,12 @@ export class TripjackClient {
             : "Upstream request failed";
       // Keep the upstream detail on the error for Admin supplier logs; the
       // customer-facing message stays generic.
+      let detail: unknown = null;
+      try { detail = JSON.parse(text); } catch {}
       throw Object.assign(new SupplierError("TRIPJACK", res.status, safeMessage), {
         endpoint: path,
-        responseSnippet: text.slice(0, 800),
+        responseSnippet: text.slice(0, 1500),
+        ...(tripjackErrorText(detail) ? { supplierDetail: tripjackErrorText(detail) } : {}),
       });
     }
 
