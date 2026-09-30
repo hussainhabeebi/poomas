@@ -128,6 +128,19 @@ function Journey() {
     return next;
   });
 
+  const legLabel = (key: string, i: number) => (key === "ONWARD" ? "departure" : key === "RETURN" ? "return" : `flight ${i + 1}`);
+  const nextMissing = comboPick ? null : legKeys.find((k) => !picked[k]) ?? null;
+  const goTo = (key: string) => {
+    window.setTimeout(() => document.getElementById(`leg-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+  // After choosing one leg, bring the next leg to be chosen into view.
+  const pickAndAdvance = (key: string, f: Fare) => {
+    pick(key, f);
+    setComboPick(null);
+    const next = legKeys.find((k) => k !== key && !picked[k]);
+    if (next) goTo(next);
+  };
+
   const selection: Fare[] = comboPick ? [comboPick] : legKeys.every((k) => picked[k]) ? legKeys.map((k) => picked[k]) : [];
   const total = selection.reduce((n, f) => n + price(f), 0);
   const currency = selection[0]?.currency ?? fares?.[0]?.currency ?? "INR";
@@ -184,15 +197,15 @@ function Journey() {
         const leg = legs[i];
         const opts = optionsFor(key);
         return (
-          <section key={key} style={{ marginTop: 18 }}>
-            <h2 style={h2}>{key === "ONWARD" ? "Departure" : key === "RETURN" ? "Return" : `Flight ${i + 1}`}{leg ? ` · ${leg.origin} → ${leg.destination} · ${day(leg.departureDate)}` : ""}</h2>
+          <section key={key} id={`leg-${key}`} style={{ marginTop: 18, scrollMarginTop: 80 }}>
+            <h2 style={h2}><span style={stepBadge(Boolean(picked[key]))}>{picked[key] ? "✓" : i + 1}</span>{key === "ONWARD" ? "Departure" : key === "RETURN" ? "Return" : `Flight ${i + 1}`}{leg ? ` · ${leg.origin} → ${leg.destination} · ${day(leg.departureDate)}` : ""}</h2>
             {key === "RETURN" && picked.ONWARD?.fareIdentifier === "SPECIAL_RETURN" && (
               <p style={{ ...muted, color: "#b54708" }}>Special Return fare selected — showing matching Special Return flights only.</p>
             )}
             {key === "RETURN" && !picked.ONWARD && <p style={muted}>Choose your departure flight first to see Special Return pairings.</p>}
             <div style={{ display: "grid", gap: 10 }}>
               {opts.slice(0, limit[key] ?? 15).map((f) => (
-                <FareRow travellers={adults + children + infants} key={f.id} fare={f} selected={picked[key]?.id === f.id} onPick={() => { pick(key, f); setComboPick(null); }} />
+                <FareRow travellers={adults + children + infants} key={f.id} fare={f} selected={picked[key]?.id === f.id} onPick={() => pickAndAdvance(key, f)} />
               ))}
               {!opts.length && <p style={muted}>No matching flights.</p>}
             </div>
@@ -201,13 +214,31 @@ function Journey() {
         );
       })}
 
-      {selection.length > 0 && (
-        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: "#fff", borderTop: "1px solid #e4e7ec", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, zIndex: 40 }}>
-          <div>
-            <div style={{ fontSize: 12, color: "#667085" }}>{selection.length > 1 ? `${selection.length} flights` : "Journey"} · {selection.map((f) => FARE_LABEL[f.fareIdentifier ?? ""] ?? f.fareIdentifier).filter(Boolean).join(" + ")}</div>
-            <b style={{ fontSize: 20 }}>{money(total, currency)}</b>
+      {(selection.length > 0 || Object.keys(picked).length > 0) && (
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: "#fff", borderTop: "1px solid #e4e7ec", boxShadow: "0 -6px 20px rgba(16,24,40,.08)", padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, zIndex: 40 }}>
+          <div style={{ minWidth: 0 }}>
+            {comboPick ? (
+              <div style={{ fontSize: 12, color: "#667085" }}>Journey · {FARE_LABEL[comboPick.fareIdentifier ?? ""] ?? comboPick.fareIdentifier ?? ""}</div>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", fontSize: 12, color: "#667085" }}>
+                {legKeys.map((k, i) => (
+                  <span key={k} style={{ whiteSpace: "nowrap" }}>
+                    {picked[k] ? "✓" : "○"} <span style={{ textTransform: "capitalize" }}>{legLabel(k, i)}</span>
+                    {picked[k] ? `: ${picked[k].airline} ${picked[k].flightNumber}` : ": not chosen"}
+                  </span>
+                ))}
+              </div>
+            )}
+            <b style={{ fontSize: 20 }}>{selection.length ? money(total, currency) : money(legKeys.reduce((n, k) => n + (picked[k] ? price(picked[k]) : 0), 0), currency)}</b>
+            {!selection.length && <span style={{ fontSize: 12, color: "#667085" }}> so far</span>}
           </div>
-          <button onClick={continueToBook} style={{ background: "#E31E24", color: "#fff", border: 0, borderRadius: 12, padding: "12px 22px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>Continue</button>
+          {selection.length ? (
+            <button onClick={continueToBook} style={{ background: "#E31E24", color: "#fff", border: 0, borderRadius: 12, padding: "12px 22px", fontWeight: 800, fontSize: 15, cursor: "pointer", flexShrink: 0 }}>Continue</button>
+          ) : nextMissing ? (
+            <button onClick={() => goTo(nextMissing)} style={{ background: "#101828", color: "#fff", border: 0, borderRadius: 12, padding: "12px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", flexShrink: 0 }}>
+              Choose {legLabel(nextMissing, legKeys.indexOf(nextMissing))} flight ↓
+            </button>
+          ) : null}
         </div>
       )}
     </main>
@@ -255,5 +286,9 @@ function FareRow({ fare, selected, onPick, showSegments, travellers = 1 }: { far
 const h2: React.CSSProperties = { fontSize: 16, fontWeight: 800, margin: "0 0 4px" };
 const muted: React.CSSProperties = { fontSize: 13, color: "#667085", margin: "0 0 8px" };
 const errBox: React.CSSProperties = { marginTop: 14, padding: 12, borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", fontSize: 14 };
+const stepBadge = (done: boolean): React.CSSProperties => ({
+  display: "inline-grid", placeItems: "center", width: 22, height: 22, borderRadius: "50%", marginRight: 8, fontSize: 12, verticalAlign: "2px",
+  background: done ? "#16a34a" : "#E31E24", color: "#fff",
+});
 const moreBtn: React.CSSProperties = { marginTop: 8, background: "none", border: "1px solid #d0d5dd", borderRadius: 8, padding: "8px 14px", cursor: "pointer", fontWeight: 600 };
 const chip = (bg: string): React.CSSProperties => ({ background: bg, borderRadius: 6, padding: "2px 7px", fontWeight: 700, color: "#344054" });
