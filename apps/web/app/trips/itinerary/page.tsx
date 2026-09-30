@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiCall, downloadFile, inr, openETicket, readGuestToken } from "../../lib/customer-api";
+import styles from "./itinerary.module.css";
 
 // Itinerary confirmation: the payment-result page sends the traveller here with a
 // read-only trip token. We wait for the airline booking, then download the
@@ -108,108 +109,109 @@ export default function ItineraryConfirmationPage() {
     : trip.passengers.map((p) => ({ name: `${p.firstName} ${p.lastName}`, type: p.type, ticketNumber: undefined as string | undefined }));
 
   return (
-    <main className="page-container" style={{ padding: "20px 16px 56px", maxWidth: 720 }}>
-      <section style={{ ...card, textAlign: "center" }}>
-        <div style={{ width: 60, height: 60, display: "grid", placeItems: "center", margin: "0 auto 14px", borderRadius: "50%", fontSize: 26, background: confirmed ? "#dcfce7" : failed ? "#fee2e2" : "#fef3c7" }}>
+    <main className={styles.page}>
+      <section className={styles.confirmation} aria-labelledby="confirmation-title">
+        <div className={`${styles.statusIcon} ${confirmed ? styles.confirmed : failed ? styles.failed : styles.pending}`} aria-hidden="true">
           {confirmed ? "✓" : failed ? "×" : "…"}
         </div>
-        <h1 style={{ margin: "0 0 6px", fontSize: 24, fontWeight: 800 }}>
-          {confirmed ? "Your booking is confirmed" : failed ? "Booking could not be completed" : "Confirming your seat with the airline"}
-        </h1>
-        <p style={{ ...muted, margin: 0 }}>
-          {confirmed
-            ? `${trip.origin} → ${trip.destination} · ${travellers.length} traveller${travellers.length > 1 ? "s" : ""}. ${download === "done" ? "Your itinerary has been downloaded." : download === "busy" ? "Downloading your itinerary…" : ""}${trip.contactEmail ? ` The e-ticket is also on its way to ${trip.contactEmail}.` : ""}`
-            : failed
-              ? "The airline couldn't confirm this booking. Your payment is being refunded to your original payment method."
-              : timedOut
-                ? "This is taking longer than usual. You don't need to pay again — we'll email your itinerary as soon as the airline confirms. You can also check My Trips later."
-                : "Payment received. Keep this page open — your itinerary downloads automatically once the airline issues the ticket (usually under a minute)."}
-        </p>
-        {confirmed && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginTop: 16, textAlign: "left" }}>
-            <Info label="Airline PNR" value={pnr ?? "Pending"} mono />
-            <Info label="Booking ID" value={trip.id.slice(0, 8).toUpperCase()} mono />
-            <Info label="Total paid" value={inr(trip.totalAmount, trip.currency)} />
-          </div>
-        )}
+        <div className={styles.confirmationContent}>
+          <h1 id="confirmation-title">{confirmed ? "Booking confirmed" : failed ? "Booking could not be completed" : "Confirming your seat with the airline"}</h1>
+          {confirmed && <p className={styles.journey}>{trip.origin} <span aria-label="to">→</span> {trip.destination}<span className={styles.travellerCount}> · {travellers.length} traveller{travellers.length > 1 ? "s" : ""}</span></p>}
+          <p className={styles.message}>
+            {confirmed
+              ? `${download === "done" ? "Your itinerary has been downloaded." : download === "busy" ? "Downloading your itinerary…" : "Your booking details are below."}${trip.contactEmail ? ` The e-ticket is also on its way to ${trip.contactEmail}.` : ""}`
+              : failed
+                ? "The airline couldn't confirm this booking. Your payment is being refunded to your original payment method."
+                : timedOut
+                  ? "This is taking longer than usual. You don't need to pay again — we'll email your itinerary as soon as the airline confirms. You can also check My Trips later."
+                  : "Payment received. Keep this page open — your itinerary downloads automatically once the airline issues the ticket (usually under a minute)."}
+          </p>
+        </div>
+        {confirmed && <div className={styles.summary}>
+          <Info label="Airline PNR" value={pnr ?? "Pending"} mono />
+          <Info label="Booking ID" value={trip.id.slice(0, 8).toUpperCase()} mono />
+          <Info label="Total paid" value={inr(trip.totalAmount, trip.currency)} />
+        </div>}
       </section>
 
-      {confirmed && (
-        <section style={{ ...card, marginTop: 12 }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button disabled={download === "busy" || !segs.length} onClick={saveItinerary} style={{ ...primaryBtn, opacity: download === "busy" || !segs.length ? .6 : 1 }}>
-              {download === "busy" ? "Downloading…" : download === "done" ? "Download itinerary again" : "Download itinerary"}
-            </button>
-            <button onClick={() => { setDownloadError(""); downloadFile("/api/trips/eticket", "guest", fileName.replace(/^itinerary-/, "e-ticket-")).catch((e) => setDownloadError(e.message)); }} style={secondaryBtn}>Download e-ticket</button>
-            <button onClick={() => { setDownloadError(""); openETicket("/api/trips/eticket", "guest").catch((e) => setDownloadError(e.message)); }} style={secondaryBtn}>View / print e-ticket</button>
-            <a href="/trips/guest" style={secondaryBtn}>Manage booking</a>
-          </div>
-          {downloadError && <div style={errBox}>{downloadError}</div>}
-        </section>
-      )}
+      {confirmed && <section className={styles.actionsPanel} aria-label="Booking documents and actions">
+        <div className={styles.actions}>
+          <button onClick={() => { setDownloadError(""); downloadFile("/api/trips/eticket", "guest", fileName.replace(/^itinerary-/, "e-ticket-")).catch((e) => setDownloadError(e.message)); }} className={styles.primaryAction}>Download e-ticket</button>
+          <button onClick={() => { setDownloadError(""); openETicket("/api/trips/eticket", "guest").catch((e) => setDownloadError(e.message)); }} className={styles.secondaryAction}>View / print e-ticket</button>
+          <button disabled={download === "busy" || !segs.length} onClick={saveItinerary} className={styles.secondaryAction}>
+            {download === "busy" ? "Downloading…" : "Download itinerary"}
+          </button>
+          <a href="/trips/guest" className={styles.manageAction}>Manage booking <span aria-hidden="true">→</span></a>
+        </div>
+        {downloadError && <div style={errBox}>{downloadError}</div>}
+      </section>}
 
-      {(confirmed || segs.length > 0) && (
-        <section style={{ ...card, marginTop: 12 }}>
-          <h2 style={h2}>Flight itinerary</h2>
-          {segs.length === 0 ? (
-            <p style={muted}>Fetching flight details from the airline…</p>
-          ) : segs.map((s, i) => {
-            const dep = split(s.departure), arr = split(s.arrival);
-            return (
-              <div key={i} style={{ padding: "12px 0", borderTop: i ? "1px dashed #e2e8f0" : "none" }}>
-                <div style={{ fontSize: 13, color: "#64748b", marginBottom: 6 }}><strong style={{ color: "#0f172a" }}>{s.airlineName || s.airline}</strong> · {s.flightNumber}{s.durationMin ? ` · ${Math.floor(s.durationMin / 60)}h ${s.durationMin % 60}m` : ""}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 22, fontWeight: 800 }}>{dep.time}</div>
-                    <div style={{ fontWeight: 700 }}>{s.from.code}{s.from.city ? ` · ${s.from.city}` : ""}</div>
-                    <small style={{ color: "#64748b" }}>{dep.date}{s.from.terminal ? ` · ${s.from.terminal}` : ""}</small>
-                  </div>
-                  <span style={{ color: "#E31E24" }}>✈</span>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 22, fontWeight: 800 }}>{arr.time}</div>
-                    <div style={{ fontWeight: 700 }}>{s.to.code}{s.to.city ? ` · ${s.to.city}` : ""}</div>
-                    <small style={{ color: "#64748b" }}>{arr.date}{s.to.terminal ? ` · ${s.to.terminal}` : ""}</small>
-                  </div>
-                </div>
-                {(s.cabinBaggage || s.checkedBaggage) && <small style={{ display: "block", color: "#64748b", marginTop: 6 }}>Baggage: {[s.cabinBaggage && `cabin ${s.cabinBaggage}`, s.checkedBaggage && `check-in ${s.checkedBaggage}`].filter(Boolean).join(" · ")}</small>}
-              </div>
-            );
-          })}
-        </section>
-      )}
-
-      {confirmed && (
-        <section style={{ ...card, marginTop: 12 }}>
-          <h2 style={h2}>Travellers</h2>
-          {travellers.map((t, i) => (
-            <div key={i} style={row}>
-              <span>{t.name}{t.type ? <small style={{ color: "#64748b" }}> · {t.type.toLowerCase()}</small> : null}</span>
-              <small style={{ color: "#475569", fontFamily: "monospace" }}>{t.ticketNumber ? `Ticket ${t.ticketNumber}` : ""}</small>
+      {(confirmed || segs.length > 0) && <section className={styles.card} aria-labelledby="itinerary-title">
+        <h2 id="itinerary-title" className={styles.sectionTitle}>Flight itinerary</h2>
+        {segs.length === 0 ? <p style={muted}>Fetching flight details from the airline…</p> : segs.map((s, i) => {
+          const dep = split(s.departure), arr = split(s.arrival);
+          return <div key={i} className={styles.segment}>
+            <div className={styles.segmentHeading}>
+              <strong>{s.airlineName || s.airline}</strong>
+              {segs.length > 1 && <span>Flight {i + 1} of {segs.length}</span>}
             </div>
-          ))}
-        </section>
-      )}
+            <div className={styles.route}>
+              <div className={styles.airport}>
+                <strong className={styles.airportCode}>{s.from.code}</strong>
+                {s.from.city && <span className={styles.city}>{s.from.city}</span>}
+                {dep.time && <strong className={styles.time}>{dep.time}</strong>}
+                {s.from.terminal && <span className={styles.detail}>{s.from.terminal}</span>}
+                {dep.date && <span className={styles.detail}>{dep.date}</span>}
+              </div>
+              <div className={styles.routeConnector}>
+                {s.flightNumber && <span className={styles.flightNumber}>{s.flightNumber}</span>}
+                <div className={styles.routeLine}><span /><PlaneIcon /><span /></div>
+                {s.durationMin ? <span className={styles.duration}>{Math.floor(s.durationMin / 60)}h {s.durationMin % 60}m</span> : null}
+              </div>
+              <div className={`${styles.airport} ${styles.arrival}`}>
+                <strong className={styles.airportCode}>{s.to.code}</strong>
+                {s.to.city && <span className={styles.city}>{s.to.city}</span>}
+                {arr.time && <strong className={styles.time}>{arr.time}</strong>}
+                {s.to.terminal && <span className={styles.detail}>{s.to.terminal}</span>}
+                {arr.date && <span className={styles.detail}>{arr.date}</span>}
+              </div>
+            </div>
+            {(s.cabinBaggage || s.checkedBaggage) && <small className={styles.baggage}>Baggage: {[s.cabinBaggage && `cabin ${s.cabinBaggage}`, s.checkedBaggage && `check-in ${s.checkedBaggage}`].filter(Boolean).join(" · ")}</small>}
+          </div>;
+        })}
+      </section>}
 
-      <div style={{ textAlign: "center", marginTop: 16 }}>
-        <a href="/" style={{ color: "#64748b", fontSize: 14 }}>Back to home</a>
-      </div>
+      {confirmed && <section className={styles.card} aria-labelledby="travellers-title">
+        <h2 id="travellers-title" className={styles.sectionTitle}>Travellers</h2>
+        <div className={styles.travellerTable}>
+          <div className={styles.tableHeading} aria-hidden="true"><span>Passenger</span><span>Type</span><span>Ticket number</span></div>
+          {travellers.map((t, i) => <div key={i} className={styles.travellerRow}>
+            <strong className={styles.passengerName}>{t.name}</strong>
+            <span className={styles.passengerType}>{t.type ? t.type.toLowerCase() : ""}</span>
+            <span className={styles.ticketNumber}>{t.ticketNumber && <><span className={styles.mobileTicketLabel}>Ticket </span>{t.ticketNumber}</>}</span>
+          </div>)}
+        </div>
+      </section>}
+
+      <div className={styles.footer}><a href="/">Back to home</a></div>
     </main>
   );
 }
 
+function PlaneIcon() {
+  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m3 11 6 1 7-8 2 1-4 8 6 2v2l-7-1-3 5-2-1 1-5-6-2z" fill="currentColor" /></svg>;
+}
+
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div style={{ background: "#f8fafc", borderRadius: 10, padding: "8px 10px" }}>
-      <small style={{ color: "#64748b", display: "block" }}>{label}</small>
-      <strong style={{ fontFamily: mono ? "monospace" : "inherit", fontSize: 15 }}>{value}</strong>
+    <div className={styles.summaryItem}>
+      <small>{label}</small>
+      <strong className={mono ? styles.mono : undefined}>{value}</strong>
     </div>
   );
 }
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 };
-const h2: React.CSSProperties = { margin: "0 0 10px", fontSize: 16, fontWeight: 800 };
 const muted: React.CSSProperties = { margin: "0 0 12px", color: "#64748b", fontSize: 14, lineHeight: 1.55 };
-const row: React.CSSProperties = { display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 0", borderTop: "1px solid #f1f5f9", fontSize: 14 };
 const primaryBtn: React.CSSProperties = { display: "inline-block", background: "#E31E24", color: "#fff", borderRadius: 10, padding: "10px 14px", fontWeight: 800, fontSize: 14, textDecoration: "none", border: 0, cursor: "pointer", fontFamily: "inherit" };
-const secondaryBtn: React.CSSProperties = { ...primaryBtn, background: "#fff", color: "#0f172a", border: "1.5px solid #e2e8f0" };
 const errBox: React.CSSProperties = { background: "#FEE2E2", color: "#991B1B", padding: "10px 14px", borderRadius: 10, fontSize: 14, marginTop: 12 };
