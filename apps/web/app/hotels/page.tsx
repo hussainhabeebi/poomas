@@ -35,6 +35,16 @@ const CITIES = [
 ];
 
 type City = typeof CITIES[number];
+
+// Common guest nationalities (ISO 3166-1 alpha-2) — TripJack takes the ISO code.
+const NATIONALITIES: [string, string][] = [
+  ["IN", "India"], ["AE", "United Arab Emirates"], ["SA", "Saudi Arabia"], ["QA", "Qatar"], ["OM", "Oman"], ["KW", "Kuwait"],
+  ["BH", "Bahrain"], ["PK", "Pakistan"], ["BD", "Bangladesh"], ["LK", "Sri Lanka"], ["NP", "Nepal"], ["PH", "Philippines"],
+  ["EG", "Egypt"], ["JO", "Jordan"], ["LB", "Lebanon"], ["GB", "United Kingdom"], ["US", "United States"], ["CA", "Canada"],
+  ["AU", "Australia"], ["DE", "Germany"], ["FR", "France"], ["IT", "Italy"], ["ES", "Spain"], ["NL", "Netherlands"],
+  ["RU", "Russia"], ["CN", "China"], ["JP", "Japan"], ["KR", "South Korea"], ["SG", "Singapore"], ["MY", "Malaysia"],
+  ["ID", "Indonesia"], ["TH", "Thailand"], ["NG", "Nigeria"], ["KE", "Kenya"], ["ZA", "South Africa"], ["TR", "Turkey"], ["IR", "Iran"],
+];
 type CurrencyCode = "INR" | "AED" | "USD";
 const CURRENCIES = [
   { code: "INR" as CurrencyCode, symbol: "₹" },
@@ -121,6 +131,9 @@ export default function HotelsPage() {
   const [rooms,    setRooms]    = useState(1);
   const [adults,   setAdults]   = useState(1);
   const [currency, setCurrency] = useState<CurrencyCode>("INR");
+  // Guests' nationality: TripJack prices hotels by it and asks Indian guests
+  // for a PAN at hotels abroad (foreign guests don't need one).
+  const [nationality, setNationality] = useState("IN");
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -151,6 +164,7 @@ export default function HotelsPage() {
       rooms:    String(rooms),
       adults:   String(adults),
       currency,
+      nationality,
     });
     const url = `/hotels/search?${params}`;
     setSearching(true);
@@ -240,6 +254,13 @@ export default function HotelsPage() {
             </div>
           )}
 
+          <label className="hw-nat">
+            <span>Guests&apos; nationality</span>
+            <select value={nationality} onChange={(e) => setNationality(e.target.value)} aria-label="Guests' nationality">
+              {NATIONALITIES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+            </select>
+          </label>
+
           <div className="hw-perks">
             <span>✓ Destination and date search</span>
             <span>✓ Room details in results</span>
@@ -320,6 +341,8 @@ const css = `
 }
 .hw-cur:hover { border-color: #e31e24; color: #c91924; }
 .hw-cur-active, .hw-cur-active:hover { background: #e31e24; border-color: #e31e24; color: white; }
+.hw-nat { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: #53647a; font-weight: 650; }
+.hw-nat select { border: 1px solid #d0d5dd; border-radius: 8px; padding: 6px 8px; font-size: 13px; background: #fff; color: #1e293b; max-width: 220px; }
 .hw-occupancy { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; min-width: 0; }
 .hw-select-label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 10px; color: #53647a; font-weight: 750; text-transform: uppercase; letter-spacing: .045em; }
 .hw-select {

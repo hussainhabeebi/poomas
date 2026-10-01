@@ -119,8 +119,10 @@ export default function HotelBookPage() {
   // PAN becomes required when the room says so, or when TripJack asks for it at booking (error 1092).
   const [panNeeded,      setPanNeeded]      = useState(false);
   // Overseas hotels booked from India need the lead guest's PAN (TCS on foreign travel), so ask up front.
+  // Only Indian guests need a PAN (foreign nationals don't have one).
+  const indianGuests = (hotel?.nationality ?? "IN").toUpperCase() === "IN";
   const overseas = Boolean(hotel?.countryCode && hotel.countryCode !== "IN");
-  const panRequiredNow = panNeeded || overseas || Boolean(review?.option.compliance.panRequired);
+  const panRequiredNow = indianGuests && (panNeeded || overseas || Boolean(review?.option.compliance.panRequired));
 
   const [contactName,  setContactName]  = useState("");
   const [email,        setEmail]        = useState("");
@@ -310,7 +312,7 @@ export default function HotelBookPage() {
               lastName:  g.lastName.trim(),
               type:      "ADULT",
               ...(PAN_RE.test(g.pan.trim().toUpperCase()) ? { pan: g.pan.trim().toUpperCase() } : {}),
-              ...(review.option.compliance.passportRequired && g.passport.trim() ? { passport: g.passport.trim() } : {}),
+              ...(g.passport.trim().length >= 5 ? { passport: g.passport.trim() } : {}),
             })),
           })),
         }),
@@ -531,14 +533,16 @@ export default function HotelBookPage() {
                 </label>
                 <Input l="First name" v={g.firstName} c={(v) => updGuest(ri, i, "firstName", v)} r />
                 <Input l="Last name"  v={g.lastName}  c={(v) => updGuest(ri, i, "lastName",  v)} r />
-                {(review?.option.compliance.panRequired || (ri === 0 && i === 0)) && (
+                {indianGuests && (review?.option.compliance.panRequired || (ri === 0 && i === 0)) && (
                   <Input
                     l={panRequiredNow && ri === 0 && i === 0 ? (overseas ? "PAN (required for hotels outside India)" : "PAN (required by the hotel)") : "PAN (optional)"}
                     v={g.pan} c={(v) => updGuest(ri, i, "pan", v.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
                     r={panRequiredNow && ri === 0 && i === 0} ph="ABCDE1234F" max={10} />
                 )}
-                {review?.option.compliance.passportRequired && (
-                  <Input l="Passport number" v={g.passport} c={(v) => updGuest(ri, i, "passport", v)} r />
+                {(review?.option.compliance.passportRequired || (ri === 0 && i === 0)) && (
+                  <Input l={review?.option.compliance.passportRequired ? "Passport number" : "Passport number (optional)"}
+                    v={g.passport} c={(v) => updGuest(ri, i, "passport", v.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                    r={Boolean(review?.option.compliance.passportRequired)} max={15} />
                 )}
               </div>
             </div>

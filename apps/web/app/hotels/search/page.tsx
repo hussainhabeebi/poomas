@@ -4,7 +4,7 @@ type SearchParams = {
   city?: string; cityName?: string;
   checkIn?: string; checkOut?: string;
   rooms?: string; adults?: string;
-  currency?: string;
+  currency?: string; nationality?: string;
 };
 
 type NormalizedHotel = {
@@ -42,7 +42,7 @@ async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
         checkIn:     params.checkIn ?? "",
         checkOut:    params.checkOut ?? "",
         rooms:       Array.from({ length: rooms }, () => ({ adults, children: 0 })),
-        nationality: "IN",
+        nationality: /^[A-Z]{2}$/.test(params.nationality ?? "") ? params.nationality : "IN",
         currency:    params.currency ?? "INR",
       }),
       cache: "no-store",
@@ -65,12 +65,12 @@ function formatMoney(amount: number, currency: string): string {
   }
 }
 
-function buildBookUrl(hotel: NormalizedHotel, rooms: number, adults: number, expiresAt?: string): string {
+function buildBookUrl(hotel: NormalizedHotel, rooms: number, adults: number, expiresAt?: string, nationality = "IN"): string {
   const p = new URLSearchParams({
     hid:       hotel.hid ?? hotel.hotelCode,
     sid:       hotel.correlationId ?? "",
     adults:    String(adults),
-    nat:       "IN",
+    nat:       nationality,
     exp:       expiresAt ?? "",
     optionId:  hotel.id,
     name:      hotel.name,
@@ -107,6 +107,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
   const hotels  = result.hotels ?? [];
   const rooms   = parseInt(params.rooms ?? "1");
   const adults  = parseInt(params.adults ?? "1");
+  const nationality = /^[A-Z]{2}$/.test(params.nationality ?? "") ? params.nationality! : "IN";
   const nights  = hotels[0]?.nights ?? (
     params.checkIn && params.checkOut
       ? Math.max(1, Math.round((new Date(params.checkOut).getTime() - new Date(params.checkIn).getTime()) / 86400000))
@@ -155,7 +156,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
             {hotels.length} hotel{hotels.length !== 1 ? "s" : ""} found
           </p>
           {hotels.map((hotel, i) => (
-            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} adults={adults} expiresAt={result.expiresAt} />
+            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} adults={adults} expiresAt={result.expiresAt} nationality={nationality} />
           ))}
         </div>
       )}
@@ -163,7 +164,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
   );
 }
 
-function HotelCard({ hotel, rooms, adults, expiresAt }: { hotel: NormalizedHotel; rooms: number; adults: number; expiresAt?: string }) {
+function HotelCard({ hotel, rooms, adults, expiresAt, nationality = "IN" }: { hotel: NormalizedHotel; rooms: number; adults: number; expiresAt?: string; nationality?: string }) {
   const price = hotel.totalFare;
   const bookable = Boolean(hotel.id);
 
@@ -222,7 +223,7 @@ function HotelCard({ hotel, rooms, adults, expiresAt }: { hotel: NormalizedHotel
 
       {bookable ? (
         <Link
-          href={buildBookUrl(hotel, rooms, adults, expiresAt)}
+          href={buildBookUrl(hotel, rooms, adults, expiresAt, nationality)}
           className="fare-card-book-btn"
           style={{ textDecoration: "none", textAlign: "center" }}
         >
