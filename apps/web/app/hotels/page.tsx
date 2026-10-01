@@ -124,9 +124,25 @@ export default function HotelsPage() {
 
   const today = new Date().toISOString().split("T")[0];
 
+  // Search button animation while the results page loads live hotel rates.
+  const SEARCH_STAGES = ["Checking live hotel rates", "Comparing rooms", "Finding your best stays"];
+  const [searching, setSearching] = useState(false);
+  const [searchStage, setSearchStage] = useState(0);
+  useEffect(() => {
+    if (!searching) { setSearchStage(0); return; }
+    const timer = window.setInterval(() => setSearchStage((s) => Math.min(s + 1, SEARCH_STAGES.length - 1)), 1600);
+    return () => window.clearInterval(timer);
+  }, [searching]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Coming back with the browser's Back button must not leave the button spinning.
+  useEffect(() => {
+    const reset = () => setSearching(false);
+    window.addEventListener("pageshow", reset);
+    return () => window.removeEventListener("pageshow", reset);
+  }, []);
+
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!city) return;
+    if (!city || searching) return;
     const params = new URLSearchParams({
       city:     city.code,
       cityName: city.city,
@@ -136,7 +152,11 @@ export default function HotelsPage() {
       adults:   String(adults),
       currency,
     });
-    router.push(`/hotels/search?${params}`);
+    const url = `/hotels/search?${params}`;
+    setSearching(true);
+    router.prefetch(url);
+    // Give mobile Safari one frame to paint the loading state before navigating.
+    window.requestAnimationFrame(() => router.push(url));
   }
 
   function chooseHub(hub: City) {
@@ -176,7 +196,7 @@ export default function HotelsPage() {
             </div>
           </div>
 
-          <form onSubmit={handleSearch}>
+          <form onSubmit={handleSearch} aria-busy={searching}>
             <div className="hw-grid">
               <CityInput label="Destination" value={city} onChange={setCity} />
               <div className="hw-dates">
@@ -205,11 +225,20 @@ export default function HotelsPage() {
                 </select>
               </label>
               </div>
-              <button type="submit" className="hw-search-btn">
-                Search Hotels <span aria-hidden="true">→</span>
+              <button type="submit" className={searching ? "hw-search-btn search-btn-loading" : "hw-search-btn"} disabled={searching}>
+                {searching
+                  ? <><i className="search-spinner" aria-hidden="true" /> {SEARCH_STAGES[searchStage]}</>
+                  : <>Search Hotels <span aria-hidden="true">→</span></>}
               </button>
             </div>
           </form>
+
+          {searching && (
+            <div className="search-progress" role="status" aria-live="polite">
+              <div className="search-progress-track"><span className="search-plane" aria-hidden="true">🏨</span><i /></div>
+              <div><strong>{SEARCH_STAGES[searchStage]}</strong><small>Live hotel rates can take a few seconds. Please don’t close this page.</small></div>
+            </div>
+          )}
 
           <div className="hw-perks">
             <span>✓ Destination and date search</span>
@@ -326,6 +355,12 @@ const css = `
   width: 100%; min-height: 47px; font-family: inherit; white-space: nowrap;
 }
 .hw-search-btn:hover { background: #c91924; }
+.hw-search-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: transform .12s ease, box-shadow .2s ease, background .2s ease; }
+.hw-search-btn:hover:not(:disabled) { box-shadow: 0 8px 20px rgba(227,30,36,.28); transform: translateY(-1px); }
+.hw-search-btn:active:not(:disabled) { transform: scale(.97); }
+.hw-search-btn:disabled { cursor: progress; }
+.hw-search-btn .search-spinner { display: inline-block; flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) { .hw-search-btn { transition: none; } .hw-search-btn:hover:not(:disabled), .hw-search-btn:active:not(:disabled) { transform: none; } }
 .hw-search-btn span { margin-left: 4px; }
 .hw-perks { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 11px; color: #6a7a90; font-weight: 600; }
 .hw-hubs { margin-top: 42px; }
