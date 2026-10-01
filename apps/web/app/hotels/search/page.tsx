@@ -1,4 +1,5 @@
 import Link from "next/link";
+import styles from "./results.module.css";
 
 type SearchParams = {
   city?: string; cityName?: string;
@@ -115,25 +116,23 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
   );
 
   return (
-    <main className="page-container" style={{ paddingTop: 16 }}>
-      <div style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: "clamp(18px,4vw,24px)", fontWeight: 800, margin: "0 0 4px" }}>
-          Hotels in {params.cityName ?? params.city}
-        </h1>
-        <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
-          {params.checkIn} → {params.checkOut} · {nights} night{nights !== 1 ? "s" : ""} ·{" "}
-          {rooms} room{rooms !== 1 ? "s" : ""} · {params.adults ?? 1} adult{Number(params.adults) > 1 ? "s" : ""}/room
-        </p>
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <a href="/hotels" style={{ fontSize: 13, color: "#E31E24", textDecoration: "none", fontWeight: 600 }}>
-          ‹ New search
-        </a>
-      </div>
+    <main className={styles.page}>
+      <header className={styles.summary}>
+        <div>
+          <p className={styles.eyebrow}>YOUR HOTEL SEARCH</p>
+          <h1>Hotels in {params.cityName ?? params.city}</h1>
+          <p className={styles.context}>
+            <span>{params.checkIn} → {params.checkOut}</span>
+            <span>{nights} night{nights !== 1 ? "s" : ""}</span>
+            <span>{rooms} room{rooms !== 1 ? "s" : ""}</span>
+            <span>{adults * rooms} adult{adults * rooms !== 1 ? "s" : ""} · {adults}/room</span>
+          </p>
+        </div>
+        <a href="/hotels" className={styles.newSearch}>‹ New search</a>
+      </header>
 
       {hotels.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "70px 0", color: "#6b7280" }}>
+        <div className={styles.empty}>
           <div style={{ fontSize: 44, marginBottom: 14 }}>🏨</div>
           <p style={{ fontSize: 20, fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>
             {result.error ? "Hotel search unavailable" : "No hotels found"}
@@ -151,7 +150,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
           </a>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className={styles.results}>
           <p style={{ margin: 0, fontSize: 13, color: "#475569", fontWeight: 700 }}>
             {hotels.length} hotel{hotels.length !== 1 ? "s" : ""} found
           </p>
@@ -169,71 +168,37 @@ function HotelCard({ hotel, rooms, adults, expiresAt, nationality = "IN" }: { ho
   const bookable = Boolean(hotel.id);
 
   return (
-    <div style={{
-      border: "1.5px solid #e5e7eb", borderRadius: 10, padding: 16, background: "white",
-      display: "flex", flexDirection: "column", gap: 10,
-    }}>
-      {hotel.images?.[0] && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={hotel.images[0]} alt={hotel.name} loading="lazy"
-          style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8 }} />
-      )}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 3 }}>{hotel.name || "—"}</div>
-          <Stars n={hotel.starRating} />
-          {hotel.address && (
-            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 3 }}>{hotel.address}</div>
-          )}
-        </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          {hotel.strikethrough && hotel.strikethrough > price && (
-            <div style={{ fontSize: 12, color: "#9ca3af", textDecoration: "line-through" }}>{formatMoney(hotel.strikethrough, hotel.currency)}</div>
-          )}
-          <div style={{ fontWeight: 800, fontSize: 20, color: "#E31E24" }}>
-            {formatMoney(price, hotel.currency)}
-          </div>
-          <div style={{ fontSize: 11, color: "#9ca3af" }}>
-            {hotel.nights} night{hotel.nights !== 1 ? "s" : ""}, {rooms} room{rooms !== 1 ? "s" : ""}
-          </div>
-        </div>
+    <article className={styles.card}>
+      <div className={styles.imageArea}>
+        {hotel.images?.[0] ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={hotel.images[0]} alt={hotel.name} loading="lazy" className={styles.image} />
+        ) : <div className={styles.noImage}><span aria-hidden="true">▥</span>Hotel image unavailable</div>}
       </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
-        {hotel.roomType && (
-          <span style={{ background: "#f1f5f9", color: "#374151", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>
-            {hotel.roomType}
-          </span>
-        )}
-        {hotel.mealPlan && hotel.mealPlan !== "EP" && hotel.mealPlan !== "Room Only" && (
-          <span style={{ background: "#f0fdf4", color: "#166534", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>
-            {hotel.mealPlan === "CP" ? "Breakfast included" : hotel.mealPlan === "MAP" ? "Half board" : hotel.mealPlan === "AP" ? "Full board" : hotel.mealPlan}
-          </span>
-        )}
-        <span style={{ color: hotel.isRefundable ? "#059669" : "#9ca3af", fontWeight: 600 }}>
-          {hotel.isRefundable ? "✓ Free cancellation" : "Non-refundable"}
-        </span>
+      <div className={styles.info}>
+        <h2>{hotel.name || "—"}</h2>
+        {hotel.starRating > 0 && <span aria-label={`${hotel.starRating} star rating`}><Stars n={hotel.starRating} /></span>}
+        {hotel.address && <p className={styles.address}>{hotel.address}</p>}
+        <div className={styles.rate}>
+          {hotel.roomType && <p className={styles.room}>{hotel.roomType}</p>}
+          {hotel.mealPlan && hotel.mealPlan !== "EP" && hotel.mealPlan !== "Room Only" && (
+            <p className={styles.meal}>{hotel.mealPlan === "CP" ? "Breakfast included" : hotel.mealPlan === "MAP" ? "Half board" : hotel.mealPlan === "AP" ? "Full board" : hotel.mealPlan}</p>
+          )}
+          <span className={`${styles.badge} ${hotel.isRefundable ? styles.refundable : styles.nonRefundable}`}>{hotel.isRefundable ? "Refundable" : "Non-refundable"}</span>
+        </div>
+        {hotel.amenities.length > 0 && <p className={styles.amenities}>{hotel.amenities.slice(0, 5).join(" · ")}</p>}
       </div>
-
-      {hotel.amenities.length > 0 && (
-        <div style={{ fontSize: 11, color: "#6b7280" }}>
-          {hotel.amenities.slice(0, 5).join(" · ")}
+      <div className={styles.priceArea}>
+        <div>
+          <p className={styles.totalLabel}>Total stay</p>
+          {hotel.strikethrough && hotel.strikethrough > price && <div className={styles.previousPrice}>{formatMoney(hotel.strikethrough, hotel.currency)}</div>}
+          <p className={styles.price}>{formatMoney(price, hotel.currency)}</p>
+          <p className={styles.stay}>{hotel.nights} night{hotel.nights !== 1 ? "s" : ""} · {rooms} room{rooms !== 1 ? "s" : ""}</p>
         </div>
-      )}
-
-      {bookable ? (
-        <Link
-          href={buildBookUrl(hotel, rooms, adults, expiresAt, nationality)}
-          className="fare-card-book-btn"
-          style={{ textDecoration: "none", textAlign: "center" }}
-        >
-          Book Now
-        </Link>
-      ) : (
-        <div style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", padding: "8px 0" }}>
-          Indicative price · Not directly bookable
-        </div>
-      )}
-    </div>
+        {bookable ? (
+          <Link href={buildBookUrl(hotel, rooms, adults, expiresAt, nationality)} className={styles.book}>Book Now <span aria-hidden="true">→</span></Link>
+        ) : <p className={styles.unavailable}>Indicative price · Not directly bookable</p>}
+      </div>
+    </article>
   );
 }
