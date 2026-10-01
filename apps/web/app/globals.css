@@ -2503,3 +2503,20 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
   .sw-grid-multicity .sw-extras-bar { margin-top: 6px; }
   .home-phase1 .search-widget .sw-grid-multicity > .search-btn { width: 100%; }
 }
+
+/* ── Plain-language trip search (✨ box above the flight form) ─────────── */
+.ai-search { margin-bottom: 16px; padding: 12px; border-radius: 14px; background: linear-gradient(135deg,#fff7ed,#fef2f2); border: 1px solid #fed7aa; }
+.ai-search-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ai-search-icon { font-size: 18px; flex-shrink: 0; }
+.ai-search-input { flex: 1; min-width: 0; height: 44px; border: 1px solid #fdba74; border-radius: 10px; padding: 0 12px; font-size: 15px; background: #fff; color: #0f172a; }
+.ai-search-input:focus { outline: none; border-color: #e31e24; box-shadow: 0 0 0 3px rgba(227,30,36,.12); }
+.ai-search-btn { flex-shrink: 0; height: 44px; border: 0; border-radius: 10px; padding: 0 16px; background: #0f172a; color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.ai-search-btn:disabled { opacity: .55; cursor: default; }
+.ai-search-hint { margin: 6px 2px 0; font-size: 12px; color: #9a3412; }
+.ai-search-error { margin: 8px 2px 0; font-size: 13px; color: #b91c1c; }
+.ai-search-result { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: #fff; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px; }
+.ai-search-result b { display: block; font-size: 14px; color: #0f172a; }
+.ai-search-result small { display: block; margin-top: 2px; font-size: 12px; color: #b45309; }
+.ai-search-ready { border-color: #86efac; }
+.ai-search-go { border: 0; border-radius: 10px; padding: 10px 16px; background: #e31e24; color: #fff; font-weight: 800; cursor: pointer; }
+@media (max-width: 560px) { .ai-search-row { flex-wrap: wrap; } .ai-search-input { flex-basis: calc(100% - 30px); } .ai-search-btn { width: 100%; justify-content: center; } }
