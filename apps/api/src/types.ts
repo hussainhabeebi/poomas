@@ -1,4 +1,4 @@
-import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace, Ai } from "@cloudflare/workers-types";
 import type { Db } from "@poomas/db";
 
 export interface Env {
@@ -13,6 +13,7 @@ export interface Env {
   NOTIFY_QUEUE:     Queue;
   HYPERDRIVE:       Hyperdrive;
   TENANT_RATE_LIMITER: DurableObjectNamespace;
+  AI?:             Ai;   // Workers AI (voice search speech-to-text)
   DATABASE_URL:           string;
   JWT_SECRET:             string;
   GOOGLE_CLIENT_ID?:      string;

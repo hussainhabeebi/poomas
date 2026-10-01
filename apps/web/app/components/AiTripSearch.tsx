@@ -5,7 +5,8 @@
 // /api/ai/trip-search and fills the form with the answer. The regular form
 // stays fully usable; nothing is searched until the traveller presses Search.
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { canRecord, defaultVoiceLang, speechRecognition, startRecording, VOICE_LANGS, type Recognition } from "./voice";
 
 export type AiTripFields = {
   origin: { code: string; city: string } | null;
@@ -43,11 +44,24 @@ export function AiTripSearch({ onApply, onSearchNow }: { onApply: (f: AiTripFiel
   const [error, setError] = useState("");
   const [result, setResult] = useState<AiTripFields | null>(null);
   const [example, setExample] = useState(0);
+  // Voice: "device" = browser speech recognition (free), "server" = record + Whisper.
+  const [voiceMode, setVoiceMode] = useState<"device" | "server" | null>(null);
+  const [voiceLang, setVoiceLang] = useState("en-IN");
+  const [voice, setVoice] = useState<"idle" | "listening" | "transcribing">("idle");
+  const stopRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     fetch(`${apiUrl}/api/ai/status`, { headers: { "x-tenant-slug": "poomas" } })
-      .then((r) => r.json()).then((d) => setEnabled(Boolean(d?.tripSearch))).catch(() => setEnabled(false));
+      .then((r) => r.json())
+      .then((d) => {
+        setEnabled(Boolean(d?.tripSearch));
+        if (d?.tripSearch) setVoiceMode(speechRecognition() ? "device" : d?.voiceTranscribe && canRecord() ? "server" : null);
+      })
+      .catch(() => setEnabled(false));
+    setVoiceLang(defaultVoiceLang());
   }, [apiUrl]);
+
+  useEffect(() => () => stopRef.current?.(), []);
 
   // Rotate the placeholder through the four languages.
   useEffect(() => {
@@ -58,14 +72,18 @@ export function AiTripSearch({ onApply, onSearchNow }: { onApply: (f: AiTripFiel
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (text.trim().length < 3 || busy) return;
+    await run(text);
+  }
+
+  async function run(query: string) {
+    if (query.trim().length < 3 || busy) return;
     setBusy(true); setError(""); setResult(null);
     try {
       const timeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
       const res = await fetch(`${apiUrl}/api/ai/trip-search`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas" },
-        body: JSON.stringify({ text: text.trim(), ...(timeZone ? { timeZone } : {}) }),
+        body: JSON.stringify({ text: query.trim(), ...(timeZone ? { timeZone } : {}) }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || !d.fields) { setError(typeof d.error === "string" ? d.error : "We couldn't read that. Please use the search form below."); return; }
@@ -75,6 +93,58 @@ export function AiTripSearch({ onApply, onSearchNow }: { onApply: (f: AiTripFiel
       setError("We couldn't reach the server. Please use the search form below.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function toggleVoice() {
+    if (voice !== "idle") { stopRef.current?.(); return; }
+    setError(""); setResult(null);
+    const SR = voiceMode === "device" ? speechRecognition() : null;
+    if (SR) {
+      const rec: Recognition = new SR();
+      rec.lang = voiceLang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+      let finalText = "";
+      rec.onresult = (e) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
+        }
+        setText((finalText + interim).trim());
+      };
+      rec.onerror = (e) => {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") setError("Allow microphone access to search by voice.");
+        else if (e.error === "no-speech") setError("We didn't hear anything — tap the mic and speak.");
+        else if (e.error !== "aborted") setError("Voice search didn't work — please type your trip.");
+      };
+      rec.onend = () => {
+        stopRef.current = null; setVoice("idle");
+        if (finalText.trim().length >= 3) void run(finalText);
+      };
+      stopRef.current = () => rec.stop();
+      setVoice("listening");
+      try { rec.start(); } catch { setVoice("idle"); stopRef.current = null; }
+      return;
+    }
+    // No speech recognition in this browser: record and transcribe on the server.
+    try {
+      const rec = await startRecording();
+      stopRef.current = () => { void rec.stop(); };
+      setVoice("listening");
+      const wav = await rec.done;
+      stopRef.current = null;
+      setVoice("transcribing");
+      const form = new FormData();
+      form.append("audio", wav, "voice.wav");
+      const res = await fetch(`${apiUrl}/api/ai/transcribe`, { method: "POST", headers: { "x-tenant-slug": "poomas" }, body: form });
+      const d = await res.json().catch(() => ({}));
+      setVoice("idle");
+      if (!res.ok || typeof d.text !== "string") { setError(typeof d.error === "string" ? d.error : "Voice search didn't work — please type your trip."); return; }
+      setText(d.text);
+      void run(d.text);
+    } catch (err) {
+      stopRef.current = null; setVoice("idle");
+      setError((err as Error)?.name === "NotAllowedError" ? "Allow microphone access to search by voice." : "Voice search didn't work — please type your trip.");
     }
   }
 
@@ -94,11 +164,32 @@ export function AiTripSearch({ onApply, onSearchNow }: { onApply: (f: AiTripFiel
           maxLength={400}
           className="ai-search-input"
         />
+        {voiceMode && (
+          <button type="button" onClick={() => void toggleVoice()} disabled={busy || voice === "transcribing"}
+            className={`ai-search-mic${voice === "listening" ? " is-listening" : ""}`}
+            aria-label={voice === "listening" ? "Stop listening" : "Search by voice"} aria-pressed={voice === "listening"}>
+            {voice === "transcribing" ? <i className="search-spinner" aria-hidden="true" /> : (
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+              </svg>
+            )}
+          </button>
+        )}
         <button type="submit" className="ai-search-btn" disabled={busy || text.trim().length < 3}>
           {busy ? <><i className="search-spinner" aria-hidden="true" /> Reading…</> : "Fill search"}
         </button>
       </form>
-      <p className="ai-search-hint">Type your trip in English, മലയാളം, हिन्दी or العربية — we’ll fill in the form for you.</p>
+      <p className="ai-search-hint">
+        {voice === "listening" ? <b className="ai-search-live">🎙 Listening… speak your trip, then pause</b>
+          : voice === "transcribing" ? <b className="ai-search-live">Understanding what you said…</b>
+          : <>Type{voiceMode ? " or say" : ""} your trip in English, മലയാളം, हिन्दी or العربية — we’ll fill in the form for you.</>}
+        {voiceMode === "device" && voice === "idle" && (
+          <select className="ai-search-lang" value={voiceLang} aria-label="Voice language"
+            onChange={(e) => { setVoiceLang(e.target.value); try { localStorage.setItem("voice_lang", e.target.value); } catch {} }}>
+            {VOICE_LANGS.map((l) => <option key={l.code} value={l.code}>🎙 {l.label}</option>)}
+          </select>
+        )}
+      </p>
       {error && <p className="ai-search-error" role="alert">{error}</p>}
       {result && (
         <div className={ready ? "ai-search-result ai-search-ready" : "ai-search-result"} role="status">
