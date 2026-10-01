@@ -8,7 +8,7 @@ type HotelInfo = {
   price: number; currency: string;
   checkIn: string; checkOut: string; nights: number;
   rooms: number; roomType: string; mealPlan: string;
-  isRefundable: boolean; city: string; address: string;
+  isRefundable: boolean; city: string; address: string; countryCode: string;
 };
 
 type Guest = { title: string; firstName: string; lastName: string; pan: string; passport: string };
@@ -34,6 +34,59 @@ function errorText(err: unknown, fallback: string): string {
   const issue = (err as { issues?: { message?: string; path?: unknown[] }[] } | null)?.issues?.[0];
   if (issue?.message) return `Please search again (${[issue.path?.join("."), issue.message].filter(Boolean).join(": ")}).`;
   return fallback;
+}
+
+// Hotel notes arrive as plain inclusions ("Free WiFi") or as JSON objects
+// ({"know_before_you_go": "..."}, {"Mandatory": "..."}), sometimes several in
+// one string. Turn them into readable sections.
+type NoteSection = { title: string; text: string; important: boolean };
+const NOTE_TITLES: Record<string, string> = {
+  know_before_you_go: "Know before you go", special_instructions: "Special instructions", instructions: "Check-in instructions",
+  optional: "Optional fees (paid at the hotel if used)", mandatory: "Fees payable at the hotel", fees: "Fees",
+};
+function noteTitle(key: string) {
+  const k = key.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return NOTE_TITLES[k] ?? key.replace(/_/g, " ").replace(/^\w/, (m) => m.toUpperCase());
+}
+// "...property policyGovernment-issued ID..." → separate lines.
+const tidy = (t: string) => t.replace(/\s+"?\s*$/, "").replace(/([a-z0-9.)%])([A-Z](?:[a-z]|\s))/g, "$1\n$2").trim();
+
+function parseHotelNotes(items: string[]): { inclusions: string[]; sections: NoteSection[] } {
+  const inclusions: string[] = [];
+  const sections: NoteSection[] = [];
+  for (const raw of items) {
+    const text = String(raw ?? "").trim();
+    if (!text) continue;
+    let objects: unknown[] | null = null;
+    for (const candidate of [text, `[${text}]`]) {
+      try { const v = JSON.parse(candidate); objects = Array.isArray(v) ? v : [v]; break; } catch { /* not JSON */ }
+    }
+    if (!objects || !objects.every((o) => o && typeof o === "object")) { inclusions.push(text); continue; }
+    for (const o of objects as Record<string, unknown>[]) {
+      for (const [key, value] of Object.entries(o)) {
+        const body = tidy(String(value ?? ""));
+        if (!body) continue;
+        sections.push({ title: noteTitle(key), text: body, important: /mandatory/i.test(key) });
+      }
+    }
+  }
+  return { inclusions, sections };
+}
+
+function HotelNotes({ items }: { items: string[] }) {
+  const { inclusions, sections } = parseHotelNotes(items);
+  if (!inclusions.length && !sections.length) return null;
+  return (
+    <div className="hnotes">
+      {inclusions.length > 0 && <p className="hnotes-inc"><b>Includes:</b> {inclusions.join(" · ")}</p>}
+      {sections.map((s, i) => (
+        <details key={i} className={s.important ? "hnote hnote-important" : "hnote"} open={s.important}>
+          <summary>{s.title}</summary>
+          <p>{s.text}</p>
+        </details>
+      ))}
+    </div>
+  );
 }
 
 function friendlyHotelError(msg: string, status: number): string {
@@ -65,7 +118,9 @@ export default function HotelBookPage() {
   const [review,         setReview]         = useState<Review | null>(null);
   // PAN becomes required when the room says so, or when TripJack asks for it at booking (error 1092).
   const [panNeeded,      setPanNeeded]      = useState(false);
-  const panRequiredNow = panNeeded || Boolean(review?.option.compliance.panRequired);
+  // Overseas hotels booked from India need the lead guest's PAN (TCS on foreign travel), so ask up front.
+  const overseas = Boolean(hotel?.countryCode && hotel.countryCode !== "IN");
+  const panRequiredNow = panNeeded || overseas || Boolean(review?.option.compliance.panRequired);
 
   const [contactName,  setContactName]  = useState("");
   const [email,        setEmail]        = useState("");
@@ -160,6 +215,7 @@ export default function HotelBookPage() {
       isRefundable: q.get("ref") === "1",
       city:        q.get("city")    ?? "",
       address:     q.get("address") ?? "",
+      countryCode: (q.get("cc") ?? "").toUpperCase(),
     };
     setHotel(info);
     setGuests(Array.from({ length: roomCount }, () => Array.from({ length: adults }, emptyGuest)));
@@ -408,7 +464,7 @@ export default function HotelBookPage() {
             <Row l="Management fee tax" v={money(review.option.pricing.mft)} />
             <Row l="Total" v={money(review.option.pricing.totalPrice)} />
           </div>
-          {review.option.inclusions.length > 0 && <p style={{ fontSize: 12, color: "#475467" }}>Includes: {review.option.inclusions.join(", ")}</p>}
+          <HotelNotes items={[...review.option.inclusions, ...(review.option.bookingNotes ? [review.option.bookingNotes] : [])]} />
           <h3 style={{ fontSize: 14, margin: "14px 0 6px" }}>Cancellation policy</h3>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#475467" }}>
             {review.option.cancellation.penalties.map((p, i) => (
@@ -417,7 +473,7 @@ export default function HotelBookPage() {
             {!review.option.cancellation.penalties.length && <li>{review.option.cancellation.isRefundable ? "Refundable" : "Non-refundable"}</li>}
           </ul>
           <p style={{ fontSize: 11, color: "#98a2b3" }}>Times are India time (GMT+5:30).</p>
-          {review.option.bookingNotes && <p style={{ fontSize: 12, color: "#b54708", whiteSpace: "pre-line" }}>{review.option.bookingNotes}</p>}
+
         </section>
       )}
 
@@ -477,7 +533,7 @@ export default function HotelBookPage() {
                 <Input l="Last name"  v={g.lastName}  c={(v) => updGuest(ri, i, "lastName",  v)} r />
                 {(review?.option.compliance.panRequired || (ri === 0 && i === 0)) && (
                   <Input
-                    l={panRequiredNow && ri === 0 && i === 0 ? "PAN (required by the hotel)" : "PAN (needed for most hotels in India)"}
+                    l={panRequiredNow && ri === 0 && i === 0 ? (overseas ? "PAN (required for hotels outside India)" : "PAN (required by the hotel)") : "PAN (optional)"}
                     v={g.pan} c={(v) => updGuest(ri, i, "pan", v.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
                     r={panRequiredNow && ri === 0 && i === 0} ph="ABCDE1234F" max={10} />
                 )}
@@ -519,4 +575,4 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const css = `.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin:14px 0}.prebook-banner{padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin:14px 0;display:flex;align-items:center;gap:8px}.prebook-checking{background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1}.prebook-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}.prebook-warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.hh{display:flex;justify-content:space-between;gap:8px}.hh>div{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}.hh small{font-size:11px;color:#667085}.hh strong{font-size:20px;color:#ed1c24;flex-shrink:0}.hd{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:16px 0 10px}.hd>div{display:flex;flex-direction:column}.hd>div b{font-size:15px}.hd>div span{font-size:11px;color:#667085}.hd-nights{text-align:center;background:#f0f9ff;border-radius:99px;height:28px;display:grid;place-items:center;font-size:12px;font-weight:800;color:#0369a1;border:1px solid #bae6fd}.hd-end{text-align:right;align-items:flex-end}.hmeta{display:flex;flex-wrap:wrap;gap:8px;border-top:1px dashed #eaecf0;padding-top:10px;font-size:12px;color:#667085}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#eff6ff;color:#1d4ed8;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800;margin-bottom:12px}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
+const css = `.hnotes{margin-top:10px;display:flex;flex-direction:column;gap:8px}.hnotes-inc{font-size:12px;color:#475467;margin:0}.hnote{border:1px solid #eaecf0;border-radius:10px;background:#f9fafb;padding:8px 12px}.hnote summary{cursor:pointer;font-size:13px;font-weight:700;color:#344054}.hnote p{margin:6px 0 2px;font-size:12px;line-height:1.55;color:#475467;white-space:pre-line}.hnote-important{background:#fffbeb;border-color:#fde68a}.hnote-important summary{color:#92400e}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin:14px 0}.prebook-banner{padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin:14px 0;display:flex;align-items:center;gap:8px}.prebook-checking{background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1}.prebook-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}.prebook-warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.hh{display:flex;justify-content:space-between;gap:8px}.hh>div{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}.hh small{font-size:11px;color:#667085}.hh strong{font-size:20px;color:#ed1c24;flex-shrink:0}.hd{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:16px 0 10px}.hd>div{display:flex;flex-direction:column}.hd>div b{font-size:15px}.hd>div span{font-size:11px;color:#667085}.hd-nights{text-align:center;background:#f0f9ff;border-radius:99px;height:28px;display:grid;place-items:center;font-size:12px;font-weight:800;color:#0369a1;border:1px solid #bae6fd}.hd-end{text-align:right;align-items:flex-end}.hmeta{display:flex;flex-wrap:wrap;gap:8px;border-top:1px dashed #eaecf0;padding-top:10px;font-size:12px;color:#667085}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#eff6ff;color:#1d4ed8;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800;margin-bottom:12px}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;

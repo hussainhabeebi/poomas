@@ -297,6 +297,7 @@ export async function searchHotels(env: Env, client: TripjackHotelV3Client, inpu
       name:         info?.name || h.name,
       starRating:   info?.starRating ?? 0,
       address:      info?.address ?? "",
+      countryCode:  (info?.countryCode || "").toUpperCase(),
       cityCode:     input.cityCode ?? city,
       checkIn:      input.checkIn,
       checkOut:     input.checkOut,
