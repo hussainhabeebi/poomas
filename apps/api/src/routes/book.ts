@@ -278,7 +278,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       reviewPaymentAmount = reviewTotalFare(rr, { adults: n("ADULT"), children: n("CHILD"), infants: n("INFANT") }).TF;
       if (!reviewPaymentAmount) {
         // Log the raw structure so the next request tells us the correct path.
-        console.warn("[book-review] TF not found; falling back to displayed fare. rr keys:",
+        console.warn("[book-review] TF not found; payable booking will be rejected. rr keys:",
           JSON.stringify(Object.keys(rr ?? {})), "snippet:", JSON.stringify(rr).slice(0, 500));
       }
       void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
@@ -300,6 +300,15 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       return c.json({ error: err?.code === "FARE_EXPIRED" ? "This fare is no longer available." : "We couldn't confirm availability. Your details are still here.",
         errorCode: err?.code === "FARE_EXPIRED" ? "FARE_EXPIRED" : "FARE_REVIEW_FAILED",
         diagnosticCode: err?.code, requestId: err?.requestId ?? requestId }, err?.code === "FARE_EXPIRED" ? 409 : 503);
+    }
+
+    if (typeof reviewPaymentAmount !== "number" || !Number.isFinite(reviewPaymentAmount) || reviewPaymentAmount <= 0) {
+      return c.json({
+        error: "We couldn't confirm the airline's current total. Please search again. You have not been charged.",
+        errorCode: "FARE_REVIEW_FAILED",
+        diagnosticCode: "REVIEW_TOTAL_INVALID",
+        requestId,
+      }, 503);
     }
 
     // Safe payment flow: save booking as PAYMENT_PENDING and let the frontend
@@ -326,7 +335,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       }
     }
     // TripJack is paid TF + chosen SSR (paymentInfos.amount); markup applies to the fare only.
-    const fareAmount = reviewPaymentAmount ?? body.totalFare;
+    const fareAmount = reviewPaymentAmount;
     const supplierAmount = Math.round((fareAmount + ssrAmount) * 100) / 100;
     const fareCustomerAmount = await customerPrice(db, tenantId, fareAmount, {
       origin: body.origin.toUpperCase(), destination: body.destination.toUpperCase(),
