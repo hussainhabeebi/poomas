@@ -6,6 +6,8 @@ import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
 import { getAedRate } from "../lib/fx.js";
 import { collectExchanges, persistExchanges, persistInBackground } from "../lib/api-exchanges.js";
+import { recordFareObservation, sendFareAlerts } from "../lib/fare-insights.js";
+import { getAgentMarkup, optionalAgentId, withAgentMarkup } from "../lib/agent-markup.js";
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -288,6 +290,10 @@ async function runSearch(
     })());
   }
 
+  // Sub-agent selling markup (set by their parent agent) — added per request, never cached.
+  const agentId = await optionalAgentId(c);
+  const agentMarkup = agentId ? await getAgentMarkup(c.env, tenantId, agentId) : null;
+
   const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency })}`;
   try {
     const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json") as {
@@ -296,7 +302,10 @@ async function runSearch(
     } | null;
     if (cached && Array.isArray(cached.fares) && cached.fares.length > 0 && !cached.supplierErrors) {
       // Keep the original live search's id so a booking links to its TripJack logs.
-      return c.json({ ...cached, fromCache: true, searchId: (cached as { searchId?: string }).searchId ?? searchId });
+      return c.json({
+        ...cached, fromCache: true, searchId: (cached as { searchId?: string }).searchId ?? searchId,
+        ...(agentMarkup ? { fares: withAgentMarkup(cached.fares as { totalFare: number; displayPrice?: number }[], agentMarkup) } : {}),
+      });
     }
   } catch (err) {
     console.error("[search] fare cache read unavailable; continuing live", err);
@@ -360,7 +369,19 @@ async function runSearch(
     }
   })());
 
-  return c.json(response);
+  // Price calendar + fare alerts learn from every live search (best effort).
+  if (pricedFares.length > 0) {
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const due = await recordFareObservation(c.env.FARE_CACHE_KV, tenantId, { ...params, currency }, pricedFares);
+        if (due.length) await sendFareAlerts(c.env, db, due);
+      } catch (err) {
+        console.error("[search] price calendar / fare alert update failed", err);
+      }
+    })());
+  }
+
+  return c.json(agentMarkup ? { ...response, fares: withAgentMarkup(response.fares, agentMarkup) } : response);
 }
 
 // Display/payment conversion rate (INR per 1 AED) set by admin; null = AED payment off.

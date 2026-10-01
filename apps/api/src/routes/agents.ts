@@ -3,7 +3,9 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { agents, agentDocuments, walletAccounts } from "@poomas/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
+import { creditWallet, debitWallet, roundMoney } from "../lib/customer-wallet.js";
+import { getAgentMarkup, setAgentMarkup } from "../lib/agent-markup.js";
 import type { Env, Variables } from "../types.js";
 import { requireRole } from "../middleware/auth.js";
 
@@ -173,7 +175,86 @@ agentRoutes.get("/sub-agents", async (c) => {
       and(eq(agents.tenantId, tenantId), eq(agents.parentAgentId, agentId)),
     );
 
-  return c.json({ agents: rows });
+  // Each sub-account's own wallet and selling markup (set by this agent).
+  const wallets = rows.length
+    ? await db.select({ agentId: walletAccounts.agentId, balance: walletAccounts.balance, currency: walletAccounts.currency })
+      .from(walletAccounts).where(inArray(walletAccounts.agentId, rows.map((r) => r.id)))
+    : [];
+  const enriched = await Promise.all(rows.map(async (r) => {
+    const w = wallets.find((x) => x.agentId === r.id);
+    return { ...r, walletBalance: w ? Number(w.balance) : 0, walletCurrency: w?.currency ?? null, markup: await getAgentMarkup(c.env, tenantId, r.id) };
+  }));
+
+  return c.json({ agents: enriched });
+});
+
+// ── Sub-account management (parent agent admin) ─────────────────────────────
+
+async function ownSubAgent(c: any, subId: string) {
+  const parentId = c.get("agentId") as string | undefined;
+  if (!parentId) throw new HTTPException(403, { message: "Agent auth required" });
+  requireRole("AGENT_ADMIN")(c.get("userRole"));
+  const [sub] = await c.get("db").select({ id: agents.id, status: agents.status, businessName: agents.businessName, currency: agents.currency })
+    .from(agents)
+    .where(and(eq(agents.id, subId), eq(agents.tenantId, c.get("tenantId")), eq(agents.parentAgentId, parentId)))
+    .limit(1);
+  if (!sub) throw new HTTPException(404, { message: "Sub-agent not found" });
+  return { parentId, sub };
+}
+
+// PUT /api/agents/sub-agents/:id/markup  { type: FLAT | PERCENTAGE, value } (value 0 removes it)
+agentRoutes.put("/sub-agents/:id/markup", zValidator("json", z.object({
+  type:  z.enum(["FLAT", "PERCENTAGE"]),
+  value: z.number().min(0),
+}).refine((m) => m.type === "PERCENTAGE" ? m.value <= 50 : m.value <= 100_000, { message: "Markup is too high (max 50% or 100,000 flat)" })), async (c) => {
+  const { parentId, sub } = await ownSubAgent(c, c.req.param("id"));
+  const body = c.req.valid("json");
+  const markup = body.value > 0 ? { type: body.type, value: roundMoney(body.value), setBy: parentId, updatedAt: new Date().toISOString() } : null;
+  await setAgentMarkup(c.env, c.get("tenantId"), sub.id, markup);
+  return c.json({ ok: true, markup });
+});
+
+// POST /api/agents/sub-agents/:id/transfer  { amount, direction: TO_SUB | TO_PARENT }
+// Moves balance between the parent's and the sub-agent's wallets (same currency).
+agentRoutes.post("/sub-agents/:id/transfer", zValidator("json", z.object({
+  amount:    z.number().positive().max(10_000_000),
+  direction: z.enum(["TO_SUB", "TO_PARENT"]),
+  note:      z.string().trim().max(120).optional(),
+})), async (c) => {
+  const { parentId, sub } = await ownSubAgent(c, c.req.param("id"));
+  const { amount, direction, note } = c.req.valid("json");
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const walletOf = async (agentId: string) => (await db.select().from(walletAccounts)
+    .where(and(eq(walletAccounts.agentId, agentId), eq(walletAccounts.tenantId, tenantId))).limit(1))[0];
+  const [parentWallet, subWallet] = await Promise.all([walletOf(parentId), walletOf(sub.id)]);
+  if (!parentWallet || !subWallet) throw new HTTPException(404, { message: "Wallet not found" });
+  if (parentWallet.currency !== subWallet.currency) throw new HTTPException(400, { message: "Both wallets must use the same currency" });
+  if (direction === "TO_SUB" && sub.status !== "APPROVED") throw new HTTPException(409, { message: `Sub-agent is ${sub.status.toLowerCase()} — only approved sub-agents can receive funds` });
+
+  const [from, to] = direction === "TO_SUB" ? [parentWallet, subWallet] : [subWallet, parentWallet];
+  const label = direction === "TO_SUB" ? `Transfer to sub-agent ${sub.businessName}` : `Transfer from sub-agent ${sub.businessName}`;
+  const meta = { performedById: c.get("userId"), note: note ? `${label} — ${note}` : label };
+  const left = await debitWallet(db, from.id, amount, "ADJUSTMENT", meta);
+  if (left === null) return c.json({ error: "Not enough balance for this transfer" }, 402);
+  try {
+    await creditWallet(db, to.id, amount, "ADJUSTMENT", meta);
+  } catch (err) {
+    // Put the money back if the second leg failed.
+    await creditWallet(db, from.id, amount, "ADJUSTMENT", { ...meta, note: `${label} — reversed` });
+    throw err;
+  }
+  return c.json({ ok: true, amount: roundMoney(amount), direction, currency: from.currency });
+});
+
+// PATCH /api/agents/sub-agents/:id/status  { status: APPROVED | SUSPENDED }
+// A parent can pause and resume an approved sub-agent (approval stays with admin).
+agentRoutes.patch("/sub-agents/:id/status", zValidator("json", z.object({ status: z.enum(["APPROVED", "SUSPENDED"]) })), async (c) => {
+  const { sub } = await ownSubAgent(c, c.req.param("id"));
+  const { status } = c.req.valid("json");
+  if (!["APPROVED", "SUSPENDED"].includes(sub.status)) throw new HTTPException(409, { message: `Sub-agent is ${sub.status.toLowerCase()} — waiting for admin approval` });
+  await c.get("db").update(agents).set({ status, updatedAt: new Date() }).where(eq(agents.id, sub.id));
+  return c.json({ ok: true, status });
 });
 
 // Sub-agent list for a specific parent agent (ADMIN)

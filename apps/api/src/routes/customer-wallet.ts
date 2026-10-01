@@ -19,6 +19,7 @@ import {
   creditWallet, debitWallet, expireOverdueCoupons, generateCouponCode,
   getOrCreateCustomerWallet, roundMoney,
 } from "../lib/customer-wallet.js";
+import { applyReferral, myReferral, ReferralError } from "../lib/referral.js";
 
 export const customerWalletRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -56,7 +57,7 @@ customerWalletRoutes.post("/pay", zValidator("json", z.object({ bookingId: z.str
 
   const [booking] = await db.select({
     id: bookings.id, status: bookings.status, userId: bookings.userId,
-    totalAmount: bookings.totalAmount, currency: bookings.currency,
+    totalAmount: bookings.totalAmount, currency: bookings.currency, heldUntil: bookings.heldUntil,
   })
     .from(bookings)
     .where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, tenantId)))
@@ -65,6 +66,9 @@ customerWalletRoutes.post("/pay", zValidator("json", z.object({ bookingId: z.str
   if (!booking || booking.userId !== userId) throw new HTTPException(404, { message: "Booking not found" });
   if (!["HELD", "PAYMENT_PENDING"].includes(booking.status)) {
     throw new HTTPException(409, { message: `Booking is ${booking.status}` });
+  }
+  if (booking.status === "HELD" && booking.heldUntil && booking.heldUntil.getTime() < Date.now()) {
+    throw new HTTPException(409, { message: "This hold has expired. Please search again." });
   }
   if (booking.currency !== CUSTOMER_WALLET_CURRENCY) {
     throw new HTTPException(400, { message: `Wallet can pay only ${CUSTOMER_WALLET_CURRENCY} bookings` });
@@ -199,4 +203,20 @@ customerWalletRoutes.post("/redeem", zValidator("json", z.object({ code: z.strin
     note: `Coupon ${code}${from?.name ? ` from ${from.name}` : ""}`, performedById: userId,
   });
   return c.json({ ok: true, amount: Number(coupon.amount), balance });
+});
+
+// ── Refer a friend ───────────────────────────────────────────────────────────
+
+customerWalletRoutes.get("/referral", async (c) => {
+  return c.json(await myReferral(c.env, c.get("tenantId"), c.get("userId")!));
+});
+
+customerWalletRoutes.post("/referral/apply", zValidator("json", z.object({ code: z.string().trim().min(4).max(20) })), async (c) => {
+  try {
+    const r = await applyReferral(c.env, c.get("db"), c.get("tenantId"), c.get("userId")!, c.req.valid("json").code);
+    return c.json({ ok: true, ...r, message: `Code applied! You and your friend each get ₹${r.reward} in your wallets when your first booking is confirmed.` });
+  } catch (err) {
+    if (err instanceof ReferralError) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
 });

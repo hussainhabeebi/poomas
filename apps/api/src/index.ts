@@ -10,6 +10,8 @@ import { searchRoutes }        from "./routes/search.js";
 import { hotelRoutes }         from "./routes/hotel.js";
 import { insuranceRoutes }     from "./routes/insurance.js";
 import { aiRoutes }            from "./routes/ai.js";
+import { fareRoutes }          from "./routes/fares.js";
+import { sweepFareAlerts }     from "./lib/fare-alert-sweep.js";
 import { bookingRoutes }       from "./routes/booking.js";
 import { duffelSandboxRoutes } from "./routes/duffel-sandbox.js";
 import { bookDirectRoutes }    from "./routes/book.js";
@@ -49,6 +51,7 @@ app.route("/api/search",         searchRoutes);
 app.route("/api/hotels",         hotelRoutes);
 app.route("/api/insurance",      insuranceRoutes);
 app.route("/api/ai",             aiRoutes);
+app.route("/api/fares",          fareRoutes);
 app.route("/api/duffel-sandbox", duffelSandboxRoutes);
 app.route("/api/book",           bookDirectRoutes);
 app.route("/api/integrations",   integrationRoutes);
@@ -123,5 +126,9 @@ export default {
     } else if (batch.queue === "poomas-notifications") {
       await handleNotifyQueue(batch as MessageBatch<never>, env);
     }
+  },
+  // Cron (wrangler.toml [triggers]): re-check routes with fare alerts.
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(sweepFareAlerts(env).then((r) => console.info("[fare-alert-sweep]", r)).catch((err) => console.error("[fare-alert-sweep]", err)));
   },
 };

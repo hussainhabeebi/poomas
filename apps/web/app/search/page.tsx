@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import SearchResultControls, { ChangeDatesAction } from "./SearchResultControls";
+import { FareTools } from "./FareTools";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
@@ -180,6 +181,19 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
             <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 13 }}>
               ⚠️ {result.disclaimer}
             </div>
+          )}
+
+          {/* Price calendar, price alert, baggage & visa checker */}
+          {params.origin && params.destination && params.departureDate && (
+            <FareTools
+              origin={params.origin.toUpperCase()}
+              destination={params.destination.toUpperCase()}
+              departureDate={params.departureDate}
+              currency={String(allFares[0]?.currency ?? requestedCurrency ?? "INR")}
+              cheapest={cheapestPerAdult(allFares, adults)}
+              airline={filteredFares[0]?.airline}
+              query={new URLSearchParams(Object.entries(params).filter(([, v]) => typeof v === "string") as [string, string][]).toString()}
+            />
           )}
 
           {/* Sort tabs */}
@@ -460,4 +474,18 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
       </details>
     </div>
   );
+}
+
+// One adult's price (with markup) of the cheapest fare, for the price alert default.
+function cheapestPerAdult(fares: any[], adults: number): number | null {
+  let best: number | null = null;
+  for (const f of fares) {
+    const total = Number(f?.totalFare);
+    if (!(total > 0)) continue;
+    const shown = Number(f?.displayPrice) > 0 ? Number(f.displayPrice) : total;
+    const share = Number(f?.perAdultFare) > 0 ? Number(f.perAdultFare) / total : 1 / Math.max(1, adults);
+    const price = Math.round(shown * Math.min(1, share));
+    if (best === null || price < best) best = price;
+  }
+  return best;
 }

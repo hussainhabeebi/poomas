@@ -234,7 +234,8 @@ export class TripjackClient {
     // TripJack B2B deducts from the agent wallet, but the field is required.
     return this.request("/oms/v1/air/book", {
       bookingId: params.holdId,
-      paymentInfos: [{ amount: params.paymentAmount }],
+      // A hold (ON_HOLD) is a book without paymentInfos; confirmHold() pays later.
+      ...(params.holdOnly ? {} : { paymentInfos: [{ amount: params.paymentAmount }] }),
       deliveryInfo: {
         emails:   [params.contactEmail],
         contacts: [contact],
@@ -259,6 +260,16 @@ export class TripjackClient {
       // Some TripJack partner accounts require a remarks field; harmless when not required.
       remarks: "Direct booking",
     }, AbortSignal.timeout(25000));
+  }
+
+  // Pay for a held (ON_HOLD) booking before its time limit; amount = held TF.
+  async confirmHold(bookingId: string, amount: number) {
+    return this.request("/oms/v1/air/confirm-book", { bookingId, paymentInfos: [{ amount }] }, AbortSignal.timeout(30000));
+  }
+
+  // Release a held booking (customer changed their mind).
+  async releaseHold(bookingId: string, pnrs: string[]) {
+    return this.request("/oms/v1/air/unhold", { bookingId, pnrs }, AbortSignal.timeout(20000));
   }
 
   // Seat map for a reviewed booking — only when review conditions.isa = true.

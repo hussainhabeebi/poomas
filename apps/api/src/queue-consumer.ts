@@ -8,13 +8,15 @@ import {
   tenants, tenantSupplierConfigs, leadvyneConfigs,
 } from "@poomas/db/schema";
 import { eq, and, sql } from "drizzle-orm";
-import { getBookableAdapter } from "@poomas/suppliers";
+import { getBookableAdapter, TripjackClient } from "@poomas/suppliers";
+import { normalizeBookingResponse } from "./lib/booking-response.js";
 import { resolveFlightSuppliers } from "./routes/search.js";
 import {
   acquireBookingLock, errorDetail, explainMissingPnr, isTestBooking, logBookingEvent, recordBookingError, recordQueueReceipt, releaseBookingLock,
 } from "./lib/booking-recovery.js";
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
+import { rewardReferral } from "./lib/referral.js";
 import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { renderItineraryHtml } from "./lib/itinerary.js";
@@ -529,6 +531,7 @@ async function bookPaidBooking(
   // Checkout extras saved with the booking (GST, emergency contact, PAN, student /
   // senior ID, passport issue date, meal / baggage SSR) — matched to passengers by name.
   const tjExtras = ((flightData.tripjack ?? {}) as {
+    held?: boolean;
     gstInfo?: { gstNumber: string; registeredName: string; email?: string; mobile?: string; address?: string };
     emergencyContact?: { name: string; phone?: string; email?: string };
     pax?: { type: string; firstName: string; lastName: string; passportIssueDate?: string; panNumber?: string; documentId?: string; ssr?: any }[];
@@ -542,9 +545,17 @@ async function bookPaidBooking(
   await logBookingEvent(env, booking.id, "BOOK", "info", `Sending book request to ${booking.supplier}`, {
     supplierBookingId: tripjackHoldId || booking.supplierBookingRef, paymentAmount, passengers: paxRows.length,
   });
+  // A held fare (hold now, pay later) is already booked ON_HOLD: pay it with
+  // confirm-book instead of booking again.
+  const heldRef = booking.supplier === "TRIPJACK" && (tjExtras as { held?: boolean }).held === true ? booking.supplierBookingRef : null;
   let bookResult;
   try {
-    bookResult = await adapter.book({
+    if (heldRef) {
+      const tjConfig = supplierConfigs.find((s) => s.name === "TRIPJACK");
+      const client = new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(tjConfig?.credentials ?? {}), recorder: collector.recorder } as ConstructorParameters<typeof TripjackClient>[0]);
+      await logBookingEvent(env, booking.id, "BOOK", "info", `Confirming held booking ${heldRef} with TripJack (confirm-book)`, { paymentAmount });
+      bookResult = normalizeBookingResponse(await client.confirmHold(heldRef, paymentAmount), heldRef) as Awaited<ReturnType<NonNullable<typeof adapter.book>>>;
+    } else bookResult = await adapter.book({
       fareId:        flightData.id as string,
       holdId:        booking.supplier === "TRIPJACK" ? tripjackHoldId : (booking.supplierBookingRef ?? ""),
       sessionId:     booking.supplierSessionId ?? undefined,
@@ -672,6 +683,12 @@ async function bookPaidBooking(
     if (await creditBookingBonus(db, booking.id)) console.info(`[wallet-bonus] credited for booking ${booking.id}`);
   } catch (err) {
     console.error(`[wallet-bonus] booking ${booking.id}:`, err);
+  }
+  // Refer-a-friend reward on the referred customer's first confirmed booking.
+  try {
+    if (await rewardReferral(env, db, booking)) console.info(`[referral] rewarded for booking ${booking.id}`);
+  } catch (err) {
+    console.error(`[referral] booking ${booking.id}:`, err);
   }
 
   // Generate e-ticket HTML

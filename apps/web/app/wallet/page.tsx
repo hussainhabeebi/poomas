@@ -12,6 +12,7 @@ const TX_LABEL: Record<string, string> = {
   REFUND_CREDIT: "Refund", COUPON_DEBIT: "Coupon created", COUPON_CREDIT: "Coupon redeemed", COUPON_REFUND: "Coupon returned",
 };
 const DEBITS = new Set(["BOOKING_DEBIT", "COUPON_DEBIT"]);
+interface Referral { code: string; reward: number; stats: { joined: number; rewarded: number; earned: number }; referredBy: { code: string; rewarded: boolean } | null }
 const STATUS_LABEL: Record<string, string> = { ACTIVE: "Active", REDEEMED: "Used", CANCELLED: "Cancelled", EXPIRED: "Expired · refunded" };
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -48,6 +49,8 @@ export default function WalletPage() {
   const [couponAmount, setCouponAmount] = useState("");
   const [redeemCode, setRedeemCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [referral, setReferral] = useState<Referral | null>(null);
+  const [friendCode, setFriendCode] = useState("");
 
   async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${API}/api/profile/wallet${path}`, {
@@ -67,7 +70,27 @@ export default function WalletPage() {
         call<{ coupons: Coupon[] }>("/coupons"),
       ]);
       setBalance(w.balance); setTransactions(w.transactions); setCoupons(cp.coupons);
+      call<Referral>("/referral").then(setReferral).catch(() => {});
     } catch (err: any) { setError(err.message); } finally { setLoading(false); }
+  }
+
+  async function applyFriendCode(e: FormEvent) {
+    e.preventDefault();
+    if (!friendCode.trim()) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const r = await call<{ message: string }>("/referral/apply", { method: "POST", body: JSON.stringify({ code: friendCode.trim() }) });
+      setNotice(r.message);
+      setFriendCode("");
+      call<Referral>("/referral").then(setReferral).catch(() => {});
+    } catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  function shareReferral() {
+    if (!referral) return;
+    const text = `Join me on FlyPoomas! Use my code ${referral.code} in your wallet and we both get ₹${referral.reward} when you book your first flight: https://flypoomas.com/wallet`;
+    if (navigator.share) navigator.share({ text }).catch(() => {});
+    else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   }
 
   useEffect(() => {
@@ -167,6 +190,25 @@ export default function WalletPage() {
             <button className={styles.primaryButton} type="submit" disabled={busy}>Redeem <span aria-hidden="true">→</span></button>
           </form>
         </section>
+        {referral && (
+          <section className={styles.actionCard}>
+            <div className={styles.cardTitle}><span className={styles.sectionIcon}><WalletIcon kind="share" /></span><div><h2>Refer a friend</h2><p>You both get {inr(referral.reward)} when your friend&apos;s first booking is confirmed.</p></div></div>
+            <div className={styles.actionForm}>
+              <strong className={styles.code} style={{ alignSelf: "center" }}>{referral.code}</strong>
+              <button className={styles.primaryButton} type="button" onClick={shareReferral}>Share <span aria-hidden="true">→</span></button>
+            </div>
+            {referral.stats.joined > 0 && <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b" }}>{referral.stats.joined} friend{referral.stats.joined === 1 ? "" : "s"} joined · {inr(referral.stats.earned)} earned</p>}
+            {referral.referredBy
+              ? <p style={{ margin: "8px 0 0", fontSize: 13, color: "#166534" }}>Friend code {referral.referredBy.code} applied{referral.referredBy.rewarded ? " — reward paid" : " — reward comes with your first confirmed booking"}.</p>
+              : (
+                <form className={styles.actionForm} onSubmit={applyFriendCode} style={{ marginTop: 10 }}>
+                  <label className={styles.srOnly} htmlFor="wallet-friend-code">Friend&apos;s referral code</label>
+                  <input id="wallet-friend-code" placeholder="Friend's code (FP…)" value={friendCode} onChange={(e) => setFriendCode(e.target.value.toUpperCase())} style={{ textTransform: "uppercase" }} />
+                  <button className={styles.subtleButton} type="submit" disabled={busy}>Apply</button>
+                </form>
+              )}
+          </section>
+        )}
       </div>
 
       <section className={styles.infoStrip} aria-label="Wallet benefits">
@@ -201,7 +243,7 @@ export default function WalletPage() {
             <div key={t.id} className={styles.transactionRow}>
               <span className={`${styles.transactionIcon} ${DEBITS.has(t.type) ? styles.debitIcon : styles.creditIcon}`}><WalletIcon kind={transactionIcon(t.type)} /></span>
               <div className={styles.transactionDetails}>
-                <strong>{TX_LABEL[t.type] ?? t.type}</strong>
+                <strong>{t.note?.startsWith("Referral reward") ? "Referral reward" : TX_LABEL[t.type] ?? t.type}</strong>
                 <span>{new Date(t.createdAt).toLocaleString("en-IN")}{t.note ? ` · ${t.note}` : ""}</span>
               </div>
               <strong className={`${styles.transactionAmount} ${DEBITS.has(t.type) ? styles.debit : styles.credit}`}>

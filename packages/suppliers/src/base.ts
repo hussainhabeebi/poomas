@@ -148,6 +148,7 @@ export interface BookParams extends HoldParams {
   paymentAmount?: number;  // Total fare from review — required for TripJack instant ticketing
   gstInfo?:       GstDetails;
   emergencyContact?: { name: string; email?: string; phone?: string };
+  holdOnly?:      boolean; // TripJack: book without payment (ON_HOLD), confirmed later
 }
 
 export interface BookResult {
