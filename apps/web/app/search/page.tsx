@@ -335,7 +335,7 @@ function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: nu
     price:    String(price),
     cur:      fareCurrency,
     ref:      fare.isRefundable ? "1" : "0",
-    bag:      fare.baggage?.checked ?? "15 KG",
+    bag:      fare.baggage?.checked ?? "",
   });
   if (payCurrency) p.set("pc", payCurrency);
   if (searchId) p.set("sid", searchId);   // links the booking to this search's TripJack logs
@@ -440,11 +440,11 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
         <div className="fare-card-v2-detail">
           <div className="fare-card-v2-detail-item">
             <label>Cabin baggage</label>
-            <span>{fare.baggage?.cabin ?? "—"}</span>
+            <span>{fare.baggage?.cabin || "Cabin baggage allowance not provided"}</span>
           </div>
           <div className="fare-card-v2-detail-item">
             <label>Check-in baggage</label>
-            <span>{fare.baggage?.checked ?? "—"}</span>
+            <span>{fare.baggage?.checked || "Checked baggage allowance not provided"}</span>
           </div>
           <div className="fare-card-v2-detail-item">
             <label>Refundable</label>

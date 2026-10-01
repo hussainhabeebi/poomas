@@ -74,8 +74,8 @@ export function normalizeTripjackFare(r: Rec, context: { tripKey?: string; legIn
     currency:      "INR",
     isRefundable:  rT !== undefined ? rT !== 0 : fareIdentifier !== "NONREFUNDABLE",
     baggage: {
-      cabin:   adultFd.bI?.cB ?? "7 KG",
-      checked: adultFd.bI?.iB ?? "15 KG",
+      cabin:   typeof adultFd.bI?.cB === "string" && adultFd.bI.cB.trim() ? adultFd.bI.cB : "",
+      checked: typeof adultFd.bI?.iB === "string" && adultFd.bI.iB.trim() ? adultFd.bI.iB : "",
     },
     fareClass:  fareIdentifier,
     seatsLeft:  (adultFd.sR ?? r.seatsAvailable) as number,

@@ -144,3 +144,66 @@ test('Hotel v3 client records every request / response (incl. failures)', async 
   assert.equal(seen[1].status, 400);
   assert.match(seen[1].responseBody, /Price changed/);
 });
+
+test('TripJack baggage is supplier-confirmed across all journey contexts', async () => {
+  const { normalizeTripjackFare } = await import(moduleUrl('../src/tripjack/normalizer.ts'));
+  const normalize = (bI, context = {}) => normalizeTripjackFare({ id: 'real-price', totalPriceInfo: { fd: { ADULT: { bI } } } }, context);
+  const actual = { cB: ' 8 KG ', iB: '2 pieces · 23 KG each' };
+  assert.deepEqual(normalize(actual).baggage, { cabin: actual.cB, checked: actual.iB });
+  for (const context of [{}, { tripKey: 'RETURN', legIndex: 1 }, { tripKey: '2', legIndex: 2 }, { tripKey: 'COMBO' }]) {
+    for (const bI of [undefined, null, {}, { cB: null, iB: null }, { cB: '', iB: '' }, { cB: '  ', iB: '\t' }]) {
+      assert.deepEqual(normalize(bI, context).baggage, { cabin: '', checked: '' });
+    }
+  }
+});
+
+test('actual results filter and booking handoff preserve unknown baggage', async () => {
+  const { normalizeTripjackFare } = await import(moduleUrl('../src/tripjack/normalizer.ts'));
+  const file = path.resolve(__dirname, '../../../apps/web/app/search/page.tsx');
+  const source = fs.readFileSync(file, 'utf8');
+  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const functions = ast.statements.filter((s) => ts.isFunctionDeclaration(s) && ['filterAndSortFares', 'buildBookUrl'].includes(s.name?.text));
+  assert.equal(functions.length, 2);
+  const js = ts.transpileModule(functions.map((f) => f.getText(ast)).join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const { filterAndSortFares, buildBookUrl } = new Function(js + ';return { filterAndSortFares, buildBookUrl };')();
+  const unknown = normalizeTripjackFare({ id: 'unknown', totalPriceInfo: {} });
+  const known = normalizeTripjackFare({ id: 'known', totalPriceInfo: { fd: { ADULT: { bI: { iB: '20 KG' } } } } });
+  assert.deepEqual(filterAndSortFares([unknown, known], { baggage: '1' }).map((f) => f.id), ['known']);
+  assert.equal(filterAndSortFares([unknown, known], {}).length, 2);
+  for (const fare of [unknown, { id: 'absent', supplier: 'TRIPJACK' }, known]) {
+    const url = new URL(buildBookUrl(fare, 'INR', 100, 1), 'https://test.example');
+    assert.equal(url.searchParams.get('bag'), fare.baggage?.checked ?? '');
+    assert.equal(url.searchParams.get('fareId'), fare.id);
+  }
+  const book = fs.readFileSync(path.resolve(__dirname, '../../../apps/web/app/book/page.tsx'), 'utf8');
+  const bookAst = ts.createSourceFile('book.tsx', book, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let allowance;
+  function visit(node) {
+    if (ts.isPropertyAssignment(node) && node.name.getText(bookAst) === 'cabinChecked') allowance = node.initializer.getText(bookAst);
+    ts.forEachChild(node, visit);
+  }
+  visit(bookAst);
+  assert.ok(allowance);
+  const read = new Function('q', `return ${allowance}`);
+  for (const query of ['', 'bag=']) assert.equal(read(new URLSearchParams(query)), '');
+  assert.equal(read(new URLSearchParams('bag=20+KG')), '20 KG');
+  assert.match(book, /Checked baggage allowance not provided/);
+  assert.doesNotMatch(book, /15 KG/);
+});
+
+test('extra-baggage selections, prices and supplier booking payload are preserved', async (t) => {
+  const { parseTripjackReview, ssrTotal } = await import(moduleUrl('../src/tripjack/review.ts'));
+  const { TripjackClient } = await import(moduleUrl('../src/tripjack/client.ts'));
+  const summary = parseTripjackReview({ bookingId: 'review-ssr', tripInfos: [{ sI: [{ id: 'segment-1', ssrInfo: { BAGGAGE: [{ code: 'BAG5', amount: 1250, desc: 'Extra 5 KG' }] } }] }] });
+  assert.deepEqual(summary.segments[0].ssr.baggage, [{ code: 'BAG5', amount: 1250, desc: 'Extra 5 KG' }]);
+  const picks = [{ key: summary.segments[0].key, code: 'BAG5' }];
+  const passenger = { type: 'ADULT', firstName: 'Test', lastName: 'Traveller', gender: 'M', ssr: { baggage: picks } };
+  assert.deepEqual(ssrTotal(summary.segments, [passenger]), { total: 1250, invalid: [] });
+  const original = global.fetch;
+  t.after(() => { global.fetch = original; });
+  let body;
+  global.fetch = async (_url, options) => { body = JSON.parse(options.body); return Response.json({ status: { success: true } }); };
+  await new TripjackClient({ baseUrl: 'https://gateway.example', apiKey: 'test' }).book({ holdId: 'review-ssr', passengers: [passenger], contactPhone: '919999999999', contactEmail: 'test@example.com', paymentAmount: 11250 });
+  assert.deepEqual(body.travellerInfo[0].ssrBaggageInfos, picks);
+  assert.deepEqual(passenger.ssr.baggage, picks);
+});
