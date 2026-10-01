@@ -73,8 +73,15 @@ export async function logged<T>(
   }
 }
 
+// TripJack hotel error codes that the customer can fix on the checkout form.
+const GUEST_DETAIL_ERRORS: Record<string, { errorCode: string; message: string }> = {
+  "1092": { errorCode: "PAN_REQUIRED", message: "This hotel needs a valid PAN (Indian tax ID, e.g. ABCDE1234F) for the lead guest. Please add it and confirm again." },
+};
+
 export function hotelError(c: any, err: any, fallback: string) {
   const code = errorCodeOf(err);
+  const fixable = GUEST_DETAIL_ERRORS[code];
+  if (fixable) return c.json({ error: fixable.message, errorCode: fixable.errorCode, supplierCode: code, requestId: err?.requestId }, 400);
   const status = isHotelError(err, "SESSION_EXPIRED") ? 410 : isHotelError(err, "SOLD_OUT") ? 409
     : ["CITY_INDEX_MISSING", "CITY_NOT_FOUND", "NATIONALITY_UNSUPPORTED"].includes(code) ? 404 : 502;
   const message = isHotelError(err, "SESSION_EXPIRED") ? "Your search has expired. Please search again."

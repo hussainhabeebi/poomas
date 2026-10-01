@@ -269,7 +269,9 @@ export function normalizeOption(o: any): HotelV3Option {
     commercial:   { type: String(o?.commercial?.type ?? ""), commission: num(o?.commercial?.commission) },
     compliance:   {
       gstType: String(o?.compliance?.gstType ?? "NA"),
-      panRequired: o?.compliance?.panRequired === true,
+      // TripJack has used several spellings for this flag.
+      panRequired: [o?.compliance?.panRequired, o?.compliance?.isPanRequired, o?.compliance?.panMandatory, o?.isPanRequired]
+        .some((v) => v === true || v === "true"),
       passportRequired: o?.compliance?.passportRequired === true,
     },
     cancellation: {
