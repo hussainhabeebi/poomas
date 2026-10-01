@@ -69,12 +69,10 @@ export default function HomePage() {
       <div className="manage-strip">
         <div>
           <h3>Already booked?</h3>
-          <p>Manage your booking, download ticket, or check web check-in status</p>
+          <p>Find your booking, view trip details and access your travel documents.</p>
         </div>
         <div className="manage-strip-actions">
-          <a href="/manage" className="manage-btn manage-btn-primary">📋 Manage Booking</a>
-          <a href="/checkin" className="manage-btn manage-btn-outline">✈ Web Check-in</a>
-          <a href="/status" className="manage-btn manage-btn-outline">🔍 Flight Status</a>
+          <a href="/trips/find" className="manage-btn manage-btn-primary">📋 Manage Booking</a>
         </div>
       </div>
 
