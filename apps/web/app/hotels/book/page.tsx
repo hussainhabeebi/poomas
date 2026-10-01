@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { ScanDocument, type ScannedTraveller } from "../../components/ScanDocument";
 
 type HotelInfo = {
   optionId: string; hid: string; correlationId: string; adults: number; nationality: string; expiresAt: string;
@@ -266,6 +267,16 @@ export default function HotelBookPage() {
     }
   };
 
+  // Passport / ID scan → this guest's name (and passport number from a passport).
+  const scanGuest = (room: number, i: number, t: ScannedTraveller) =>
+    setGuests((gs) => gs.map((rm, ri) => ri !== room ? rm : rm.map((g, n) => n !== i ? g : {
+      ...g,
+      ...(t.firstName ? { firstName: t.firstName } : {}),
+      ...(t.lastName ? { lastName: t.lastName } : {}),
+      ...(t.gender === "F" && g.title === "Mr" ? { title: "Ms" } : t.gender === "M" && g.title !== "Mr" ? { title: "Mr" } : {}),
+      ...(t.documentType === "PASSPORT" && t.documentNumber ? { passport: t.documentNumber } : {}),
+    })));
+
   const updGuest = (room: number, i: number, k: keyof Guest, v: string) =>
     setGuests((gs) => gs.map((rm, ri) => ri !== room ? rm : rm.map((g, n) => n === i ? { ...g, [k]: v } : g)));
 
@@ -522,6 +533,7 @@ export default function HotelBookPage() {
                   </select>
                 )}
               </div>
+              <ScanDocument onScanned={(t) => scanGuest(ri, i, t)} />
               <div className="grid">
                 <label>Title
                   <select value={g.title} onChange={(e) => updGuest(ri, i, "title", e.target.value)}>

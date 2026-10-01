@@ -87,7 +87,12 @@ export function todayIn(timeZone = "Asia/Kolkata", now = new Date()) {
   return { date: ymd, weekday: WEEKDAY[new Date(`${ymd}T00:00:00Z`).getUTCDay()] };
 }
 
-const isoDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+// Strict: "2026-02-30" is rejected (Date would silently roll it into March).
+const isoDate = (v: unknown) => {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+};
 const int = (v: unknown, min: number, max: number, dflt: number) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : dflt;
