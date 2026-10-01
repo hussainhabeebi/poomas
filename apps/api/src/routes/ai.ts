@@ -3,6 +3,8 @@
 //   GET  /api/ai/status        { tripSearch: boolean } — the site hides the box when off
 //   POST /api/ai/trip-search   { text, timeZone? } → search form fields
 //   POST /api/ai/scan-document multipart "file" (passport / ID photo or PDF) → traveller fields
+//   POST /api/ai/transcribe    multipart "audio" (short WAV recording) → { text } — voice search
+//                              for browsers without built-in speech recognition (Workers AI Whisper)
 //
 // Public (no login). Limited to 30 requests per visitor per hour, and identical
 // messages on the same day are answered from cache.
@@ -23,7 +25,11 @@ async function sha256(text: string) {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-aiRoutes.get("/status", (c) => c.json({ tripSearch: Boolean(c.env.GEMINI_API_KEY), documentScan: Boolean(c.env.GEMINI_API_KEY) }));
+aiRoutes.get("/status", (c) => c.json({
+  tripSearch: Boolean(c.env.GEMINI_API_KEY),
+  documentScan: Boolean(c.env.GEMINI_API_KEY),
+  voiceTranscribe: Boolean(c.env.GEMINI_API_KEY && c.env.AI),
+}));
 
 // Per-visitor hourly counter (KV); returns false once the limit is reached.
 async function underLimit(c: any, name: string, limit: number) {
@@ -34,6 +40,32 @@ async function underLimit(c: any, name: string, limit: number) {
   c.executionCtx.waitUntil(c.env.FARE_CACHE_KV.put(key, String(used + 1), { expirationTtl: 3700 }).catch(() => {}));
   return true;
 }
+
+// Voice search: a short recording → text (then sent to /trip-search by the page).
+// Whisper detects the language (English, Malayalam, Hindi, Arabic…). Nothing is stored.
+const MAX_AUDIO_BYTES = 2 * 1024 * 1024;   // ~60 s of 16 kHz mono WAV
+aiRoutes.post("/transcribe", async (c) => {
+  if (!c.env.AI) return c.json({ error: "Voice search isn't available right now. Please type your trip.", code: "VOICE_UNAVAILABLE" }, 503);
+  if (!(await underLimit(c, "voice", 30))) return c.json({ error: "Too many voice searches — please type your trip or try again later.", code: "VOICE_RATE_LIMITED" }, 429);
+  let audio: unknown;
+  try { audio = (await c.req.formData()).get("audio"); } catch { /* not multipart */ }
+  if (!(audio instanceof File) || audio.size < 1000) return c.json({ error: "We didn't catch that — please try again.", code: "VOICE_NO_AUDIO" }, 400);
+  if (audio.size > MAX_AUDIO_BYTES) return c.json({ error: "That recording is too long — keep it under a minute.", code: "VOICE_TOO_LONG" }, 413);
+  try {
+    const bytes = new Uint8Array(await audio.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const out = await c.env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+      audio: btoa(binary), task: "transcribe", vad_filter: true,
+    }) as { text?: string };
+    const text = String(out?.text ?? "").trim().slice(0, 400);
+    if (text.length < 3) return c.json({ error: "We didn't catch that — please try again or type your trip.", code: "VOICE_EMPTY" }, 422);
+    return c.json({ text });
+  } catch (err) {
+    console.error("[voice-transcribe]", err);
+    return c.json({ error: "Voice search failed — please type your trip.", code: "VOICE_ERROR" }, 502);
+  }
+});
 
 // Passport / ID photo → name, date of birth, nationality, document number,
 // expiry. The image is only sent to Gemini; nothing is stored.

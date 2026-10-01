@@ -73,6 +73,10 @@ class_name = "TenantRateLimiter"
 tag                = "v1"
 new_sqlite_classes = ["TenantRateLimiter"]
 
+# ── Workers AI (voice search speech-to-text, Whisper) ─────────────
+[ai]
+binding = "AI"
+
 # ── Cron: fare-alert sweep (re-checks alert routes nobody searched lately) ──
 [triggers]
 crons = ["17 */4 * * *"]
