@@ -75,6 +75,48 @@ customerTripRoutes.get("/:id", async (c) => {
   return c.json({ trip: publicTrip(trip, itinerary), cancelBlocker: cancellationBlocker(trip.booking, trip.amendments) });
 });
 
+// One-tap rebook: the route, cabin and travellers of a past booking, so the
+// site can search the same trip again with the traveller details filled in.
+customerTripRoutes.get("/:id/rebook", async (c) => {
+  const trip = await ownTrip(c, c.req.param("id"));
+  const b = trip.booking;
+  const pax = await c.get("db").select({
+    type: bookingPassengers.passengerType, firstName: bookingPassengers.firstName, lastName: bookingPassengers.lastName,
+    dob: bookingPassengers.dob, gender: bookingPassengers.gender, nationality: bookingPassengers.nationality,
+    passportNumber: bookingPassengers.passportNumber, passportExpiry: bookingPassengers.passportExpiry,
+  }).from(bookingPassengers).where(eq(bookingPassengers.bookingId, b.id));
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+  const today = new Date().toISOString().slice(0, 10);
+  return c.json({
+    origin: b.origin, destination: b.destination,
+    tripType: b.tripType === "ROUNDTRIP" ? "ROUNDTRIP" : "ONEWAY",
+    cabinClass: b.cabinClass ?? "ECONOMY", currency: b.currency,
+    adults: b.adultCount ?? 1, children: b.childCount ?? 0, infants: b.infantCount ?? 0,
+    lastDepartureDate: day(b.departureDate),
+    // Passports that expire before travel are left for the traveller to update.
+    travellers: pax.map((p) => {
+      const expiry = day(p.passportExpiry);
+      const valid = !!expiry && expiry > today;
+      return {
+        type: p.type, firstName: p.firstName, lastName: p.lastName, dob: day(p.dob), gender: p.gender, nationality: p.nationality,
+        passportNumber: valid ? p.passportNumber : null, passportExpiry: valid ? expiry : null,
+      };
+    }),
+  });
+});
+
+// Payment link for a held fare (hold now, pay later) — opens the /pay page.
+customerTripRoutes.post("/:id/pay-link", async (c) => {
+  const trip = await ownTrip(c, c.req.param("id"));
+  const b = trip.booking;
+  if (b.status !== "HELD") throw new HTTPException(409, { message: `This booking is ${b.status.toLowerCase().replace("_", " ")}.` });
+  if (b.heldUntil && b.heldUntil.getTime() < Date.now()) throw new HTTPException(409, { message: "This hold has expired and the airline has released the seats." });
+  const now = Math.floor(Date.now() / 1000);
+  const exp = Math.max(now + 20 * 60, b.heldUntil ? Math.floor(b.heldUntil.getTime() / 1000) : 0);
+  const t = await signToken({ sub: b.id, tenantId: c.get("tenantId"), iat: now, exp }, c.env.JWT_SECRET);
+  return c.json({ url: `/pay?${new URLSearchParams({ b: b.id, t })}` });
+});
+
 customerTripRoutes.get("/:id/eticket", async (c) => {
   const trip = await ownTrip(c, c.req.param("id"));
   return eticketResponse(c, trip.booking);

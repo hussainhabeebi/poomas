@@ -9,13 +9,16 @@ import { getBookableAdapter, parseTripjackReview, parseTripjackSeatMap, reviewTo
 import { normalizeBookingResponse } from "../lib/booking-response.js";
 import { resolveFlightSuppliers } from "./search.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
-import { signToken } from "./checkout.js";
+import { signToken, verifyToken } from "./checkout.js";
 import { optionalCustomerId } from "../lib/optional-customer.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { collectExchanges, persistExchanges, persistInBackground, type ExchangeCollector } from "../lib/api-exchanges.js";
 import { passengerNameProblem } from "../lib/passenger-names.js";
+import { fallbackHoldDeadline, findHoldDeadline, holdLabel } from "../lib/fare-hold.js";
+import { parseBookingDetails } from "../lib/trips.js";
+import { emailShell, escapeHtml, money, notifyCustomer, WEB_URL } from "../lib/customer-notify.js";
 
 const ssrPick = z.object({ key: z.string().min(1), code: z.string().min(1) });
 
@@ -75,6 +78,9 @@ const directBookSchema = z.object({
     phone: z.string().min(7),
     email: z.string().email().optional(),
   }).optional(),
+  // Hold now, pay later (TripJack, when the review allows it): seats are held
+  // without payment and the customer pays before the airline's time limit.
+  holdOnly:      z.boolean().optional(),
 }).superRefine((b, ctx) => {
   const n = (t: string) => b.passengers.filter((p) => p.type === t).length;
   if (n("ADULT") < 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["passengers"], message: "At least one adult is required" });
@@ -197,6 +203,25 @@ bookDirectRoutes.post("/seat-map", zValidator("json", z.object({ reviewBookingId
       errorCode: err?.code ?? "SEAT_MAP_FAILED", errorMessage: err?.message, responseSnippet: err?.responseSnippet }));
     return c.json({ errorCode: "SEAT_MAP_FAILED", error: "Seat map is unavailable right now." }, 502);
   }
+});
+
+// GET /api/book/held/:id — a held fare for the "pay later" page; authorised by
+// the checkout token sent in the hold message (X-Checkout-Token).
+bookDirectRoutes.get("/held/:id", async (c) => {
+  const id = c.req.param("id");
+  let payload: Record<string, unknown>;
+  try { payload = await verifyToken(c.req.header("X-Checkout-Token") ?? "", c.env.JWT_SECRET); }
+  catch { return c.json({ error: "This payment link has expired. Please search again." }, 401); }
+  if (payload.sub !== id || payload.tenantId !== c.get("tenantId")) return c.json({ error: "Invalid payment link" }, 403);
+  const [b] = await c.get("db").select({
+    id: bookings.id, status: bookings.status, origin: bookings.origin, destination: bookings.destination,
+    departureDate: bookings.departureDate, pnr: bookings.pnr, heldUntil: bookings.heldUntil,
+    totalAmount: bookings.totalAmount, currency: bookings.currency,
+    adultCount: bookings.adultCount, childCount: bookings.childCount, infantCount: bookings.infantCount,
+  }).from(bookings).where(and(eq(bookings.id, id), eq(bookings.tenantId, c.get("tenantId")))).limit(1);
+  if (!b) return c.json({ error: "Booking not found" }, 404);
+  const expired = b.status === "HELD" && !!b.heldUntil && b.heldUntil.getTime() < Date.now();
+  return c.json({ booking: { ...b, totalAmount: Number(b.totalAmount), expired } });
 });
 
 bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
@@ -344,13 +369,54 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     const customerAmount = fareCustomerAmount + ssrAmount;
     const markupAmount = Math.max(0, Math.round((customerAmount - supplierAmount) * 100) / 100);
 
+    // Hold now, pay later: book with TripJack without payment (ON_HOLD) first.
+    let hold: { ref: string; pnr: string | null; until: Date } | null = null;
+    if (body.holdOnly) {
+      if (!body.reviewBookingId || !reviewSummary?.conditions.holdAllowed || !tripjackClient) {
+        return c.json({ errorCode: "HOLD_NOT_ALLOWED", error: "This fare can't be held. Please pay now to book it.", requestId }, 400);
+      }
+      if (ssrAmount > 0) {
+        return c.json({ errorCode: "HOLD_NOT_ALLOWED", error: "Meals, baggage and seats can't be added to a held fare. Remove them, or pay now.", requestId }, 400);
+      }
+      const holdStart = Date.now();
+      try {
+        const raw = await tripjackClient.book({
+          fareId: body.fareId, holdId: bookingSessionId!, holdOnly: true,
+          passengers: body.passengers.map(({ ssr: _ssr, ...p }) => p),
+          contactEmail: body.contactEmail, contactPhone: body.contactPhone, paymentRef: "HOLD",
+          ...(body.gstInfo ? { gstInfo: body.gstInfo } : {}),
+          ...(body.emergencyContact ? { emergencyContact: body.emergencyContact } : {}),
+        });
+        const held = normalizeBookingResponse(raw, bookingSessionId!);
+        if (!held.success) throw Object.assign(new Error("TripJack did not hold the booking"), { responseSnippet: JSON.stringify(raw).slice(0, 800) });
+        let until = findHoldDeadline(raw);
+        let pnr = held.pnr || null;
+        try {
+          const details = await tripjackClient.pnrStatus(held.bookingRef);
+          pnr ||= parseBookingDetails(details).pnr ?? null;
+          until ??= findHoldDeadline(details);
+        } catch { /* the PNR also shows later in My Trips */ }
+        hold = { ref: held.bookingRef, pnr, until: until ?? fallbackHoldDeadline(new Date(body.departureDate)) };
+        runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book", level: "INFO", requestId,
+          requestSummary: { bookingId: hold.ref, hold: true, pnr: hold.pnr, holdUntil: hold.until.toISOString(), deadlineFromSupplier: Boolean(until) },
+          durationMs: Date.now() - holdStart }));
+      } catch (err: any) {
+        runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book", level: "ERROR", requestId,
+          httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
+          requestSummary: { bookingId: bookingSessionId, hold: true },
+          responseSnippet: err?.responseSnippet, errorCode: "HOLD_FAILED",
+          errorMessage: err?.supplierDetail ?? err?.message, durationMs: Date.now() - holdStart }));
+        return c.json({ errorCode: "HOLD_FAILED", error: "The airline couldn't hold this fare right now. You can still pay now to book it.", requestId }, 422);
+      }
+    }
+
     let pendingBooking: typeof bookings.$inferSelect | undefined;
     try {
       [pendingBooking] = await db.insert(bookings).values({
         tenantId,
         userId:             customerId,
         channel:            "B2C_WEB",
-        status:             "PAYMENT_PENDING",
+        status:             hold ? "HELD" : "PAYMENT_PENDING",
         tripType:           body.tripType,
         cabinClass:         "ECONOMY",
         origin:             body.origin.toUpperCase(),
@@ -366,6 +432,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
             fareIdentifiers: reviewSummary?.fareIdentifiers ?? [],
             conditions: reviewSummary?.conditions ?? null,
             ssrAmount,
+            ...(hold ? { held: true } : {}),
             ...(seatAmount ? { seatAmount } : {}),
             ...(body.gstInfo ? { gstInfo: body.gstInfo } : {}),
             ...(body.emergencyContact ? { emergencyContact: body.emergencyContact } : {}),
@@ -389,7 +456,8 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         totalAmount:        String(supplierAmount + markupAmount),
         currency:           body.currency,
         supplier:           body.supplier,
-        supplierBookingRef: bookingSessionId,
+        supplierBookingRef: hold?.ref ?? bookingSessionId,
+        ...(hold ? { heldUntil: hold.until, ...(hold.pnr ? { pnr: hold.pnr } : {}) } : {}),
         contactEmail:       body.contactEmail,
         contactPhone:       body.contactPhone,
       }).returning();
@@ -418,10 +486,29 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // Short-lived checkout token so the browser can start the Nomod payment for
     // this booking only (/api/payments/checkout accepts it via X-Checkout-Token).
     const now = Math.floor(Date.now() / 1000);
+    // A held fare can be paid until the airline's time limit (link in the hold message).
+    const exp = hold ? Math.max(now + 20 * 60, Math.floor(hold.until.getTime() / 1000)) : now + 20 * 60;
     const checkoutToken = await signToken(
-      { sub: pendingBooking!.id, tenantId, iat: now, exp: now + 20 * 60 },
+      { sub: pendingBooking!.id, tenantId, iat: now, exp },
       c.env.JWT_SECRET,
     );
+
+    if (hold) {
+      const amount = supplierAmount + markupAmount;
+      const payLink = `${WEB_URL}/pay?${new URLSearchParams({ b: pendingBooking!.id, t: checkoutToken })}`;
+      const route = `${body.origin.toUpperCase()} → ${body.destination.toUpperCase()}`;
+      runInBackground(c, notifyCustomer(c.env, db, tenantId, {
+        email: body.contactEmail, phone: body.contactPhone,
+        subject: `Fare on hold: ${route} — pay by ${holdLabel(hold.until)}`,
+        html: emailShell("Your fare is on hold", `<p>${escapeHtml(route)} on ${escapeHtml(body.departureDate)} is held${hold.pnr ? ` (airline PNR <b>${escapeHtml(hold.pnr)}</b>)` : ""}.</p>
+<p>Pay <b>${escapeHtml(money(amount, body.currency))}</b> before <b>${escapeHtml(holdLabel(hold.until))} (IST)</b> to get your e-ticket. After that the airline releases the seats.</p>`, { label: "Pay now", href: payLink }),
+        whatsapp: `🔒 *Fare on hold* — ${route} on ${body.departureDate}${hold.pnr ? `\nPNR: ${hold.pnr}` : ""}\nPay ${money(amount, body.currency)} before ${holdLabel(hold.until)} (IST) to get your ticket:\n${payLink}`,
+      }));
+      return c.json({
+        success: true, held: true, bookingId: pendingBooking!.id, pnr: hold.pnr, heldUntil: hold.until.toISOString(),
+        amount, currency: body.currency, requiresPayment: true, checkoutToken, requestId,
+      }, 201);
+    }
 
     return c.json({
       success:         true,

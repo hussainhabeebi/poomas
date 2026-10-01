@@ -79,6 +79,7 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
       currency:    bookings.currency,
       contactEmail: bookings.contactEmail,
       contactPhone: bookings.contactPhone,
+      heldUntil:   bookings.heldUntil,
     })
     .from(bookings)
     .where(and(eq(bookings.id, bookingId), eq(bookings.tenantId, tenantId)))
@@ -87,6 +88,10 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
   if (!booking) throw new HTTPException(404, { message: "Booking not found" });
   if (!["HELD", "PAYMENT_PENDING"].includes(booking.status)) {
     throw new HTTPException(400, { message: `Booking is ${booking.status}` });
+  }
+  // Held fares (hold now, pay later) can't be paid after the airline's time limit.
+  if (booking.status === "HELD" && booking.heldUntil && booking.heldUntil.getTime() < Date.now()) {
+    throw new HTTPException(409, { message: "This hold has expired and the airline has released the seats. Please search again." });
   }
 
   const settings   = await getTenantPaymentSettings(c.env, tenantId);

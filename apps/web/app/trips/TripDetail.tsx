@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { apiCall, inr, openETicket, STATUS_LABEL } from "../lib/customer-api";
+import { Rebook } from "./Rebook";
 
 type Mode = "customer" | "guest";
 interface Segment { airline: string; airlineName: string; flightNumber: string; from: { code: string; city?: string; name?: string; terminal?: string }; to: { code: string; city?: string; name?: string; terminal?: string }; departure: string; arrival: string; durationMin?: number; cabinBaggage?: string; checkedBaggage?: string }
@@ -194,6 +195,23 @@ export default function TripDetail({ mode, id }: { mode: Mode; id?: string }) {
           </div>
         ))}
       </section>
+
+      {mode === "customer" && trip.status === "HELD" && (
+        <section style={{ ...card, marginTop: 12, borderColor: "#fde68a", background: "#fffbeb" }}>
+          <h2 style={h2}>🔒 Fare on hold</h2>
+          <p style={muted}>Pay before the airline&apos;s time limit to get your e-ticket. After that the seats are released.</p>
+          <button disabled={busy} style={primaryBtnBtn} onClick={() => run(async () => {
+            const r = await apiCall<{ url: string }>(`/api/profile/trips/${trip.id}/pay-link`, { method: "POST" });
+            window.location.assign(r.url);
+          })}>Pay now</button>
+        </section>
+      )}
+
+      {mode === "customer" && (
+        <section style={{ ...card, marginTop: 12 }}>
+          <Rebook tripId={trip.id} origin={trip.origin} destination={trip.destination} />
+        </section>
+      )}
 
       {mode === "customer" && ticketed && !cancelBlocker && (
         <section style={{ ...card, marginTop: 12 }}>

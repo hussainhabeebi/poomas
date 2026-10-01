@@ -70,6 +70,30 @@ const AIRPORT_COUNTRY: Record<string, string> = {
   CMB:"LK", KTM:"NP", DAC:"BD", MLE:"MV",
 };
 
+// "Book this trip again" (My Trips) leaves the travellers in sessionStorage;
+// fill them in by type when booking the same route.
+type RebookTraveller = { type: string; firstName: string; lastName: string; dob: string | null; gender: string | null; nationality: string | null; passportNumber: string | null; passportExpiry: string | null };
+function withRebookTravellers(list: Passenger[], from: string, to: string): Passenger[] {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("rebook_travellers") ?? "null") as { origin: string; destination: string; at: number; travellers: RebookTraveller[] } | null;
+    if (!saved || Date.now() - saved.at > 6 * 3600_000) return list;
+    if (saved.origin !== from.toUpperCase() || saved.destination !== to.toUpperCase()) return list;
+    const pool = [...saved.travellers];
+    return list.map((p) => {
+      const i = pool.findIndex((t) => t.type === p.type);
+      if (i < 0) return p;
+      const t = pool.splice(i, 1)[0];
+      return {
+        ...p, firstName: t.firstName, lastName: t.lastName, dob: t.dob ?? "",
+        gender: t.gender === "F" ? "F" : "M", nationality: t.nationality ?? p.nationality,
+        passportNumber: t.passportNumber ?? "", passportExpiry: t.passportExpiry ?? "",
+      };
+    });
+  } catch {
+    return list;
+  }
+}
+
 function getToken(): string {
   try {
     const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -96,6 +120,8 @@ export default function BookPage() {
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
   const [confirmation, setConfirmation] = useState<any>(null);
+  // Hold now, pay later (when the airline allows it).
+  const [held, setHeld] = useState<{ bookingId: string; pnr: string | null; heldUntil: string; amount: number; currency: string; checkoutToken: string } | null>(null);
   // TripJack review (run on load): conditions, SSR options, fare alerts.
   const [review, setReview] = useState<Review | null>(null);
   const [seatMaps, setSeatMaps] = useState<SegmentSeatMap[] | null>(null);
@@ -128,11 +154,12 @@ export default function BookPage() {
     const adults   = Math.min(9, Math.max(1, Number(q.get("adults"))   || 1));
     const children = Math.min(6, Math.max(0, Number(q.get("children")) || 0));
     const infants  = Math.min(4, Math.max(0, Number(q.get("infants"))  || 0));
-    setPassengers([
+    const blank = [
       ...Array.from({ length: adults },   () => emptyPassenger("ADULT")),
       ...Array.from({ length: children }, () => emptyPassenger("CHILD")),
       ...Array.from({ length: infants },  () => emptyPassenger("INFANT")),
-    ]);
+    ];
+    setPassengers(withRebookTravellers(blank, q.get("from") ?? "", q.get("to") ?? ""));
     setFare({
       fareId, supplier,
       airlineName:   q.get("airline") ?? "",
@@ -417,6 +444,80 @@ export default function BookPage() {
     }
   }
 
+  // Request body for /api/book (also used to hold the fare).
+  function bookingPayload(extra: Record<string, unknown> = {}) {
+    if (!fare) throw new Error("No fare selected");
+    return {
+      fareId:        fare.fareId,
+      supplier:      fare.supplier,
+      contactEmail:  email.trim(),
+      contactPhone:  phone.trim(),
+      origin:        fare.origin,
+      destination:   fare.destination,
+      departureDate: fare.departureTime.slice(0, 10),
+      totalFare:     fare.totalFare,
+      currency:      fare.currency,
+      tripType,
+      ...(review ? { reviewBookingId: review.bookingId } : {}),
+      ...(useGst && gst.gstNumber.trim() ? { gstInfo: {
+        gstNumber: gst.gstNumber.trim().toUpperCase(), registeredName: gst.registeredName.trim(),
+        ...(gst.email.trim() ? { email: gst.email.trim() } : {}), ...(gst.mobile.trim() ? { mobile: gst.mobile.replace(/\D/g, "") } : {}),
+        ...(gst.address.trim() ? { address: gst.address.trim() } : {}),
+      } } : {}),
+      ...(cond?.emergencyContactRequired || emergency.name.trim() ? { emergencyContact: {
+        name: emergency.name.trim(), phone: emergency.phone.trim(), ...(emergency.email.trim() ? { email: emergency.email.trim() } : {}),
+      } } : {}),
+      ...(new URLSearchParams(window.location.search).get("sid") ? { searchId: new URLSearchParams(window.location.search).get("sid") } : {}),
+      passengers:    passengers.map((p) => ({
+        type:           p.type,
+        gender:         p.gender,
+        dob:            p.dob || undefined,
+        firstName:      p.firstName.trim(),
+        lastName:       p.lastName.trim(),
+        nationality:    p.nationality.trim().toUpperCase().slice(0, 2) || "IN",
+        passportNumber: p.passportNumber.trim() || undefined,
+        passportExpiry: p.passportExpiry || undefined,
+        passportIssueDate: p.passportNumber.trim() && p.passportIssueDate ? p.passportIssueDate : undefined,
+        panNumber:      p.panNumber.trim() ? p.panNumber.trim().toUpperCase() : undefined,
+        documentId:     p.documentId.trim() || undefined,
+        ...(p.type !== "INFANT" && (picks(p.bag).length || picks(p.meal).length || picks(p.seat).length)
+          ? { ssr: {
+              ...(picks(p.bag).length ? { baggage: picks(p.bag) } : {}),
+              ...(picks(p.meal).length ? { meal: picks(p.meal) } : {}),
+              ...(picks(p.seat).length ? { seat: picks(p.seat) } : {}),
+            } }
+          : {}),
+      })),
+      ...extra,
+    };
+  }
+
+  async function holdFare(form: HTMLFormElement | null) {
+    if (!fare || submitting || !review || !cond?.holdAllowed) return;
+    if (form && !form.reportValidity()) return;
+    setSubmitting(true); setError("");
+    try {
+      const res = await fetch(`${apiUrl}/api/book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(bookingPayload({ holdOnly: true })),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.held) {
+        if (d.errorCode === "FARE_EXPIRED") { setFareExpired(true); return; }
+        throw new Error(typeof d.error === "string" ? d.error : bookingError(d, res.status));
+      }
+      saveTravellerDetails();
+      setHeld({ bookingId: d.bookingId, pnr: d.pnr ?? null, heldUntil: d.heldUntil, amount: Number(d.amount), currency: d.currency, checkoutToken: d.checkoutToken });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (x: any) {
+      setError(x?.message ?? "We couldn't hold this fare. You can still pay now.");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!fare || submitting || fareExpired || bookingUncertain) return;
@@ -452,48 +553,7 @@ export default function BookPage() {
       const res = await fetch(`${apiUrl}/api/book`, {
         method:  "POST",
         headers: { "Content-Type": "application/json", "x-tenant-slug": "poomas", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({
-          fareId:        fare.fareId,
-          supplier:      fare.supplier,
-          contactEmail:  email.trim(),
-          contactPhone:  phone.trim(),
-          origin:        fare.origin,
-          destination:   fare.destination,
-          departureDate: fare.departureTime.slice(0, 10),
-          totalFare:     fare.totalFare,
-          currency:      fare.currency,
-          tripType,
-          ...(review ? { reviewBookingId: review.bookingId } : {}),
-          ...(useGst && gst.gstNumber.trim() ? { gstInfo: {
-            gstNumber: gst.gstNumber.trim().toUpperCase(), registeredName: gst.registeredName.trim(),
-            ...(gst.email.trim() ? { email: gst.email.trim() } : {}), ...(gst.mobile.trim() ? { mobile: gst.mobile.replace(/\D/g, "") } : {}),
-            ...(gst.address.trim() ? { address: gst.address.trim() } : {}),
-          } } : {}),
-          ...(cond?.emergencyContactRequired || emergency.name.trim() ? { emergencyContact: {
-            name: emergency.name.trim(), phone: emergency.phone.trim(), ...(emergency.email.trim() ? { email: emergency.email.trim() } : {}),
-          } } : {}),
-          ...(new URLSearchParams(window.location.search).get("sid") ? { searchId: new URLSearchParams(window.location.search).get("sid") } : {}),
-          passengers:    passengers.map((p) => ({
-            type:           p.type,
-            gender:         p.gender,
-            dob:            p.dob || undefined,
-            firstName:      p.firstName.trim(),
-            lastName:       p.lastName.trim(),
-            nationality:    p.nationality.trim().toUpperCase().slice(0, 2) || "IN",
-            passportNumber: p.passportNumber.trim() || undefined,
-            passportExpiry: p.passportExpiry || undefined,
-            passportIssueDate: p.passportNumber.trim() && p.passportIssueDate ? p.passportIssueDate : undefined,
-            panNumber:      p.panNumber.trim() ? p.panNumber.trim().toUpperCase() : undefined,
-            documentId:     p.documentId.trim() || undefined,
-            ...(p.type !== "INFANT" && (picks(p.bag).length || picks(p.meal).length || picks(p.seat).length)
-              ? { ssr: {
-                  ...(picks(p.bag).length ? { baggage: picks(p.bag) } : {}),
-                  ...(picks(p.meal).length ? { meal: picks(p.meal) } : {}),
-                  ...(picks(p.seat).length ? { seat: picks(p.seat) } : {}),
-                } }
-              : {}),
-          })),
-        }),
+        body: JSON.stringify(bookingPayload()),
       }).catch(() => {
         setBookingUncertain(true);
         throw new Error(bookingError({ errorCode: "BOOKING_STATUS_UNKNOWN" }, 502));
@@ -540,6 +600,32 @@ export default function BookPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (held) {
+    const until = new Date(held.heldUntil);
+    const payLater = `/pay?${new URLSearchParams({ b: held.bookingId, t: held.checkoutToken })}`;
+    return (
+      <main className="ck success"><style>{css}{checkoutCss}</style>
+        <div className="ok">🔒</div>
+        <h1>Your fare is on hold</h1>
+        {held.pnr && <p style={{ fontSize: 22, fontWeight: 800 }}>PNR: <span style={{ color: "#E31E24" }}>{held.pnr}</span></p>}
+        <p>Pay <b>{new Intl.NumberFormat("en-IN", { style: "currency", currency: held.currency, maximumFractionDigits: 0 }).format(held.amount)}</b> before{" "}
+          <b>{until.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })}</b> to get your e-ticket.
+          After that the airline releases the seats.</p>
+        <p style={{ color: "#667085" }}>We&apos;ve sent a payment link to {email}{phone ? " and WhatsApp" : ""}. Your ticket is issued only after payment.</p>
+        {error && <p style={{ color: "#b91c1c" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+          <button type="button" disabled={submitting} style={{ background: "#E31E24", color: "#fff", border: 0, borderRadius: 10, padding: "12px 18px", fontWeight: 800, cursor: "pointer" }}
+            onClick={async () => {
+              setSubmitting(true); setError("");
+              try { await startNomodPayment(held.bookingId, held.checkoutToken); }
+              catch (x: any) { setError(x?.message ?? "The payment page couldn't open."); setSubmitting(false); }
+            }}>{submitting ? "Opening payment…" : "Pay now"}</button>
+          <a href={payLater} style={{ border: "1px solid #cbd5e1", borderRadius: 10, padding: "12px 18px", fontWeight: 700, color: "#0f172a", textDecoration: "none" }}>Save payment link</a>
+        </div>
+      </main>
+    );
   }
 
   if (confirmation) {
@@ -890,6 +976,14 @@ export default function BookPage() {
 
         </>)}
 
+        {reviewing && cond?.holdAllowed && review && !pendingPayment && !bookingUncertain && !fareExpired
+          && !passengers.some((p) => picks(p.bag).length || picks(p.meal).length || picks(p.seat).length) && (
+          <div className="holdOffer">
+            <div><b>🔒 Not ready to pay?</b><span>Hold this fare free and pay later — before the airline&apos;s time limit (often a few hours). Your ticket is issued after payment.</span></div>
+            <button type="button" disabled={submitting} onClick={(e) => void holdFare(e.currentTarget.form)}>{submitting ? "Holding…" : "Hold fare, pay later"}</button>
+          </div>
+        )}
+
         <div className="spacer" />
         <div className="pay">
           <div>
@@ -920,6 +1014,6 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}${seatCss}`;
+const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}.holdOffer{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:12px 14px;margin:14px 0}.holdOffer div{display:flex;flex-direction:column;gap:3px;flex:1 1 240px;font-size:13px;color:#78350f}.holdOffer b{font-size:14px;color:#451a03}.holdOffer button{height:44px;padding:0 16px;border:1px solid #d97706;border-radius:12px;background:#fff;color:#92400e;font-weight:800;font-size:14px;cursor:pointer}.holdOffer button:disabled{opacity:.6}${seatCss}`;
 
 const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.checkError{justify-content:space-between;background:#fff7ed;border-color:#fed7aa;color:#9a3412}.checkError button{border:0;background:#ea580c;color:#fff;border-radius:8px;padding:7px 12px;font-weight:800;cursor:pointer}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.typeSelect{height:32px;border:1px solid #fecdd3;border-radius:99px;padding:0 10px;background:#fff1f2;color:#be123c;font-size:11px;font-weight:800;cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23be123c'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}.typeSelect:focus{outline:none;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;
