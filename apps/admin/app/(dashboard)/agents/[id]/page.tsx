@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API, apiHeaders } from "../../../../lib/api";
+import AgentControls from "./AgentControls";
 
 interface Agent {
   id: string; businessName: string; ownerName: string; email: string; phone: string; whatsapp: string | null;
@@ -89,6 +90,8 @@ export default function AgentDetailPage() {
           </ul>
         )}
       </div>
+
+      <AgentControls agentId={id} />
 
       <div style={card}>
         <h2 style={h2}>Status</h2>

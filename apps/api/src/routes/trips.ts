@@ -18,7 +18,8 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { bookings, bookingAmendments, bookingPassengers } from "@poomas/db/schema";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { descendantIds } from "../lib/agent-program.js";
 import type { Env, Variables } from "../types.js";
 import { itineraryFileName, renderItineraryHtml } from "../lib/itinerary.js";
 import { signToken, verifyToken } from "./checkout.js";
@@ -36,7 +37,14 @@ type App = Hono<{ Bindings: Env; Variables: Variables }>;
 
 export const customerTripRoutes: App = new Hono();
 
+// Customers see their own trips. The same routes serve the agency portal
+// (/api/agent/trips): an agency sees its own bookings and its sub-agents'.
 customerTripRoutes.use("*", async (c, next) => {
+  const agentId = c.get("agentId");
+  if (agentId && ["AGENT_ADMIN", "AGENT_STAFF", "AGENT_ACCOUNTANT"].includes(c.get("userRole") ?? "")) {
+    (c as any).set("agentScope", await descendantIds(c.get("db"), c.get("tenantId"), agentId));
+    return next();
+  }
   if (c.get("userRole") !== "CUSTOMER" || !c.get("userId")) {
     throw new HTTPException(403, { message: "Sign in with a customer account to see your trips" });
   }
@@ -45,7 +53,9 @@ customerTripRoutes.use("*", async (c, next) => {
 
 async function ownTrip(c: any, id: string) {
   const trip = await loadTrip(c.get("db"), c.get("tenantId"), id);
-  if (!trip || trip.booking.userId !== c.get("userId")) throw new HTTPException(404, { message: "Booking not found" });
+  const scope = c.get("agentScope") as string[] | undefined;
+  const mine = scope ? !!trip?.booking.agentId && scope.includes(trip.booking.agentId) : trip?.booking.userId === c.get("userId");
+  if (!trip || !mine) throw new HTTPException(404, { message: "Booking not found" });
   return trip;
 }
 
@@ -57,9 +67,10 @@ customerTripRoutes.get("/", async (c) => {
     infantCount: bookings.infantCount, createdAt: bookings.createdAt,
   })
     .from(bookings)
-    .where(and(eq(bookings.tenantId, c.get("tenantId")), eq(bookings.userId, c.get("userId")!)))
+    .where(and(eq(bookings.tenantId, c.get("tenantId")),
+      (c as any).get("agentScope") ? inArray(bookings.agentId, (c as any).get("agentScope") as string[]) : eq(bookings.userId, c.get("userId")!)))
     .orderBy(desc(bookings.createdAt))
-    .limit(100);
+    .limit(200);
   return c.json({ trips: rows.map((r) => ({ ...r, totalAmount: Number(r.totalAmount) })) });
 });
 

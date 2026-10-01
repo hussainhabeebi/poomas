@@ -15,6 +15,7 @@ import { apiKeysAdminRoutes }      from "./api-keys.js";
 import { supplierLogsAdminRoutes } from "./supplier-logs.js";
 import { customerWalletsAdminRoutes } from "./customer-wallets.js";
 import { cancellationsAdminRoutes, supportAdminRoutes } from "./post-booking.js";
+import { agentProgramAdminRoutes } from "./agent-program.js";
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -32,6 +33,7 @@ adminRoutes.route("/tenants",   tenantsAdminRoutes);
 adminRoutes.route("/bookings",  bookingsAdminRoutes);
 adminRoutes.route("/suppliers", suppliersAdminRoutes);
 adminRoutes.route("/agents",    agentsAdminRoutes);
+adminRoutes.route("/agent-program", agentProgramAdminRoutes);
 adminRoutes.route("/finance",   financeAdminRoutes);
 adminRoutes.route("/settings",      settingsAdminRoutes);
 adminRoutes.route("/integrations",  integrationsAdminRoutes);

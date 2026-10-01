@@ -17,6 +17,7 @@ import {
 import { createRazorpayOrder, createNomodCheckout, createRefundRazorpay, RAZORPAY_ENABLED, refundNomodCharge, resolveNomodApiKey } from "./lib/payment-gateway.js";
 import { creditBookingBonus, creditWallet } from "./lib/customer-wallet.js";
 import { rewardReferral } from "./lib/referral.js";
+import { agentWallet, creditAgentWallet, settleAgentBooking } from "./lib/agent-program.js";
 import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { renderItineraryHtml } from "./lib/itinerary.js";
@@ -291,6 +292,26 @@ async function refundCustomerWalletPayment(db: ReturnType<typeof createDb>, book
   }
 }
 
+// Refunds a failed agency booking to the agency wallet, once (claims the payment first).
+async function refundAgentWalletPayment(db: ReturnType<typeof createDb>, bookingId: string): Promise<void> {
+  const [claimed] = await db.update(payments)
+    .set({ status: "REFUNDED", refundCompletedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(payments.bookingId, bookingId), eq(payments.gateway, "WALLET"), eq(payments.status, "SUCCESS"), sql`${payments.gatewayPaymentId} LIKE 'agentwallet_%'`))
+    .returning({ amount: payments.amount });
+  if (!claimed) return;
+  const [bk] = await db.select({ agentId: bookings.agentId, tenantId: bookings.tenantId }).from(bookings).where(eq(bookings.id, bookingId)).limit(1);
+  if (!bk?.agentId) return;
+  try {
+    const wallet = await agentWallet(db, bk.tenantId, bk.agentId);
+    if (wallet) await creditAgentWallet(db, wallet.id, Number(claimed.amount), "REFUND_CREDIT", {
+      bookingId, note: `Refund: booking ${bookingId.slice(0, 8)} could not be ticketed`,
+    });
+    console.info(`[autoRefund] agency wallet refund issued for booking ${bookingId}`);
+  } catch (err) {
+    console.error(`[autoRefund] agency wallet refund failed for booking ${bookingId}:`, err);
+  }
+}
+
 async function triggerAutoRefund(
   db: ReturnType<typeof createDb>,
   env: Env,
@@ -298,6 +319,11 @@ async function triggerAutoRefund(
   gatewayPaymentId: string,
   amount: number,
 ): Promise<void> {
+  // Agency wallet payments (agent portal) go back to the agency wallet.
+  if (gatewayPaymentId.startsWith("agentwallet_")) {
+    await refundAgentWalletPayment(db, bookingId);
+    return;
+  }
   // Customer wallet payments go back to the customer's wallet.
   if (gatewayPaymentId.startsWith("wallet_")) {
     await refundCustomerWalletPayment(db, bookingId);
@@ -683,6 +709,12 @@ async function bookPaidBooking(
     if (await creditBookingBonus(db, booking.id)) console.info(`[wallet-bonus] credited for booking ${booking.id}`);
   } catch (err) {
     console.error(`[wallet-bonus] booking ${booking.id}:`, err);
+  }
+  // Agency booking: pay parent agencies their markup and the agency its commission.
+  try {
+    await settleAgentBooking(env, db, booking);
+  } catch (err) {
+    console.error(`[agent-settle] booking ${booking.id}:`, err);
   }
   // Refer-a-friend reward on the referred customer's first confirmed booking.
   try {

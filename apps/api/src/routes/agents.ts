@@ -6,6 +6,8 @@ import { agents, agentDocuments, walletAccounts } from "@poomas/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { creditWallet, debitWallet, roundMoney } from "../lib/customer-wallet.js";
 import { getAgentMarkup, setAgentMarkup } from "../lib/agent-markup.js";
+import { audit } from "../lib/agent-program.js";
+import { createInvite } from "./agent-portal.js";
 import type { Env, Variables } from "../types.js";
 import { requireRole } from "../middleware/auth.js";
 
@@ -143,7 +145,14 @@ agentRoutes.post("/sub-agents/invite", zValidator("json", inviteSchema), async (
     currency: parent?.currency ?? "INR",
   });
 
+  // Login for the sub-agent's admin: an invitation link to set a password.
+  const inviteLink = await createInvite(c.env, db, {
+    tenantId, agentId: agent.id, email: body.contactEmail.toLowerCase(), name: body.businessName, role: "AGENT_ADMIN", invitedBy: c.get("userId") ?? null,
+  }, body.businessName).catch(() => null);
+  await audit(db, { tenantId, userId: c.get("userId"), action: "SUBAGENT_INVITED", entity: "Agent", entityId: agent.id, after: { parentAgentId: agentId, email: body.contactEmail } });
+
   return c.json({
+    inviteLink,
     id:           agent.id,
     businessName: agent.businessName,
     contactEmail: agent.email,
@@ -210,7 +219,9 @@ agentRoutes.put("/sub-agents/:id/markup", zValidator("json", z.object({
   const { parentId, sub } = await ownSubAgent(c, c.req.param("id"));
   const body = c.req.valid("json");
   const markup = body.value > 0 ? { type: body.type, value: roundMoney(body.value), setBy: parentId, updatedAt: new Date().toISOString() } : null;
+  const before = await getAgentMarkup(c.env, c.get("tenantId"), sub.id);
   await setAgentMarkup(c.env, c.get("tenantId"), sub.id, markup);
+  await audit(c.get("db"), { tenantId: c.get("tenantId"), userId: c.get("userId"), action: "SUBAGENT_MARKUP_SET", entity: "Agent", entityId: sub.id, before, after: markup });
   return c.json({ ok: true, markup });
 });
 
@@ -244,6 +255,7 @@ agentRoutes.post("/sub-agents/:id/transfer", zValidator("json", z.object({
     await creditWallet(db, from.id, amount, "ADJUSTMENT", { ...meta, note: `${label} — reversed` });
     throw err;
   }
+  await audit(db, { tenantId, userId: c.get("userId"), action: "SUBAGENT_TRANSFER", entity: "Agent", entityId: sub.id, after: { amount, direction } });
   return c.json({ ok: true, amount: roundMoney(amount), direction, currency: from.currency });
 });
 
@@ -254,6 +266,7 @@ agentRoutes.patch("/sub-agents/:id/status", zValidator("json", z.object({ status
   const { status } = c.req.valid("json");
   if (!["APPROVED", "SUSPENDED"].includes(sub.status)) throw new HTTPException(409, { message: `Sub-agent is ${sub.status.toLowerCase()} — waiting for admin approval` });
   await c.get("db").update(agents).set({ status, updatedAt: new Date() }).where(eq(agents.id, sub.id));
+  await audit(c.get("db"), { tenantId: c.get("tenantId"), userId: c.get("userId"), action: "SUBAGENT_STATUS", entity: "Agent", entityId: sub.id, before: { status: sub.status }, after: { status } });
   return c.json({ ok: true, status });
 });
 

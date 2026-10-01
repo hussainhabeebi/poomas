@@ -47,3 +47,17 @@ export async function optionalAgentId(c: Context<{ Bindings: Env; Variables: Var
     return null;
   }
 }
+
+// Agency id + staff user id from an agent's Bearer token; null for everyone else.
+export async function optionalAgent(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<{ agentId: string; userId: string | null } | null> {
+  const auth = c.req.header("Authorization") ?? "";
+  if (!auth.startsWith("Bearer ")) return null;
+  try {
+    const { payload } = await jwtVerify(auth.slice(7), new TextEncoder().encode(c.env.JWT_SECRET)) as {
+      payload: { agentId?: string; tenantId?: string; userId?: string };
+    };
+    return payload.agentId && payload.tenantId === c.get("tenantId") ? { agentId: payload.agentId, userId: payload.userId ?? null } : null;
+  } catch {
+    return null;
+  }
+}

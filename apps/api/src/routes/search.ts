@@ -7,7 +7,8 @@ import { logSupplierCall } from "../lib/supplier-logger.js";
 import { getAedRate } from "../lib/fx.js";
 import { collectExchanges, persistExchanges, persistInBackground } from "../lib/api-exchanges.js";
 import { recordFareObservation, sendFareAlerts } from "../lib/fare-insights.js";
-import { getAgentMarkup, optionalAgentId, withAgentMarkup } from "../lib/agent-markup.js";
+import { optionalAgentId } from "../lib/agent-markup.js";
+import { agentPricing, rulesFor } from "../lib/agent-program.js";
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -290,9 +291,8 @@ async function runSearch(
     })());
   }
 
-  // Sub-agent selling markup (set by their parent agent) — added per request, never cached.
+  // Agency callers get their own net / selling prices — added per request, never cached.
   const agentId = await optionalAgentId(c);
-  const agentMarkup = agentId ? await getAgentMarkup(c.env, tenantId, agentId) : null;
 
   const cacheKey = `fares:${tenantId}:${JSON.stringify({ ...params, currency })}`;
   try {
@@ -304,7 +304,7 @@ async function runSearch(
       // Keep the original live search's id so a booking links to its TripJack logs.
       return c.json({
         ...cached, fromCache: true, searchId: (cached as { searchId?: string }).searchId ?? searchId,
-        ...(agentMarkup ? { fares: withAgentMarkup(cached.fares as { totalFare: number; displayPrice?: number }[], agentMarkup) } : {}),
+        ...(agentId ? { fares: await agentFares(c, tenantId, agentId, cached.fares as AgentFare[]) } : {}),
       });
     }
   } catch (err) {
@@ -333,7 +333,8 @@ async function runSearch(
     const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
     pricedFares = result.fares.map((fare) => ({
       ...fare,
-      displayPrice: applyMarkup(fare, rules),
+      // Company-wide rules only: agency rules apply to that agency's own searches.
+      displayPrice: applyMarkup(fare, rulesFor(rules, null)),
       markup: undefined,
     }));
   } catch (err) {
@@ -381,7 +382,31 @@ async function runSearch(
     })());
   }
 
-  return c.json(agentMarkup ? { ...response, fares: withAgentMarkup(response.fares, agentMarkup) } : response);
+  return c.json(agentId ? { ...response, fares: await agentFares(c, tenantId, agentId, response.fares as AgentFare[]) } : response);
+}
+
+type AgentFare = { totalFare: number; displayPrice?: number; airline?: string; origin?: string; destination?: string; cabinClass?: string; supplier?: string };
+
+// Agency view of a result set: company price (including rules for this agency),
+// plus parents' markups = NET (what the agency pays); plus its own markup = SELLING.
+async function agentFares(c: Context<{ Bindings: Env; Variables: Variables }>, tenantId: string, agentId: string, fares: AgentFare[]) {
+  try {
+    const db = c.get("db");
+    const { applyMarkup } = await import("../lib/markup.js");
+    const { markupRules } = await import("@poomas/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+    const ownRules = rules.some((r) => r.agentId === agentId);
+    const pricing = await agentPricing(c.env, db, tenantId, agentId);
+    return fares.map((f) => {
+      const company = ownRules ? applyMarkup(f as never, rulesFor(rules, agentId)) : (f.displayPrice ?? f.totalFare);
+      const p = pricing.price(company);
+      return { ...f, displayPrice: p.net, netPrice: p.net, sellingPrice: p.selling, agentMarkup: Math.round((p.net - company) * 100) / 100 };
+    });
+  } catch (err) {
+    console.error("[search] agent pricing unavailable; showing company prices", err);
+    return fares;
+  }
 }
 
 // Display/payment conversion rate (INR per 1 AED) set by admin; null = AED payment off.

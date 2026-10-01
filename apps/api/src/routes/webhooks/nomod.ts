@@ -1,5 +1,6 @@
 import type { Handler } from "hono";
-import { payments, bookings } from "@poomas/db/schema";
+import { payments, bookings, walletTransactions } from "@poomas/db/schema";
+import { creditAgentWallet } from "../../lib/agent-program.js";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 
@@ -49,6 +50,19 @@ export const nomodWebhook: Handler<{ Bindings: Env; Variables: Variables }> = as
     : [];
 
   if (!payment) {
+    // Agency wallet top-up (agent portal): credited once when the charge completes.
+    for (const id of candidates.filter((x) => /^[\w-]{6,64}$/.test(x)).slice(0, 25)) {
+      const topup = await c.env.SESSIONS_KV.get(`agent_topup:${id}`, "json").catch(() => null) as { tenantId: string; agentId: string; walletId: string; amount: number; currency: string; userId: string | null } | null;
+      if (!topup) continue;
+      if (type !== "charge.completed") return c.json({ ok: true, topup: "ignored" });
+      const ref = `nomod:${id}`;
+      const [already] = await db.select({ id: walletTransactions.id }).from(walletTransactions).where(eq(walletTransactions.paymentId, ref)).limit(1);
+      if (already) return c.json({ ok: true, duplicate: true });
+      await creditAgentWallet(db, topup.walletId, topup.amount, "TOPUP", { paymentId: ref, note: `Online top-up${chargeId ? ` · ${chargeId}` : ""}`, performedById: topup.userId ?? undefined });
+      await c.env.SESSIONS_KV.delete(`agent_topup:${id}`);
+      console.info(`[nomod-webhook] agency top-up ${topup.amount} ${topup.currency} → agent ${topup.agentId}`);
+      return c.json({ ok: true, topup: "credited" });
+    }
     console.warn(`[nomod-webhook] ${type} ${chargeId ?? ""}: no matching NOMOD payment`, rawBody.slice(0, 500));
     return c.json({ ok: true, matched: false });
   }

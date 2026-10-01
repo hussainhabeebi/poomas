@@ -11,6 +11,8 @@ import { resolveFlightSuppliers } from "./search.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
 import { signToken, verifyToken } from "./checkout.js";
 import { optionalCustomerId } from "../lib/optional-customer.js";
+import { optionalAgent } from "../lib/agent-markup.js";
+import { AgentBlocked, agentPricing, assertAgentCanBook } from "../lib/agent-program.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import { and, eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
@@ -240,6 +242,19 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   (c as any).set("exchangeRequestId", requestId);
   if (body.searchId) (c as any).set("exchangeSearchId", body.searchId);
   const customerId = await optionalCustomerId(c);
+  // B2B: an agency login books for its customers (paid from the agency wallet).
+  const agent = customerId ? null : await optionalAgent(c);
+  if (agent) {
+    try {
+      await assertAgentCanBook(c.env, db, tenantId, agent.agentId, {
+        origin: body.origin.toUpperCase(), destination: body.destination.toUpperCase(), departureDate: body.departureDate,
+        names: body.passengers.map((p) => `${p.firstName.trim()} ${p.lastName.trim()}`),
+      });
+    } catch (err) {
+      if (err instanceof AgentBlocked) return c.json({ error: err.message, errorCode: err.code, requestId }, 403);
+      throw err;
+    }
+  }
 
   const { platformCredentials: platformCreds, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
 
@@ -362,10 +377,13 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     // TripJack is paid TF + chosen SSR (paymentInfos.amount); markup applies to the fare only.
     const fareAmount = reviewPaymentAmount;
     const supplierAmount = Math.round((fareAmount + ssrAmount) * 100) / 100;
-    const fareCustomerAmount = await customerPrice(db, tenantId, fareAmount, {
+    const companyFareAmount = await customerPrice(db, tenantId, fareAmount, {
       origin: body.origin.toUpperCase(), destination: body.destination.toUpperCase(),
       supplier: body.supplier, airline: reviewAirline ?? "",
-    });
+    }, agent?.agentId ?? null);
+    // Agencies pay their NET price: company price + each parent agency's markup.
+    const agentQuote = agent ? (await agentPricing(c.env, db, tenantId, agent.agentId)).price(companyFareAmount) : null;
+    const fareCustomerAmount = agentQuote?.net ?? companyFareAmount;
     const customerAmount = fareCustomerAmount + ssrAmount;
     const markupAmount = Math.max(0, Math.round((customerAmount - supplierAmount) * 100) / 100);
 
@@ -415,7 +433,8 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       [pendingBooking] = await db.insert(bookings).values({
         tenantId,
         userId:             customerId,
-        channel:            "B2C_WEB",
+        ...(agent ? { agentId: agent.agentId } : {}),
+        channel:            agent ? "B2B_PORTAL" : "B2C_WEB",
         status:             hold ? "HELD" : "PAYMENT_PENDING",
         tripType:           body.tripType,
         cabinClass:         "ECONOMY",
@@ -425,6 +444,10 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         flightData:         {
           id: body.fareId,
           ...(body.searchId ? { searchId: body.searchId } : {}),
+          ...(agent && agentQuote ? { agentPricing: {
+            agentUserId: agent.userId, companyPrice: companyFareAmount, net: agentQuote.net,
+            selling: Math.round((agentQuote.selling + ssrAmount) * 100) / 100, shares: agentQuote.shares,
+          } } : {}),
           // Everything the post-payment TripJack book needs beyond the passenger rows.
           tripjack: {
             priceIds: reviewedPriceIds,
@@ -673,11 +696,14 @@ function findAirlineCode(value: unknown, depth = 0): string | undefined {
 async function customerPrice(
   db: Variables["db"], tenantId: string, supplierAmount: number,
   fare: { origin: string; destination: string; supplier: string; airline: string },
+  agentId: string | null = null,
 ): Promise<number> {
   try {
     const { applyMarkup } = await import("../lib/markup.js");
     const { markupRules } = await import("@poomas/db/schema");
-    const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+    const { rulesFor } = await import("../lib/agent-program.js");
+    // Company-wide rules, plus this agency's own rules when an agency books.
+    const rules = rulesFor(await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId)), agentId);
     const priced = applyMarkup({ ...fare, cabinClass: "ECONOMY", totalFare: supplierAmount } as any, rules);
     return Math.round(Math.max(priced, supplierAmount) * 100) / 100;
   } catch (err) {
