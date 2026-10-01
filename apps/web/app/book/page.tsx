@@ -146,7 +146,7 @@ export default function BookPage() {
       totalFare:     parseFloat(q.get("price") ?? "0"),
       currency:      q.get("cur") ?? "INR",
       isRefundable:  q.get("ref") === "1",
-      cabinChecked:  q.get("bag") ?? "15 KG",
+      cabinChecked:  q.get("bag") ?? "",
     });
 
     const tt = q.get("tripType");
@@ -673,7 +673,7 @@ export default function BookPage() {
           <div className="meta">
             <span>{fare.stops === 0 ? "Nonstop" : `${fare.stops} stop`} · {Math.floor(fare.duration / 60)}h {fare.duration % 60}m</span>
             <span>{fare.isRefundable ? "✓ Refundable" : "Non-refundable"}</span>
-            <span>{fare.cabinChecked}</span>
+            <span>{fare.cabinChecked || "Checked baggage allowance not provided"}</span>
           </div>
         </section>
       )}
