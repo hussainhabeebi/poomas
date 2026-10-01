@@ -9,6 +9,7 @@
 // booker host. Auth is the `apikey` header.
 
 import type { SupplierCredentials } from "../base.js";
+import type { ExchangeRecorder, SupplierExchange } from "./client.js";
 
 export interface HotelV3Room {
   adults:    number;
@@ -87,11 +88,20 @@ export class TripjackHotelV3Client {
   private baseUrl:  string;
   private apiKey:   string;
   private proxyKey: string;
+  private recorder?: ExchangeRecorder;
 
   constructor(creds: SupplierCredentials) {
     this.baseUrl  = String(creds.baseUrl ?? "").replace(/\/$/, "");
     this.apiKey   = String(creds.apiKey ?? "");
     this.proxyKey = String(creds.proxyKey ?? "");
+    this.recorder = typeof creds.recorder === "function" ? creds.recorder as ExchangeRecorder : undefined;
+  }
+
+  // Raw request / response capture for Admin → API logs (same format as flights).
+  setRecorder(recorder: ExchangeRecorder | undefined) { this.recorder = recorder; }
+
+  private record(x: SupplierExchange) {
+    try { this.recorder?.(x); } catch (err) { console.error("[tripjack-hotel] exchange recorder failed", err); }
   }
 
   private async request<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
@@ -99,25 +109,35 @@ export class TripjackHotelV3Client {
       throw new TripjackHotelError("TripJack hotel API is not configured (gateway URL / API key missing)", { endpoint: path, code: "NOT_CONFIGURED" });
     }
     const endpoint = path.split("?")[0];
+    const url = `${this.baseUrl}${path}`;
+    const requestHeaders: Record<string, string> = {
+      Accept: "application/json",
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(this.apiKey ? { apikey: this.apiKey } : {}),
+      ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
+    };
+    const requestBody = body !== undefined ? JSON.stringify(body) : "";
+    const startedAt = new Date();
+    const exchange = (status: number | null, responseHeaders: Record<string, string>, responseBody: string | null, error?: string): SupplierExchange => ({
+      supplier: "TRIPJACK", endpoint, url, method, requestHeaders, requestBody,
+      status, responseHeaders, responseBody, error, startedAt: startedAt.toISOString(), durationMs: Date.now() - startedAt.getTime(),
+    });
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}${path}`, {
+      res = await fetch(url, {
         method,
-        headers: {
-          Accept: "application/json",
-          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-          ...(this.apiKey ? { apikey: this.apiKey } : {}),
-          ...(this.proxyKey ? { "X-Poomas-Gateway-Key": this.proxyKey } : {}),
-        },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        headers: requestHeaders,
+        ...(body !== undefined ? { body: requestBody } : {}),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
+      this.record(exchange(null, {}, null, err instanceof Error ? `${err.name}: ${err.message}` : String(err)));
       const timeout = (err as Error)?.name === "TimeoutError";
       throw new TripjackHotelError(timeout ? `TripJack hotel API timed out after ${timeoutMs} ms` : `Could not reach the TripJack gateway: ${(err as Error)?.message ?? err}`,
         { endpoint, code: timeout ? "TIMEOUT" : "NETWORK_ERROR" });
     }
     const text = await res.text();
+    this.record(exchange(res.status, Object.fromEntries(res.headers), text));
     let json: any = null;
     try { json = text ? JSON.parse(text) : {}; } catch { /* non-JSON (proxy HTML) */ }
 

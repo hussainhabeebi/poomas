@@ -28,6 +28,14 @@ type Review = {
 };
 type SavedPassenger = { id: string; firstName: string; lastName: string; isDefault: boolean };
 
+// API errors are usually a string; a validation failure can be an object.
+function errorText(err: unknown, fallback: string): string {
+  if (typeof err === "string" && err.trim()) return err;
+  const issue = (err as { issues?: { message?: string; path?: unknown[] }[] } | null)?.issues?.[0];
+  if (issue?.message) return `Please search again (${[issue.path?.join("."), issue.message].filter(Boolean).join(": ")}).`;
+  return fallback;
+}
+
 function friendlyHotelError(msg: string, status: number): string {
   if (/expired|no longer|not available|unavailable/i.test(msg)) return "This room is no longer available. Please search again.";
   if (status === 422) return "We couldn't complete your booking. Please search again and try a different option.";
@@ -108,7 +116,7 @@ export default function HotelBookPage() {
         body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
       });
       const d = await res.json() as any;
-      if (!res.ok) throw new Error(d.error ?? "Login failed");
+      if (!res.ok) throw new Error(errorText(d.error, "Login failed"));
       document.cookie = `poomas_token=${d.token}; Path=/; SameSite=Lax; Secure`;
       setToken(d.token);
       setShowLogin(false);
@@ -174,7 +182,7 @@ export default function HotelBookPage() {
     })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error ?? "This room is no longer available");
+        if (!r.ok) throw new Error(errorText(d.error, "This room is no longer available"));
         return d as Review;
       })
       .then((d) => {
@@ -243,7 +251,7 @@ export default function HotelBookPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const msg = (d as any).error ?? "";
+        const msg = errorText((d as any).error, "");
         throw new Error(res.status === 409 || res.status === 410 ? msg : friendlyHotelError(msg, res.status));
       }
       setConfirmation(d);

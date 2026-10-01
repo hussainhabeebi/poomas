@@ -49,7 +49,7 @@ async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
       signal: AbortSignal.timeout(45_000),
     });
     const data = await res.json().catch(() => ({})) as HotelSearchResult;
-    if (!res.ok) return { hotels: [], error: (data as any).error ?? `API error ${res.status}`, errorCode: (data as any).errorCode };
+    if (!res.ok) return { hotels: [], error: typeof (data as any).error === "string" ? (data as any).error : `Hotel search failed (${res.status})`, errorCode: (data as any).errorCode };
     return data;
   } catch (err) {
     return { hotels: [], error: err instanceof Error ? err.message : "Search unavailable" };

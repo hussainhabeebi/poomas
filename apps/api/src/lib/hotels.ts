@@ -7,6 +7,8 @@ import {
   type HotelV3Content, type HotelV3Option, type HotelV3Room,
 } from "@poomas/suppliers";
 import type { Env } from "../types.js";
+import type { ExchangeRecorder } from "@poomas/suppliers";
+import { collectExchanges, persistExchanges, persistInBackground } from "./api-exchanges.js";
 
 // ── Credentials / environment ───────────────────────────────────────────────
 
@@ -20,14 +22,36 @@ async function savedTripjack(env: Env, tenantId: string): Promise<TripjackSaved 
   }
 }
 
-export async function hotelClient(env: Env, tenantId: string) {
+export async function hotelClient(env: Env, tenantId: string, recorder?: ExchangeRecorder) {
   const saved = await savedTripjack(env, tenantId);
   return new TripjackHotelV3Client({
     apiKey:   saved?.apiKey || env.TRIPJACK_API_KEY,
     baseUrl:  env.TRIPJACK_API_BASE_URL,   // the Poomas TripJack gateway
     proxyKey: env.TRIPJACK_PROXY_KEY,
+    ...(recorder ? { recorder } : {}),
   });
 }
+
+// Records every raw TripJack hotel request / response made while handling a
+// request (Admin → API logs → hotel calls), linked to the search's
+// correlationId or the TripJack booking ID. Use as middleware on hotel routes.
+export const hotelExchanges = async (c: any, next: () => Promise<void>) => {
+  const collector = collectExchanges();
+  c.set("hotelExchanges", collector);
+  c.set("hotelRequestId", `hotel-${crypto.randomUUID()}`);
+  await next();
+  if (!collector.exchanges.length) return;
+  let body: any = null;
+  if (c.req.method === "POST") { try { body = await c.req.json(); } catch { /* no JSON body */ } }
+  const pathBooking = /\/bookings\/([A-Za-z0-9_-]+)/.exec(c.req.path)?.[1];
+  persistInBackground(c, persistExchanges(c.env, c.get("db"), c.get("tenantId"), collector.exchanges, {
+    bookingId: body?.bookingId ?? pathBooking ?? null,
+    searchId:  body?.correlationId ?? null,
+    requestId: c.get("hotelRequestId"),
+  }));
+};
+
+export const hotelRecorder = (c: any): ExchangeRecorder | undefined => c.get("hotelExchanges")?.recorder;
 
 export async function tripjackEnvironment(env: Env, tenantId: string): Promise<"UAT" | "PRODUCTION"> {
   return (await savedTripjack(env, tenantId))?.environment === "PRODUCTION" ? "PRODUCTION" : "UAT";

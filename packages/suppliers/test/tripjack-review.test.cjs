@@ -122,3 +122,25 @@ test('TripJack error text comes from errors[]', async () => {
   assert.equal(tripjackErrorText({ errors: [{ errCode: '2023', message: 'Amount mismatch' }], status: { success: false } }), '2023: Amount mismatch');
   assert.equal(tripjackErrorText({ status: { statusMessage: 'Session expired' } }), 'Session expired');
 });
+
+test('Hotel v3 client records every request / response (incl. failures)', async () => {
+  const { TripjackHotelV3Client } = await import(moduleUrl('../src/tripjack/hotel-v3.ts'));
+  const seen = [];
+  const client = new TripjackHotelV3Client({ baseUrl: 'https://gw.example', apiKey: 'KEY', proxyKey: 'P', recorder: (x) => seen.push(x) });
+  const realFetch = globalThis.fetch;
+  const replies = [
+    new Response(JSON.stringify({ hotels: [] }), { status: 200 }),
+    new Response(JSON.stringify({ error: { code: '6535', message: 'Price changed' } }), { status: 400 }),
+  ];
+  globalThis.fetch = async () => replies.shift();
+  try {
+    await client.listing({ checkIn: '2026-10-01', checkOut: '2026-10-02', rooms: [{ adults: 1 }], currency: 'INR', correlationId: 'c1234567', nationality: '106', hids: ['1'] });
+    await assert.rejects(client.review({ correlationId: 'c1234567', optionId: 'o', reviewHash: 'h', hid: '1' }), /Price changed/);
+  } finally { globalThis.fetch = realFetch; }
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].endpoint, '/hms/v3/hotel/listing');
+  assert.equal(seen[0].requestHeaders.apikey, 'KEY');
+  assert.equal(seen[0].status, 200);
+  assert.equal(seen[1].status, 400);
+  assert.match(seen[1].responseBody, /Price changed/);
+});
