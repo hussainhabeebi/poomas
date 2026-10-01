@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { SeatPicker, seatCss, type SegmentSeatMap } from "./SeatPicker";
+import { ScanDocument, type ScannedTraveller } from "../components/ScanDocument";
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
@@ -265,6 +266,34 @@ export default function BookPage() {
     }
     return money.format(inr);
   };
+
+  // Passport / ID scan → this traveller's fields (only fields the document gave).
+  const [scanWarn, setScanWarn] = useState<Record<number, string>>({});
+  function applyScan(i: number, t: ScannedTraveller) {
+    setPassengers((ps) => ps.map((x, n) => n !== i ? x : {
+      ...x,
+      ...(t.firstName ? { firstName: t.firstName } : {}),
+      ...(t.lastName ? { lastName: t.lastName } : {}),
+      ...(t.dob ? { dob: t.dob } : {}),
+      ...(t.gender ? { gender: t.gender } : {}),
+      ...(t.nationality ? { nationality: t.nationality } : {}),
+      ...(t.documentType === "PASSPORT" && t.documentNumber ? { passportNumber: t.documentNumber } : {}),
+      ...(t.documentType === "PASSPORT" && t.expiryDate ? { passportExpiry: t.expiryDate } : {}),
+      ...(t.documentType === "PASSPORT" && t.issueDate ? { passportIssueDate: t.issueDate } : {}),
+    }));
+    // The passenger type must match the age on the travel date.
+    const travel = fare?.departureTime?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+    let warn = "";
+    if (t.dob) {
+      const [y, m, d] = t.dob.split("-").map(Number);
+      const [ty, tm, td] = travel.split("-").map(Number);
+      const age = ty - y - (tm < m || (tm === m && td < d) ? 1 : 0);
+      const type = age < 2 ? "INFANT" : age < 12 ? "CHILD" : "ADULT";
+      const current = passengers[i]?.type;
+      if (current && current !== type) warn = `Date of birth shows ${type === "ADULT" ? "an adult" : type === "CHILD" ? "a child (2–11)" : "an infant (under 2)"} on the travel date — please check the passenger type.`;
+    }
+    setScanWarn((w) => ({ ...w, [i]: warn }));
+  }
 
   const upd = (i: number, k: keyof Passenger, v: string) =>
     setPassengers((p) => p.map((x, n) => n === i ? { ...x, [k]: v } : x));
@@ -707,6 +736,8 @@ export default function BookPage() {
                   </select>
                 )}
               </div>
+              <ScanDocument onScanned={(t) => applyScan(i, t)} />
+              {scanWarn[i] && <p style={{ margin: "0 0 10px", fontSize: 12, color: "#b45309" }}>⚠ {scanWarn[i]}</p>}
               <div className="grid">
                 <Input l="First name"             v={p.firstName}      c={(v) => upd(i, "firstName",      v)} r />
                 <Input l="Last name"              v={p.lastName}       c={(v) => upd(i, "lastName",       v)} r />
