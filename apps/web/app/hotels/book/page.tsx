@@ -43,6 +43,8 @@ function friendlyHotelError(msg: string, status: number): string {
   return "Booking failed. Please check your details and try again.";
 }
 
+const PAN_RE = /^[A-Z]{5}\d{4}[A-Z]$/;
+
 const emptyGuest = (): Guest => ({ title: "Mr", firstName: "", lastName: "", pan: "", passport: "" });
 
 function getToken(): string {
@@ -61,6 +63,9 @@ export default function HotelBookPage() {
   const [prebookErr,  setPrebookErr]  = useState("");
   const [confirmedPrice, setConfirmedPrice] = useState<number | null>(null);
   const [review,         setReview]         = useState<Review | null>(null);
+  // PAN becomes required when the room says so, or when TripJack asks for it at booking (error 1092).
+  const [panNeeded,      setPanNeeded]      = useState(false);
+  const panRequiredNow = panNeeded || Boolean(review?.option.compliance.panRequired);
 
   const [contactName,  setContactName]  = useState("");
   const [email,        setEmail]        = useState("");
@@ -227,6 +232,11 @@ export default function HotelBookPage() {
     e.preventDefault();
     if (!hotel || !review || submitting || prebooking) return;
     setError("");
+    // Catch a mistyped PAN here instead of a TripJack rejection after submit.
+    const lead = guests[0]?.[0];
+    const badPan = guests.flat().find((g) => g.pan.trim() && !PAN_RE.test(g.pan.trim().toUpperCase()));
+    if (badPan) { setError(`PAN "${badPan.pan}" doesn't look right — it should be 10 characters like ABCDE1234F.`); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    if (panRequiredNow && !lead?.pan.trim()) { setError("Please enter the lead guest's PAN — this hotel requires it."); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     setSubmitting(true);
     try {
       const res = await fetch(`${apiUrl}/api/hotels/book`, {
@@ -243,13 +253,17 @@ export default function HotelBookPage() {
               firstName: g.firstName.trim(),
               lastName:  g.lastName.trim(),
               type:      "ADULT",
-              ...(review.option.compliance.panRequired && g.pan.trim() ? { pan: g.pan.trim().toUpperCase() } : {}),
+              ...(PAN_RE.test(g.pan.trim().toUpperCase()) ? { pan: g.pan.trim().toUpperCase() } : {}),
               ...(review.option.compliance.passportRequired && g.passport.trim() ? { passport: g.passport.trim() } : {}),
             })),
           })),
         }),
       });
       const d = await res.json().catch(() => ({}));
+      if (!res.ok && (d as any).errorCode === "PAN_REQUIRED") {
+        setPanNeeded(true);
+        throw new Error(errorText((d as any).error, "Please enter a valid PAN for the lead guest."));
+      }
       if (!res.ok) {
         const msg = errorText((d as any).error, "");
         throw new Error(res.status === 409 || res.status === 410 ? msg : friendlyHotelError(msg, res.status));
@@ -461,8 +475,11 @@ export default function HotelBookPage() {
                 </label>
                 <Input l="First name" v={g.firstName} c={(v) => updGuest(ri, i, "firstName", v)} r />
                 <Input l="Last name"  v={g.lastName}  c={(v) => updGuest(ri, i, "lastName",  v)} r />
-                {review?.option.compliance.panRequired && (
-                  <Input l="PAN (required by the hotel)" v={g.pan} c={(v) => updGuest(ri, i, "pan", v.toUpperCase())} r={i === 0} ph="ABCDE1234F" max={10} />
+                {(review?.option.compliance.panRequired || (ri === 0 && i === 0)) && (
+                  <Input
+                    l={panRequiredNow && ri === 0 && i === 0 ? "PAN (required by the hotel)" : "PAN (needed for most hotels in India)"}
+                    v={g.pan} c={(v) => updGuest(ri, i, "pan", v.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                    r={panRequiredNow && ri === 0 && i === 0} ph="ABCDE1234F" max={10} />
                 )}
                 {review?.option.compliance.passportRequired && (
                   <Input l="Passport number" v={g.passport} c={(v) => updGuest(ri, i, "passport", v)} r />

@@ -15,3 +15,12 @@ test("hotel review validation returns readable reason", async () => {
   assert.equal(res.status, 400);
   assert.match(d.error, /optionId/);
 });
+
+test("TripJack 1092 (PAN) becomes a fixable PAN_REQUIRED error", async () => {
+  const { hotelError } = await import("../src/routes/hotel.js");
+  const res = hotelError({ json: (body: any, status: number) => ({ body, status }) },
+    Object.assign(new Error("TripJack hotel /oms/v3/hotel/book failed (HTTP 400, 1092): Please, enter valid PAN number."), { code: "1092", statusCode: 400 }), "Booking failed") as any;
+  assert.equal(res.status, 400);
+  assert.equal(res.body.errorCode, "PAN_REQUIRED");
+  assert.match(res.body.error, /PAN/);
+});
