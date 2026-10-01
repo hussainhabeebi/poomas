@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import {
-  HOTEL_TERMINAL_STATUSES, isHotelError, normalizeOption, parseHotelBookingDetails,
+  HOTEL_TERMINAL_STATUSES, validHotelId, isHotelError, normalizeOption, parseHotelBookingDetails,
   type TripjackHotelV3Client,
 } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
@@ -114,7 +114,7 @@ const searchSchema = z.object({
 
 // TripJack hotel IDs are numeric today; accept any plain ID so a format change
 // doesn't block checkout (it is only ever sent back to TripJack).
-const detailSchema = z.object({ correlationId: z.string().min(8), hid: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/), ...stayFields });
+const detailSchema = z.object({ correlationId: z.string().min(8), hid: z.string().refine(validHotelId, "Invalid TripJack hotel ID"), ...stayFields });
 
 const reviewSchema = detailSchema.extend({
   optionId:   z.string().min(1),

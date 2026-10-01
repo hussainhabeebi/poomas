@@ -43,7 +43,13 @@ export interface HotelV3Option {
   cancellation: { isRefundable: boolean; penalties: HotelV3Penalty[]; deadlineDateTime?: string };
 }
 
-export interface HotelV3ListingHotel { tjHotelId: string; name: string; options: HotelV3Option[] }
+export interface HotelV3ListingHotel { hotelId: string; name: string; options: HotelV3Option[] }
+
+// Validate before coercion: missing IDs and sentinel strings are never supplier IDs.
+export function validHotelId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(value)
+    && !["undefined", "null"].includes(value.toLowerCase());
+}
 
 export interface HotelV3Content {
   tjHotelId:   string;
@@ -166,6 +172,9 @@ export class TripjackHotelV3Client {
   }
 
   pricing(req: { correlationId: string; hid: string; checkIn: string; checkOut: string; rooms: HotelV3Room[]; currency: string; nationality: string; timeoutMs?: number }) {
+    if (!validHotelId(req.hid)) {
+      throw new TripjackHotelError("Invalid TripJack hotel ID", { endpoint: "/hms/v3/hotel/pricing", code: "INVALID_HOTEL_ID" });
+    }
     return this.request<{ tjHotelId: string; hotelName: string; options?: HotelV3Option[]; reviewHash: string }>(
       "POST", "/hms/v3/hotel/pricing", req, (req.timeoutMs ?? 13_000) + 7_000);
   }

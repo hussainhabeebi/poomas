@@ -5,7 +5,7 @@ export { TripjackAdapter }      from "./tripjack/adapter.js";
 export { TripjackClient }       from "./tripjack/client.js";
 export { TripjackHotelAdapter } from "./tripjack/hotel-adapter.js";
 export {
-  TripjackHotelV3Client, TripjackHotelError, isHotelError, normalizeOption, normalizeContent,
+  TripjackHotelV3Client, validHotelId, TripjackHotelError, isHotelError, normalizeOption, normalizeContent,
   parseHotelBookingDetails, HOTEL_TERMINAL_STATUSES,
   type HotelV3Room, type HotelV3Option, type HotelV3Pricing, type HotelV3Content, type HotelV3ListingHotel,
 } from "./tripjack/hotel-v3.js";

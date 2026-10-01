@@ -3,7 +3,7 @@
 // and the search orchestration used by /api/hotels.
 
 import {
-  TripjackHotelV3Client, normalizeContent, normalizeOption,
+  TripjackHotelV3Client, validHotelId, normalizeContent, normalizeOption,
   type HotelV3Content, type HotelV3Option, type HotelV3Room,
 } from "@poomas/suppliers";
 import type { Env } from "../types.js";
@@ -280,12 +280,12 @@ export async function searchHotels(env: Env, client: TripjackHotelV3Client, inpu
     if (firstError) throw firstError.reason;
   }
 
-  const withOptions = listed.filter((h) => Array.isArray(h.options) && h.options.length);
-  const content = await hotelContent(env, client, withOptions.map((h) => String(h.tjHotelId)));
+  const withOptions = listed.filter((h) => validHotelId(h.hotelId) && Array.isArray(h.options) && h.options.length);
+  const content = await hotelContent(env, client, withOptions.map((h) => h.hotelId));
   const nights = nightsBetween(input.checkIn, input.checkOut);
 
   const hotels = withOptions.map((h) => {
-    const hid = String(h.tjHotelId);
+    const hid = h.hotelId;
     const options = h.options.map(normalizeOption);
     const best = cheapest(options);
     const info = content[hid];
