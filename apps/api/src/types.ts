@@ -28,6 +28,7 @@ export interface Env {
   TRIPJACK_OMS_BASE_URL?: string;  // OMS (book/cancel) base URL — set when proxy only covers FMS
   TRIPJACK_PROXY_KEY:     string;
   SERP_API_KEY:           string;
+  GEMINI_MODEL?:          string;   // optional override for plain-language search (default gemini-2.5-flash)
   DUFFEL_API_KEY:         string;
   POOMAS_INTEGRATION_KEY: string;
   RAZORPAY_KEY_ID:        string;
