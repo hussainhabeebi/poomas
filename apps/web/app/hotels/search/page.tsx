@@ -9,7 +9,7 @@ type SearchParams = {
 
 type NormalizedHotel = {
   id: string; hotelCode: string; name: string; starRating: number;
-  address: string; cityCode: string; checkIn: string; checkOut: string;
+  address: string; cityCode: string; checkIn: string; checkOut: string; countryCode?: string;
   nights: number; rooms: number; roomType: string; mealPlan: string;
   isRefundable: boolean; baseFare: number; taxes: number; totalFare: number;
   currency: string; images: string[]; amenities: string[];
@@ -86,6 +86,7 @@ function buildBookUrl(hotel: NormalizedHotel, rooms: number, adults: number, exp
     ref:       hotel.isRefundable ? "1" : "0",
     city:      hotel.cityCode,
     address:   hotel.address,
+    cc:        hotel.countryCode ?? "",
   });
   return `/hotels/book?${p}`;
 }
