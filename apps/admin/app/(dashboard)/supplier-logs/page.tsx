@@ -1,4 +1,5 @@
 import { LogDetail } from "./LogDetail";
+import { RawApiCalls } from "./RawApiCalls";
 
 const SERVER_API   = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const SERVER_TOKEN = process.env.ADMIN_SERVICE_TOKEN ?? "";
@@ -43,6 +44,12 @@ const ENDPOINT_LABEL: Record<string, string> = {
   "/oms/v1/hotel/bookings":       "Hotel Booking List",
   "/hms/v3/nationality-info":     "Hotel Nationalities",
   "/hms/v3/content/fetch-city-regionIds": "Hotel City Sync",
+  "/hms/v3/hotel/static-detail":  "Hotel Static Detail",
+  "/hms/v3/content/fetch-hotel-content": "Hotel Content",
+  "hotel search":                 "Hotel Search (rejected)",
+  "hotel detail":                 "Hotel Detail (rejected)",
+  "hotel review":                 "Hotel Review (rejected)",
+  "hotel book":                   "Hotel Book (rejected)",
   "/insurance/v2/search":         "TripSafe Search",
   "/insurance/v2/booking":        "TripSafe Booking / Detail",
   "/insurance/v2/amendment/raise": "TripSafe Raise Amendment",
@@ -55,6 +62,7 @@ async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; 
     if (sp.level)    q.set("level", sp.level);
     if (sp.supplier) q.set("supplier", sp.supplier);
     if (sp.endpoint) q.set("endpoint", sp.endpoint);
+    if (sp.scope)    q.set("scope", sp.scope);
     if (sp.from)     q.set("from", sp.from);
     if (sp.to)       q.set("to", sp.to);
     q.set("limit",  String(Math.min(parseInt(sp.limit ?? "100"), 500)));
@@ -133,6 +141,10 @@ export default async function SupplierLogsPage({
           <option value="RIYA">RIYA</option>
           <option value="DUFFEL">DUFFEL</option>
           <option value="GOOGLE_SERP">GOOGLE_SERP</option>
+        </select>
+        <select name="scope" defaultValue={sp.scope ?? ""} style={sel}>
+          <option value="">Flights, hotels &amp; TripSafe</option>
+          <option value="hotel">Hotels only</option>
         </select>
         <select name="level" defaultValue={sp.level ?? ""} style={sel}>
           <option value="">All levels</option>
@@ -235,6 +247,8 @@ export default async function SupplierLogsPage({
           <a href={buildHref({ offset: String(nextOffset) })} style={pgA}>Next →</a>
         )}
       </div>
+
+      <RawApiCalls initialScope="hotel" />
     </div>
   );
 }

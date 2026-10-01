@@ -21,7 +21,7 @@ import {
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
 import {
-  SEARCH_TTL_MS, cheapest, hotelClient, hotelContent, nationalityId, searchHotels, tripjackEnvironment,
+  SEARCH_TTL_MS, hotelExchanges, hotelRecorder, cheapest, hotelClient, hotelContent, nationalityId, searchHotels, tripjackEnvironment,
 } from "../lib/hotels.js";
 
 // ── Logging helpers ─────────────────────────────────────────────────────────
@@ -48,7 +48,8 @@ export async function logged<T>(
   call: () => Promise<T>, summarize: (result: T) => Record<string, unknown> = () => ({}),
 ): Promise<T> {
   const started = Date.now();
-  const requestId = crypto.randomUUID();
+  // Same ID as the raw request / response files recorded for this call.
+  const requestId = c.get("hotelRequestId") ?? crypto.randomUUID();
   const base = { tenantId: c.get("tenantId"), supplier: "TRIPJACK" as const, endpoint, requestId };
   try {
     const result = await call();
@@ -141,6 +142,7 @@ const bookSchema = z.object({
 });
 
 export const hotelRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+hotelRoutes.use("*", hotelExchanges);
 
 // Request validation with a readable reason ("checkIn: Invalid") instead of the
 // raw zod object, logged to Admin → Supplier logs so a rejected request shows up.
@@ -161,7 +163,7 @@ function validJson<T extends z.ZodTypeAny>(schema: T, endpoint: string) {
 
 hotelRoutes.post("/search", validJson(searchSchema, "search"), async (c) => {
   const params = c.req.valid("json");
-  const client = await hotelClient(c.env, c.get("tenantId"));
+  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
   try {
     const result = await logged(c, "/hms/v3/hotel/listing", {
       city: params.cityName ?? params.cityCode, hids: params.hids?.length, checkIn: params.checkIn, checkOut: params.checkOut,
@@ -196,7 +198,7 @@ async function pricingFor(c: any, client: TripjackHotelV3Client, p: z.infer<type
 
 hotelRoutes.post("/detail", validJson(detailSchema, "detail"), async (c) => {
   const p = c.req.valid("json");
-  const client = await hotelClient(c.env, c.get("tenantId"));
+  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
   try {
     const [pricing, content] = await Promise.all([pricingFor(c, client, p), hotelContent(c.env, client, [p.hid])]);
     const options = (pricing.options ?? []).map(normalizeOption).sort((a, b) => a.pricing.totalPrice - b.pricing.totalPrice);
@@ -217,7 +219,7 @@ hotelRoutes.post("/detail", validJson(detailSchema, "detail"), async (c) => {
 
 hotelRoutes.post("/review", validJson(reviewSchema, "review"), async (c) => {
   const p = c.req.valid("json");
-  const client = await hotelClient(c.env, c.get("tenantId"));
+  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
   try {
     let reviewHash = p.reviewHash;
     let optionId = p.optionId;
@@ -271,7 +273,7 @@ export async function pollDetails(c: any, client: TripjackHotelV3Client, booking
 hotelRoutes.post("/book", validJson(bookSchema, "book"), async (c) => {
   const p = c.req.valid("json");
   const tenantId = c.get("tenantId");
-  const client = await hotelClient(c.env, tenantId);
+  const client = await hotelClient(c.env, tenantId, hotelRecorder(c));
   // Production has no customer hotel payment step yet: never charge the TripJack
   // wallet from the website there — place a hold that Admin confirms after payment.
   const production = (await tripjackEnvironment(c.env, tenantId)) === "PRODUCTION";
@@ -314,7 +316,7 @@ hotelRoutes.post("/book", validJson(bookSchema, "book"), async (c) => {
 
 hotelRoutes.get("/bookings/:bookingId", async (c) => {
   const { bookingId } = c.req.param();
-  const client = await hotelClient(c.env, c.get("tenantId"));
+  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
   try {
     const raw = await logged(c, "/oms/v3/hotel/booking-details", { bookingId }, () => client.bookingDetails(bookingId),
       (r) => ({ status: r?.order?.status }));
@@ -326,7 +328,7 @@ hotelRoutes.get("/bookings/:bookingId", async (c) => {
 });
 
 hotelRoutes.get("/nationalities", async (c) => {
-  const client = await hotelClient(c.env, c.get("tenantId"));
+  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
   try {
     const res = await logged(c, "/hms/v3/nationality-info", {}, () => client.nationalities(),
       (r) => ({ count: r.nationalityInfos?.length ?? 0 }));
