@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/register", "/api"];
+// Pages anyone can open: sign-in, agency sign-up, invitations, shared quotes
+// (/q/…), agency mini-sites (/a/…) and PWA files.
+const PUBLIC_PATHS = ["/login", "/register", "/accept-invite", "/q/", "/a/", "/api", "/manifest.webmanifest", "/sw.js"];
 
 export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
@@ -11,12 +13,14 @@ export function middleware(request: NextRequest) {
   const res = NextResponse.next();
   res.headers.set("x-tenant-slug", slug);
 
-  // Portal requires authentication for all non-public routes
+  if (path === "/" ) return NextResponse.redirect(new URL("/dashboard", request.url));
   if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return res;
 
   const token = request.cookies.get("poomas_token")?.value;
   if (!token) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    const login = new URL("/login", request.url);
+    if (path !== "/dashboard") login.searchParams.set("next", path);
+    return NextResponse.redirect(login);
   }
 
   return res;

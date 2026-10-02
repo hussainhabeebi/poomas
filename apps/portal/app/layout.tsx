@@ -1,38 +1,32 @@
 import type { Metadata, Viewport } from "next";
+import "./portal.css";
 
 export const metadata: Metadata = {
-  title: "POOMAS Agent Portal",
-  description: "Manage your bookings, wallet and sub-agents",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "POOMAS Agent" },
+  title: "FlyPoomas Agent Portal",
+  description: "Book flights, manage your wallet, sub-agents and customers",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "FlyPoomas Agent" },
+  icons: { icon: "/logo.png", apple: "/logo.png" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
-  themeColor: "#1a1a2e",
+  themeColor: "#111827",
 };
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
-        <style>{`
-          *, *::before, *::after { box-sizing: border-box; }
-          :root {
-            --color-primary: #E31E24;
-            --sidebar-bg:    #1a1a2e;
-            --sidebar-w:     220px;
-          }
-          body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
-          img  { max-width: 100%; display: block; }
-        `}</style>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Installable app (PWA): register the service worker. */}
+        <script dangerouslySetInnerHTML={{ __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}` }} />
+      </body>
     </html>
   );
 }

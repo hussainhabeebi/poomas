@@ -261,10 +261,11 @@ export async function syncCancellation(c: Ctx, amendment: Amendment): Promise<Am
   return updated;
 }
 
-type RefundMethod = "WALLET" | "NOMOD" | "MANUAL";
+type RefundMethod = "WALLET" | "AGENT_WALLET" | "NOMOD" | "MANUAL";
 
 // The refund goes back to how the booking was paid.
 export function originalRefundMethod(paid: { gateway: string; gatewayPaymentId?: string | null } | undefined, hasCustomer: boolean): RefundMethod {
+  if (paid?.gateway === "WALLET" && paid.gatewayPaymentId?.startsWith("agentwallet_")) return "AGENT_WALLET";
   if (paid?.gateway === "WALLET" && hasCustomer) return "WALLET";
   if (paid?.gateway === "NOMOD" && paid.gatewayPaymentId) return "NOMOD";
   return "MANUAL";
@@ -272,6 +273,7 @@ export function originalRefundMethod(paid: { gateway: string; gatewayPaymentId?:
 
 export const REFUND_METHOD_LABEL: Record<RefundMethod, string> = {
   WALLET: "your POOMAS wallet (instant)",
+  AGENT_WALLET: "your agency wallet (instant)",
   NOMOD:  "your original card / payment method (usually 5–10 working days)",
   MANUAL: "your original payment method (our team will process it)",
 };
@@ -289,7 +291,7 @@ export async function settleRefund(
   const allowed = opts.retryFailed ? ["PENDING", "FAILED"] : ["PENDING"];
   if (amendment.status !== "SUCCESS" || !allowed.includes(amendment.refundStatus)) return null;
 
-  const [booking] = await db.select({ userId: bookings.userId }).from(bookings).where(eq(bookings.id, amendment.bookingId)).limit(1);
+  const [booking] = await db.select({ userId: bookings.userId, agentId: bookings.agentId }).from(bookings).where(eq(bookings.id, amendment.bookingId)).limit(1);
   const [paid] = await db.select({ gateway: payments.gateway, gatewayPaymentId: payments.gatewayPaymentId, amount: payments.amount, currency: payments.currency })
     .from(payments).where(and(eq(payments.bookingId, amendment.bookingId), eq(payments.status, "SUCCESS"))).limit(1);
   const method = originalRefundMethod(paid, Boolean(booking?.userId));
@@ -322,6 +324,16 @@ export async function settleRefund(
       bookingId: claimed.bookingId, note: `Cancellation refund for booking ${claimed.bookingId.slice(0, 8)}`,
     });
     return done(`wallet:${wallet.id}`);
+  }
+
+  if (method === "AGENT_WALLET" && booking?.agentId) {
+    const { agentWallet, creditAgentWallet } = await import("./agent-program.js");
+    const wallet = await agentWallet(db, claimed.tenantId, booking.agentId);
+    if (!wallet) return finish({ refundStatus: "MANUAL_REQUIRED", refundError: "Agency wallet not found." });
+    await creditAgentWallet(db, wallet.id, amount, "REFUND_CREDIT", {
+      bookingId: claimed.bookingId, note: `Cancellation refund for booking ${claimed.bookingId.slice(0, 8)}`,
+    });
+    return done(`agent-wallet:${wallet.id}`);
   }
 
   if (method === "NOMOD") {

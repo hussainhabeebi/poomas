@@ -1,81 +1,62 @@
 "use client";
-import { useState, useEffect } from "react";
 
-const CABIN_CLASSES = ["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"] as const;
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { api, fmtTime, money, QUOTE_DRAFT } from "../../../lib/api";
 
-// Stable anonymous session ID persisted in localStorage for SERP trial tracking
-function getSessionId(): string {
-  try {
-    const key = "poomas_session_id";
-    let id = localStorage.getItem(key);
-    if (!id) {
-      id = `anon_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      localStorage.setItem(key, id);
-    }
-    return id;
-  } catch {
-    return `anon_${Date.now()}`;
-  }
-}
+type Fare = {
+  id: string; supplier: string; airline: string; airlineName: string; flightNumber: string; origin: string; destination: string;
+  departureTime: string; arrivalTime: string; duration: number; stops: number; totalFare: number; displayPrice?: number;
+  netPrice?: number; sellingPrice?: number; currency: string; isRefundable: boolean; baggage?: { cabin?: string; checked?: string };
+  tripKey?: string; legIndex?: number; fareIdentifier?: string; sri?: string; msri?: string[]; isBookable?: boolean;
+};
+type Leg = { origin: string; destination: string; date: string };
 
-interface FareCard {
-  id:            string;
-  supplier:      string;
-  airline:       string;
-  airlineName:   string;
-  flightNumber:  string;
-  origin:        string;
-  destination:   string;
-  departureTime: string;
-  arrivalTime:   string;
-  duration:      number;
-  stops:         number;
-  displayPrice:  number;
-  currency:      string;
-  isRefundable:  boolean;
-  baggage:       { cabin: string; checked: string };
-  isBookable:    boolean;
-}
+const AIRPORTS = ["COK", "CCJ", "TRV", "CNN", "IXE", "BOM", "DEL", "BLR", "MAA", "HYD", "CCU", "GOI", "AMD", "DXB", "AUH", "SHJ", "RKT", "DOH", "MCT", "BAH", "KWI", "RUH", "JED", "DMM", "MED", "SIN", "KUL", "BKK", "LHR", "CMB", "MLE", "KTM"];
+const addDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const dur = (m: number) => `${Math.floor(m / 60)}h ${m % 60}m`;
 
-interface SearchResponse {
-  fares:               FareCard[];
-  usedSuppliers:       string[];
-  isIndicative:        boolean;
-  serpTrialsRemaining: number;
-  disclaimer?:         string;
-}
 
 export default function SearchPage() {
-  const [form, setForm] = useState({
-    origin:        "",
-    destination:   "",
-    departureDate: "",
-    adults:        1,
-    cabinClass:    "ECONOMY" as (typeof CABIN_CLASSES)[number],
-  });
-  const [results, setResults]   = useState<SearchResponse | null>(null);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState("");
-  const [sessionId, setSessionId] = useState("");
+  const [tripType, setTripType] = useState<"ONEWAY" | "ROUNDTRIP" | "MULTICITY">("ONEWAY");
+  const [legs, setLegs] = useState<Leg[]>([{ origin: "", destination: "", date: addDays(7) }, { origin: "", destination: "", date: addDays(14) }]);
+  const [returnDate, setReturnDate] = useState(addDays(14));
+  const [pax, setPax] = useState({ adults: 1, children: 0, infants: 0 });
+  const [cabinClass, setCabin] = useState("ECONOMY");
+  const [fareType, setFareType] = useState("REGULAR");
+  const [directOnly, setDirectOnly] = useState(false);
+  const [sort, setSort] = useState<"price" | "departure" | "duration">("price");
+  const [fares, setFares] = useState<Fare[] | null>(null);
+  const [searchId, setSearchId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [picks, setPicks] = useState<Record<number, Fare | undefined>>({});
+  const [quoted, setQuoted] = useState<string[]>([]);
 
-  useEffect(() => { setSessionId(getSessionId()); }, []);
+  useEffect(() => {
+    try { setQuoted((JSON.parse(localStorage.getItem(QUOTE_DRAFT) ?? "[]") as Fare[]).map((f) => f.id)); } catch {}
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("from") && q.get("to")) setLegs((l) => [{ origin: q.get("from")!.toUpperCase(), destination: q.get("to")!.toUpperCase(), date: q.get("date") ?? l[0].date }, l[1]]);
+  }, []);
 
-  async function handleSearch(e: React.FormEvent) {
+  const seats = pax.adults + pax.children;
+  const group = seats > 9;
+
+  async function search(e: FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    setError("");
+    if (group) return;
+    const first = legs[0];
+    if (!/^[A-Za-z]{3}$/.test(first.origin) || !/^[A-Za-z]{3}$/.test(first.destination)) { setError("Enter 3-letter airport codes (e.g. COK, DXB)."); return; }
+    setLoading(true); setError(""); setFares(null); setPicks({});
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (sessionId) headers["X-Session-ID"] = sessionId;
-
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers,
-        body:   JSON.stringify({ ...form, tripType: "ONEWAY" }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json() as SearchResponse;
-      setResults(data);
+      const body: Record<string, unknown> = {
+        origin: first.origin.toUpperCase(), destination: (tripType === "MULTICITY" ? legs[legs.length - 1] : first).destination.toUpperCase(),
+        departureDate: first.date, ...pax, cabinClass, tripType, ...(fareType !== "REGULAR" ? { fareType } : {}),
+        ...(tripType === "ROUNDTRIP" ? { returnDate } : {}),
+        ...(tripType === "MULTICITY" ? { legs: legs.map((l) => ({ origin: l.origin.toUpperCase(), destination: l.destination.toUpperCase(), departureDate: l.date })) } : {}),
+      };
+      const d = await api<{ fares: Fare[]; searchId: string }>("/api/search", { json: body });
+      setFares(d.fares.filter((f) => f.isBookable !== false));
+      setSearchId(d.searchId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
     } finally {
@@ -83,236 +64,162 @@ export default function SearchPage() {
     }
   }
 
-  const durationStr = (min: number) => `${Math.floor(min / 60)}h ${min % 60}m`;
-  const currSym = (c: string) => c === "INR" ? "₹" : c === "AED" ? "د.إ" : "$";
+  // Combined fares cover the whole journey; otherwise one fare per leg.
+  const combos = useMemo(() => (fares ?? []).filter((f) => f.tripKey === "COMBO"), [fares]);
+  const legCount = tripType === "ONEWAY" ? 1 : tripType === "ROUNDTRIP" ? 2 : legs.length;
+  const byLeg = useMemo(() => {
+    const out: Fare[][] = Array.from({ length: legCount }, () => []);
+    for (const f of fares ?? []) {
+      if (f.tripKey === "COMBO") continue;
+      const i = f.legIndex ?? (f.tripKey === "RETURN" ? 1 : 0);
+      if (out[i]) out[i].push(f);
+    }
+    return out;
+  }, [fares, legCount]);
 
-  const bookable  = results?.fares.filter((f) => f.isBookable)  ?? [];
-  const indicative = results?.fares.filter((f) => !f.isBookable) ?? [];
+  const shown = (list: Fare[], leg: number) => {
+    let l = list.filter((f) => !directOnly || f.stops === 0);
+    // Special return fares only pair with the matching onward fare.
+    const onward = picks[0];
+    if (leg === 1 && onward) l = l.filter((f) => !f.msri?.length || (onward.sri && f.msri.includes(onward.sri)));
+    if (leg === 1 && !onward) l = l.filter((f) => !f.msri?.length);
+    return [...l].sort((a, b) => sort === "price" ? price(a) - price(b) : sort === "duration" ? a.duration - b.duration : a.departureTime.localeCompare(b.departureTime)).slice(0, 80);
+  };
+
+  function toggleQuote(f: Fare) {
+    let list: Fare[] = [];
+    try { list = JSON.parse(localStorage.getItem(QUOTE_DRAFT) ?? "[]"); } catch {}
+    list = list.some((x) => x.id === f.id) ? list.filter((x) => x.id !== f.id) : [...list, f].slice(-6);
+    localStorage.setItem(QUOTE_DRAFT, JSON.stringify(list));
+    setQuoted(list.map((x) => x.id));
+  }
+
+  function book(chosen: Fare[]) {
+    const first = chosen[0];
+    const total = chosen.reduce((s, f) => s + price(f), 0);
+    const selling = chosen.reduce((s, f) => s + (f.sellingPrice ?? price(f)), 0);
+    sessionStorage.setItem("agent_checkout", JSON.stringify({ fares: chosen, total, selling, searchId, pax, tripType }));
+    const q = new URLSearchParams({
+      priceIds: chosen.map((f) => f.id).join(","), supplier: first.supplier, from: legs[0].origin.toUpperCase(),
+      to: (tripType === "MULTICITY" ? legs[legs.length - 1] : legs[0]).destination.toUpperCase(),
+      dep: first.departureTime, tripType, adults: String(pax.adults), children: String(pax.children), infants: String(pax.infants),
+      ...(searchId ? { sid: searchId } : {}),
+    });
+    window.location.assign(`/checkout?${q}`);
+  }
+
+  const multiReady = byLeg.every((_, i) => picks[i]);
+  const cur = fares?.[0]?.currency ?? "INR";
 
   return (
     <div>
-      <h1 style={{ marginBottom: 24, fontSize: 22, fontWeight: 700 }}>Book Flights</h1>
-
-      {/* Search form */}
-      <form onSubmit={handleSearch} style={{
-        background: "white", padding: 24, borderRadius: 12,
-        boxShadow: "0 1px 4px rgba(0,0,0,.08)", marginBottom: 32,
-        display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end",
-      }}>
-        {[
-          { label: "FROM",  key: "origin",      placeholder: "e.g. COK", type: "text"  },
-          { label: "TO",    key: "destination", placeholder: "e.g. DXB", type: "text"  },
-          { label: "DATE",  key: "departureDate", placeholder: "", type: "date" },
-        ].map(({ label, key, placeholder, type }) => (
-          <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>{label}</label>
-            <input
-              required type={type} placeholder={placeholder}
-              value={form[key as keyof typeof form] as string}
-              onChange={(e) => setForm((f) => ({
-                ...f,
-                [key]: key === "origin" || key === "destination"
-                  ? e.target.value.toUpperCase()
-                  : e.target.value,
-              }))}
-              style={inputStyle}
-            />
+      <div className="page-head"><div><h1>Flights</h1><p>Agent net prices — your selling price includes your markup.</p></div><a className="btn" href="/quotes">📝 Quote draft ({quoted.length})</a></div>
+      <form className="card stack" onSubmit={search}>
+        <div className="tabs" role="tablist">
+          {(["ONEWAY", "ROUNDTRIP", "MULTICITY"] as const).map((t) => (
+            <button type="button" key={t} className={tripType === t ? "on" : ""} onClick={() => setTripType(t)}>{t === "ONEWAY" ? "One way" : t === "ROUNDTRIP" ? "Round trip" : "Multi-city"}</button>
+          ))}
+        </div>
+        {(tripType === "MULTICITY" ? legs : legs.slice(0, 1)).map((l, i) => (
+          <div className="grid g4" key={i}>
+            <label className="f">From<input list="airports" required value={l.origin} maxLength={3} onChange={(e) => setLegs((ls) => ls.map((x, n) => n === i ? { ...x, origin: e.target.value.toUpperCase() } : x))} placeholder="COK" /></label>
+            <label className="f">To<input list="airports" required value={l.destination} maxLength={3} onChange={(e) => setLegs((ls) => ls.map((x, n) => n === i ? { ...x, destination: e.target.value.toUpperCase() } : n === i + 1 && !x.origin ? { ...x, origin: e.target.value.toUpperCase() } : x))} placeholder="DXB" /></label>
+            <label className="f">{tripType === "MULTICITY" ? `Flight ${i + 1} date` : "Departure"}<input type="date" required min={addDays(0)} value={l.date} onChange={(e) => setLegs((ls) => ls.map((x, n) => n === i ? { ...x, date: e.target.value } : x))} /></label>
+            {tripType === "ROUNDTRIP" && i === 0 ? <label className="f">Return<input type="date" required min={l.date} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} /></label>
+              : tripType === "MULTICITY" && legs.length > 2 ? <div className="row" style={{ alignItems: "flex-end" }}><button type="button" className="btn sm danger" onClick={() => setLegs((ls) => ls.filter((_, n) => n !== i))}>Remove</button></div> : <div />}
           </div>
         ))}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>ADULTS</label>
-          <select value={form.adults} onChange={(e) => setForm((f) => ({ ...f, adults: Number(e.target.value) }))} style={inputStyle}>
-            {[1,2,3,4,5,6,7,8,9].map((n) => <option key={n}>{n}</option>)}
-          </select>
+        {tripType === "MULTICITY" && legs.length < 6 && <button type="button" className="btn sm" style={{ alignSelf: "flex-start" }} onClick={() => setLegs((ls) => [...ls, { origin: ls[ls.length - 1].destination, destination: "", date: ls[ls.length - 1].date }])}>+ Add flight</button>}
+        <datalist id="airports">{AIRPORTS.map((a) => <option key={a} value={a} />)}</datalist>
+        <div className="grid g4">
+          <label className="f">Adults (12+)<input type="number" min={1} max={30} value={pax.adults} onChange={(e) => setPax((p) => ({ ...p, adults: Math.max(1, Number(e.target.value) || 1) }))} /></label>
+          <label className="f">Children (2–11)<input type="number" min={0} max={20} value={pax.children} onChange={(e) => setPax((p) => ({ ...p, children: Math.max(0, Number(e.target.value) || 0) }))} /></label>
+          <label className="f">Infants (under 2)<input type="number" min={0} max={pax.adults} value={pax.infants} onChange={(e) => setPax((p) => ({ ...p, infants: Math.min(p.adults, Math.max(0, Number(e.target.value) || 0)) }))} /></label>
+          <label className="f">Cabin
+            <select value={cabinClass} onChange={(e) => setCabin(e.target.value)}><option value="ECONOMY">Economy</option><option value="PREMIUM_ECONOMY">Premium economy</option><option value="BUSINESS">Business</option><option value="FIRST">First</option></select>
+          </label>
         </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>CABIN</label>
-          <select value={form.cabinClass} onChange={(e) => setForm((f) => ({ ...f, cabinClass: e.target.value as typeof form.cabinClass }))} style={inputStyle}>
-            {CABIN_CLASSES.map((c) => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
-          </select>
+        <div className="row between">
+          <div className="row">
+            <label className="f" style={{ flexDirection: "row", alignItems: "center" }}>Fare type&nbsp;
+              <select className="in" style={{ width: "auto" }} value={fareType} onChange={(e) => setFareType(e.target.value)}><option value="REGULAR">Regular</option><option value="STUDENT">Student</option><option value="SENIOR_CITIZEN">Senior citizen</option></select>
+            </label>
+            <label className="small row" style={{ gap: 6 }}><input type="checkbox" checked={directOnly} onChange={(e) => setDirectOnly(e.target.checked)} /> Direct flights only</label>
+          </div>
+          {group
+            ? <a className="btn primary" href={`/requests/new?type=GROUP&from=${legs[0].origin}&to=${legs[0].destination}&date=${legs[0].date}&pax=${seats}`}>👥 Request group fare ({seats} seats)</a>
+            : <button className="btn primary" disabled={loading}>{loading ? <><span className="spin" /> Searching…</> : "Search flights"}</button>}
         </div>
-
-        <button type="submit" disabled={loading} style={btnStyle}>
-          {loading ? "Searching…" : "Search Flights"}
-        </button>
+        {group && <p className="small muted" style={{ margin: 0 }}>Airlines sell up to 9 seats per booking. For 10 or more travellers, request a group fare — our team replies with a quote.</p>}
       </form>
 
-      {error && (
-        <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: 16, marginBottom: 24, color: "#b91c1c" }}>
-          {error}
-        </div>
-      )}
-
-      {/* Results */}
-      {results !== null && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, color: "#374151" }}>
-              {results.fares.length} flights found
-            </h2>
-
-            {/* Trial badge */}
-            {results.serpTrialsRemaining >= 0 && results.usedSuppliers.includes("GOOGLE_SERP") && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                background: "#eff6ff", border: "1px solid #bfdbfe",
-                borderRadius: 8, padding: "6px 12px", fontSize: 13,
-              }}>
-                <span style={{ fontSize: 16 }}>✈</span>
-                <span style={{ color: "#1d4ed8", fontWeight: 600 }}>Google Flights included</span>
-                {results.serpTrialsRemaining > 0 && (
-                  <span style={{ color: "#6b7280" }}>· {results.serpTrialsRemaining} free preview{results.serpTrialsRemaining !== 1 ? "s" : ""} left</span>
-                )}
-                {results.serpTrialsRemaining === 0 && (
-                  <span style={{ color: "#6b7280" }}>· last free preview</span>
-                )}
-              </div>
-            )}
+      {error && <div className="banner bad">{error}</div>}
+      {fares && fares.length === 0 && <div className="card empty">No flights found. Try another date or nearby airport.</div>}
+      {fares && fares.length > 0 && (
+        <>
+          <div className="row between" style={{ marginBottom: 10 }}>
+            <span className="muted small">{fares.length} fares · prices for {pax.adults + pax.children + pax.infants} traveller{pax.adults + pax.children + pax.infants > 1 ? "s" : ""}</span>
+            <div className="tabs" style={{ margin: 0 }}>
+              {(["price", "departure", "duration"] as const).map((s) => <button type="button" key={s} className={sort === s ? "on" : ""} onClick={() => setSort(s)}>{s === "price" ? "Cheapest" : s === "departure" ? "Earliest" : "Fastest"}</button>)}
+            </div>
           </div>
 
-          {results.fares.length === 0 && (
-            <p style={{ color: "#6b7280" }}>No flights found for the selected route and date.</p>
+          {combos.length > 0 && (
+            <div className="card flush">
+              <div style={{ padding: "12px 16px 0" }}><h2>Complete journey fares</h2></div>
+              {shown(combos, -1).map((f) => <FareRow key={f.id} f={f} quoted={quoted.includes(f.id)} onQuote={() => toggleQuote(f)} action={<button className="btn primary sm" onClick={() => book([f])}>Book</button>} />)}
+            </div>
           )}
 
-          {/* Bookable fares */}
-          {bookable.map((fare) => <FareRow key={fare.id} fare={fare} currSym={currSym} durationStr={durationStr} />)}
-
-          {/* Google Flights indicative fares */}
-          {indicative.length > 0 && (
-            <>
-              <div style={{
-                display: "flex", alignItems: "center", gap: 12, margin: "24px 0 12px",
-              }}>
-                <div style={{ flex: 1, height: 1, background: "#e5e7eb" }} />
-                <span style={{
-                  fontSize: 12, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em",
-                  background: "#f3f4f6", borderRadius: 6, padding: "4px 10px",
-                }}>
-                  GOOGLE FLIGHTS · INDICATIVE PRICES
-                </span>
-                <div style={{ flex: 1, height: 1, background: "#e5e7eb" }} />
+          {byLeg.map((list, i) => list.length > 0 && (
+            <div className="card flush" key={i}>
+              <div className="row between" style={{ padding: "12px 16px 0" }}>
+                <h2>{legCount === 1 ? "Flights" : `${i === 0 ? "Onward" : tripType === "ROUNDTRIP" ? "Return" : `Flight ${i + 1}`}: ${list[0]?.origin} → ${list[0]?.destination}`}</h2>
+                {picks[i] && <span className="badge b-green">Selected {picks[i].flightNumber}</span>}
               </div>
+              {shown(list, i).map((f) => (
+                <FareRow key={f.id} f={f} picked={picks[i]?.id === f.id} quoted={quoted.includes(f.id)} onQuote={() => toggleQuote(f)}
+                  action={legCount === 1
+                    ? <button className="btn primary sm" onClick={() => book([f])}>Book</button>
+                    : <button className={`btn sm ${picks[i]?.id === f.id ? "dark" : ""}`} onClick={() => setPicks((p) => ({ ...p, [i]: f, ...(i === 0 ? { 1: undefined } : {}) }))}>{picks[i]?.id === f.id ? "Selected" : "Select"}</button>} />
+              ))}
+            </div>
+          ))}
 
-              {results.disclaimer && (
-                <div style={{
-                  background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8,
-                  padding: "10px 14px", marginBottom: 16, fontSize: 13, color: "#92400e",
-                }}>
-                  ⚠ {results.disclaimer}
-                </div>
-              )}
-
-              {indicative.map((fare) => <FareRow key={fare.id} fare={fare} currSym={currSym} durationStr={durationStr} indicative />)}
-            </>
+          {legCount > 1 && combos.length === 0 && (
+            <div className="card row between" style={{ position: "sticky", bottom: 70, zIndex: 5 }}>
+              <span>{multiReady ? <>Total <b>{money(Object.values(picks).reduce((s, f) => s + (f ? price(f) : 0), 0), cur)}</b> net</> : "Select a flight for each leg"}</span>
+              <button className="btn primary" disabled={!multiReady} onClick={() => book(byLeg.map((_, i) => picks[i]!))}>Continue to book</button>
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
 }
 
-function FareRow({
-  fare, currSym, durationStr, indicative = false,
-}: {
-  fare: FareCard;
-  currSym: (c: string) => string;
-  durationStr: (m: number) => string;
-  indicative?: boolean;
-}) {
+const price = (f: Fare) => f.netPrice ?? f.displayPrice ?? f.totalFare;
+
+function FareRow({ f, action, picked, quoted, onQuote }: { f: Fare; action: React.ReactNode; picked?: boolean; quoted: boolean; onQuote: () => void }) {
   return (
-    <div style={{
-      background: indicative ? "#fafafa" : "white",
-      border: indicative ? "1px dashed #d1d5db" : "none",
-      borderRadius: 12, padding: 20, marginBottom: 16,
-      boxShadow: indicative ? "none" : "0 1px 4px rgba(0,0,0,.08)",
-      display: "flex", alignItems: "center", gap: 24,
-      opacity: indicative ? 0.9 : 1,
-    }}>
-      {/* Airline */}
-      <div style={{ minWidth: 100 }}>
-        <div style={{ fontWeight: 700, fontSize: 15 }}>{fare.airlineName}</div>
-        <div style={{ color: "#6b7280", fontSize: 13 }}>{fare.flightNumber}</div>
-        {indicative && (
-          <div style={{
-            marginTop: 4, fontSize: 11, fontWeight: 700, color: "#2563eb",
-            background: "#dbeafe", borderRadius: 4, padding: "2px 6px", display: "inline-block",
-          }}>
-            Google Flights
-          </div>
-        )}
+    <div className={`fare${picked ? " picked" : ""}`}>
+      <div className="air"><b>{f.airlineName || f.airline}</b><small>{f.flightNumber}{f.fareIdentifier && f.fareIdentifier !== "PUBLISHED" ? ` · ${f.fareIdentifier.replace(/_/g, " ").toLowerCase()}` : ""}</small></div>
+      <div className="times">
+        <div><b>{fmtTime(f.departureTime)}</b><div className="small muted">{f.origin}</div></div>
+        <div className="line">{dur(f.duration)} · {f.stops === 0 ? "Direct" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}</div>
+        <div><b>{fmtTime(f.arrivalTime)}</b><div className="small muted">{f.destination}</div></div>
       </div>
-
-      {/* Route */}
-      <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 16 }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>
-            {new Date(fare.departureTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-          </div>
-          <div style={{ color: "#6b7280", fontSize: 13 }}>{fare.origin}</div>
-        </div>
-
-        <div style={{ flex: 1, textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: "#6b7280" }}>{durationStr(fare.duration)}</div>
-          <div style={{ borderTop: "2px solid #e5e7eb" }} />
-          <div style={{ fontSize: 12, color: fare.stops === 0 ? "#16a34a" : "#f59e0b" }}>
-            {fare.stops === 0 ? "Non-stop" : `${fare.stops} stop${fare.stops > 1 ? "s" : ""}`}
-          </div>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>
-            {new Date(fare.arrivalTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-          </div>
-          <div style={{ color: "#6b7280", fontSize: 13 }}>{fare.destination}</div>
-        </div>
+      <div className="chips">
+        {f.baggage?.checked && <span className="chip">🧳 {f.baggage.checked}</span>}
+        <span className="chip">{f.isRefundable ? "Refundable" : "Non-refundable"}</span>
+        <button type="button" className={`chip`} style={{ border: 0, cursor: "pointer", background: quoted ? "#dcfce7" : undefined }} onClick={onQuote}>{quoted ? "✓ In quote" : "+ Quote"}</button>
       </div>
-
-      {/* Baggage */}
-      <div style={{ textAlign: "center", minWidth: 80 }}>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>Cabin {fare.baggage.cabin}</div>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>Check {fare.baggage.checked}</div>
-        <div style={{ fontSize: 12, color: fare.isRefundable ? "#16a34a" : "#6b7280", marginTop: 4 }}>
-          {fare.isRefundable ? "Refundable" : "Non-refundable"}
-        </div>
-      </div>
-
-      {/* Price + action */}
-      <div style={{ textAlign: "right", minWidth: 140 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: indicative ? "#374151" : "#E31E24" }}>
-          {currSym(fare.currency)}{fare.displayPrice.toLocaleString("en-IN")}
-        </div>
-        {fare.isBookable ? (
-          <a
-            href={`/checkout?fareId=${fare.id}&supplier=${fare.supplier}`}
-            style={{ ...btnStyle, display: "inline-block", marginTop: 8, textDecoration: "none", fontSize: 13, padding: "8px 16px" }}
-          >
-            Book →
-          </a>
-        ) : (
-          <button
-            onClick={() => window.open("https://wa.me/", "_blank")}
-            style={{
-              marginTop: 8, fontSize: 12, padding: "7px 14px", cursor: "pointer",
-              background: "#25d366", color: "white", border: "none", borderRadius: 8, fontWeight: 600,
-            }}
-          >
-            Enquire on WhatsApp
-          </button>
-        )}
+      <div className="price">
+        <b>{money(price(f), f.currency)}</b>
+        <small>Net</small>
+        {f.sellingPrice && f.sellingPrice !== price(f) && <span className="sell">Sell {money(f.sellingPrice, f.currency)}</span>}
+        <div style={{ marginTop: 6 }}>{action}</div>
       </div>
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 14px",
-  fontSize: 14, outline: "none", minWidth: 120,
-};
-
-const btnStyle: React.CSSProperties = {
-  background: "#E31E24", color: "white", border: "none",
-  borderRadius: 8, padding: "10px 24px", fontSize: 14, fontWeight: 600,
-  cursor: "pointer",
-};
