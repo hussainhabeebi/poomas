@@ -123,6 +123,67 @@ function fillFromReview(f: FareInfo, r: Review): FareInfo {
   };
 }
 
+// The flight's other fare options (Saver / Standard / Flexi…) passed from search:
+// shows what this option includes and lets the customer switch or upgrade.
+type AltOption = { id: string; label: string; price: number; checked: string; cabin: string; meal: string; ref: string };
+function FareOptionSwitcher({ money, currentPrice, disabled }: { money: (n: number) => string; currentPrice: number; disabled: boolean }) {
+  const [state, setState] = useState<{ current: AltOption; alts: AltOption[] } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    let alts: AltOption[] = [];
+    try { alts = JSON.parse(q.get("alts") ?? "[]"); } catch {}
+    const meal = q.get("meal");
+    const current: AltOption = {
+      id: q.get("fareId") ?? "", label: q.get("fl") ?? "Standard", price: Number(q.get("price")) || 0,
+      checked: q.get("bag") ?? "", cabin: q.get("cab") ?? "", meal: meal === "1" ? "Free meal" : meal === "0" ? "Meal at cost" : "",
+      ref: q.get("ref") === "1" ? "Refundable" : "Non-refundable",
+    };
+    if (alts.length) setState({ current, alts: alts.filter((a) => a && typeof a.id === "string" && a.price > 0) });
+  }, []);
+  if (!state || !state.alts.length) return null;
+
+  function choose(o: AltOption) {
+    const q = new URLSearchParams(window.location.search);
+    const rest = [state!.current, ...state!.alts].filter((a) => a.id !== o.id);
+    q.set("fareId", o.id); q.set("price", String(o.price)); q.set("bag", o.checked); q.set("cab", o.cabin); q.set("fl", o.label);
+    q.set("ref", o.ref === "Non-refundable" ? "0" : "1");
+    if (o.meal) q.set("meal", o.meal === "Free meal" ? "1" : "0"); else q.delete("meal");
+    q.delete("priceIds");
+    q.set("alts", JSON.stringify(rest));
+    window.location.assign(`/book?${q.toString()}`);
+  }
+
+  // The chosen option first, then the others cheapest first.
+  const all = [state.current, ...[...state.alts].sort((a, b) => a.price - b.price)];
+  const base = currentPrice || state.current.price;
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+        <b style={{ fontSize: 15 }}>Fare options for this flight</b>
+        <span style={{ fontSize: 12, color: "#667085" }}>{all.length} options</span>
+      </div>
+      <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(150px, 1fr)", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+        {all.map((o) => {
+          const on = o.id === state.current.id;
+          const diff = o.price - state.current.price;
+          return (
+            <button key={o.id} type="button" disabled={disabled || on} onClick={() => choose(o)}
+              style={{ textAlign: "left", border: on ? "2px solid #ed1c24" : "1px solid #eaecf0", background: on ? "#fff1f2" : "#fff", borderRadius: 12, padding: 10, cursor: on ? "default" : "pointer", display: "flex", flexDirection: "column", gap: 4, font: "inherit", color: "#101828" }}>
+              <b style={{ fontSize: 13 }}>{o.label}{on ? " ✓" : ""}</b>
+              <span style={{ fontSize: 12, color: o.checked ? "#344054" : "#98a2b3" }}>🧳 {o.checked || "No check-in bag"}</span>
+              {o.cabin && <span style={{ fontSize: 12, color: "#344054" }}>👜 {o.cabin} cabin</span>}
+              {o.meal && <span style={{ fontSize: 12, color: o.meal === "Free meal" ? "#344054" : "#98a2b3" }}>🍽 {o.meal}</span>}
+              <span style={{ fontSize: 12, color: o.ref === "Non-refundable" ? "#98a2b3" : "#067647" }}>{o.ref}</span>
+              <b style={{ fontSize: 14, marginTop: 2 }}>{on ? money(base) : diff > 0 ? `+ ${money(diff)}` : `− ${money(-diff)}`}</b>
+              {!on && <span style={{ fontSize: 12, fontWeight: 800, color: "#ed1c24" }}>{diff > 0 ? "Upgrade" : "Switch"} →</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function getToken(): string {
   try {
     const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -834,6 +895,8 @@ export default function BookPage() {
           <span>{review.fareAlert.message ?? `Fare changed${review.fareAlert.oldFare ? ` from ₹${review.fareAlert.oldFare}` : ""}${review.fareAlert.newFare ? ` to ₹${review.fareAlert.newFare}` : ""}.`} Please check the total before paying.</span>
         </div>
       )}
+      <FareOptionSwitcher money={(n) => shownTotal(n)} currentPrice={fare?.totalFare ?? 0} disabled={submitting || !!pendingPayment} />
+
       {review && review.fareIdentifiers.length > 0 && !review.fareIdentifiers.every((f) => f === "PUBLISHED") && (
         <p className="checkoutProgress" style={{ marginTop: 0 }}>Fare type: <b>{review.fareIdentifiers.map((f) => ({ SPECIAL_RETURN: "Special Return", TJ_FLEX: "Flex", STUDENT: "Student", SENIOR_CITIZEN: "Senior Citizen" } as Record<string, string>)[f] ?? f).join(" + ")}</b></p>
       )}

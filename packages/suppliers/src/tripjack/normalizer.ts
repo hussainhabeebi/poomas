@@ -85,6 +85,7 @@ export function normalizeTripjackFare(r: Rec, context: { tripKey?: string; legIn
     ...(r.sri ? { sri: String(r.sri) } : {}),
     ...(msri?.length ? { msri } : {}),
     ...(rT !== undefined ? { refundableType: rT } : {}),
+    ...(typeof adultFd.mI === "boolean" ? { mealIncluded: adultFd.mI } : {}),
     ...(sI.length ? { segments: sI.map(normalizeTripjackSegment) } : {}),
     raw:        r,
   };

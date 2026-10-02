@@ -500,14 +500,24 @@ searchRoutes.get("/debug-tripjack", async (c) => {
 
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
-  const supplier = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;
-  const tenant = c.get("tenant");
-  if (!supplier) return c.json({ error: "supplier query param required" }, 400);
-
-  const platformCredentials = platformCredentialsFromEnv(c.env);
-  const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
-  const { getBookableAdapter } = await import("@poomas/suppliers");
-  const adapter = getBookableAdapter(supplier, supplierConfigs, platformCredentials);
-  const rules = await adapter.getFareRules?.(fareId) ?? [];
-  return c.json({ fareRules: rules });
+  const supplier = (c.req.query("supplier") ?? "TRIPJACK").toUpperCase();
+  if (supplier !== "TRIPJACK") return c.json({ fareRules: [] });
+  const tenantId = c.get("tenantId");
+  // Cancellation / date-change rules for one fare option (cached 30 min).
+  const cacheKey = `fare_rules:${tenantId}:${fareId}`;
+  const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json").catch(() => null);
+  if (cached) return c.json({ fareRules: cached, cached: true });
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), tenantId);
+  const config = supplierConfigs.find((s) => s.name === "TRIPJACK");
+  if (!config?.isEnabled) return c.json({ fareRules: [], error: "Fare rules aren't available right now." });
+  const { TripjackClient, parseTripjackFareRules } = await import("@poomas/suppliers");
+  try {
+    const client = new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(config.credentials ?? {}) });
+    const rules = parseTripjackFareRules(await client.fareRules(fareId));
+    if (rules.length) c.executionCtx.waitUntil(c.env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(rules), { expirationTtl: 1800 }).catch(() => {}));
+    return c.json({ fareRules: rules });
+  } catch (err) {
+    console.error("[fare-rules]", err);
+    return c.json({ fareRules: [], error: "The airline's fare rules couldn't be loaded. Check them before booking." });
+  }
 });
