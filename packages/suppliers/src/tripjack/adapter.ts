@@ -82,24 +82,7 @@ export class TripjackAdapter implements SupplierAdapter {
 
   async getFareRules(fareId: string): Promise<FareRule[]> {
     const raw = await this.client.fareRules(fareId) as any;
-    // v2 farerule returns tfr (timed fare rule) keyed by policy type
-    const tfr = raw?.fareRules?.tfr ?? raw?.fareRule?.DEFAULT?.fareRestrictions;
-    if (Array.isArray(tfr)) {
-      return (tfr as { policyInfo?: string; type?: string }[]).map((r) => ({
-        category:    r.type ?? "General",
-        description: r.policyInfo ?? "",
-      }));
-    }
-    // tfr is keyed by policy type (CANCELLATION, DATECHANGE, etc.)
-    if (tfr && typeof tfr === "object") {
-      return Object.entries(tfr).flatMap(([category, policies]) =>
-        (Array.isArray(policies) ? policies : []).map((r: any) => ({
-          category,
-          description: r.policyInfo ?? String(r.amount ?? ""),
-        })),
-      );
-    }
-    return [];
+    return parseTripjackFareRules(raw);
   }
 
   async revalidate(fareId: string): Promise<RevalidateResult> {
@@ -207,4 +190,30 @@ function firstValue(v: unknown): string {
   if (!v || typeof v !== "object") return "";
   const first = Object.values(v as Record<string, unknown>).find((x) => typeof x === "string" && x);
   return typeof first === "string" ? first : "";
+}
+
+// TripJack v2 farerule: tfr (timed fare rules) keyed by policy type, usually
+// nested under the route ("COK-DXB": { tfr: { CANCELLATION: [...], DATECHANGE: [...] } }).
+export function parseTripjackFareRules(raw: unknown): FareRule[] {
+  const find = (v: any, depth = 0): any => {
+    if (!v || typeof v !== "object" || depth > 6) return null;
+    if (v.tfr && typeof v.tfr === "object") return v.tfr;
+    if (v.fareRestrictions) return v.fareRestrictions;
+    for (const x of Object.values(v)) { const hit = find(x, depth + 1); if (hit) return hit; }
+    return null;
+  };
+  const tfr = find(raw);
+  const describe = (r: any) => {
+    const parts: string[] = [];
+    if (typeof r?.amount === "number") parts.push(`₹${Math.round(r.amount).toLocaleString("en-IN")}${typeof r.additionalFee === "number" && r.additionalFee > 0 ? ` + ₹${Math.round(r.additionalFee).toLocaleString("en-IN")} fee` : ""}`);
+    if (r?.st != null || r?.et != null) parts.push(`${r.st ?? 0}–${r.et ?? "∞"} hrs before departure`);
+    const info = typeof r?.policyInfo === "string" ? r.policyInfo.replace(/__nls__/g, " ").trim() : "";
+    return [info, parts.join(" · ")].filter(Boolean).join(" — ") || "As per airline rules";
+  };
+  if (Array.isArray(tfr)) return tfr.map((r: any) => ({ category: String(r.type ?? "General"), description: describe(r) }));
+  if (tfr && typeof tfr === "object") {
+    return Object.entries(tfr).flatMap(([category, policies]) =>
+      (Array.isArray(policies) ? policies : []).map((r: any) => ({ category, description: describe(r) })));
+  }
+  return [];
 }

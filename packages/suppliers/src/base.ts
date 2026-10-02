@@ -64,6 +64,7 @@ export interface NormalizedFare {
   sri?:            string;    // Special Return id (onward)
   msri?:           string[];  // Special Return ids this price pairs with (return)
   refundableType?: number;    // 0 non-refundable, 1 refundable, 2 partial
+  mealIncluded?:   boolean;   // TripJack fd.mI — free meal with this fare option
   segments?:       FareSegment[];
   fareRules?:    FareRule[];
   raw:           unknown;        // Original supplier response (kept for debugging)
