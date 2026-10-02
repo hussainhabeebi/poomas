@@ -118,7 +118,15 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
     redirect(`/search/journey?${new URLSearchParams(Object.entries(params).filter(([, v]) => typeof v === "string") as [string, string][])}`);
   }
   let sessionId: string | null = null;
-  try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
+  let prefCurrency: string | null = null;
+  try {
+    const s = await cookies();
+    sessionId = s.get("sid")?.value ?? null;
+    const cur = s.get("fp_cur")?.value;
+    if (cur === "INR" || cur === "AED" || cur === "USD") prefCurrency = cur;
+  } catch {}
+  // The visitor's chosen currency stays fixed across searches, whatever the link says.
+  if (prefCurrency) params.currency = prefCurrency as SearchParams["currency"];
 
   const [result, aedRate] = await Promise.all([searchFlights(params, sessionId), fetchAedRate()]);
   const requestedCurrency = params.currency ?? null;

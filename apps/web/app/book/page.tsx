@@ -6,6 +6,7 @@ import { ScanDocument, type ScannedTraveller } from "../components/ScanDocument"
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
+import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
 
 type Passenger = {
   type: "ADULT" | "CHILD" | "INFANT";
@@ -205,6 +206,12 @@ export default function BookPage() {
   const [walletOffer, setWalletOffer] = useState<{ amount: number; balance: number } | null>(null);
   // Card payment currency: INR, or AED at the admin-set rate (INR per 1 AED).
   const [payCurrency, setPayCurrency] = useState<"INR" | "AED">("INR");
+  // Currency changed in the site menu: follow it here (USD is shown as INR, the payable currency).
+  useEffect(() => {
+    const onChange = (e: Event) => setPayCurrency((e as CustomEvent).detail === "AED" ? "AED" : "INR");
+    window.addEventListener(CURRENCY_EVENT, onChange);
+    return () => window.removeEventListener(CURRENCY_EVENT, onChange);
+  }, []);
   const [aedRate, setAedRate] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
@@ -314,8 +321,8 @@ export default function BookPage() {
     }
 
     // Offer AED when the admin has set a rate; start with the customer's chosen currency.
-    let wanted = q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
-    if (!wanted) { try { wanted = localStorage.getItem("pref_currency"); } catch {} }
+    // The visitor's fixed currency wins; links only decide when none was chosen yet.
+    const wanted = readPrefCurrency() ?? q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
     if (fareCurrency === "INR") {
       fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" } })
         .then((r) => r.json())
@@ -407,15 +414,29 @@ export default function BookPage() {
     } catch { return new Intl.NumberFormat("en"); }
   }, [fare?.currency]);
 
-  // Amount shown in the chosen card currency (rounded up like the payment API).
-  const shownTotal = (inr: number) => {
-    if (!(inr > 0)) return "—";   // price not known yet (still checking with the airline)
-    if (payCurrency === "AED" && aedRate && fare?.currency === "INR") {
-      const aed = Math.ceil((inr / aedRate) * 100 - 1e-9) / 100;
+  // Any amount (fare, extra bag, meal, seat) in the chosen card currency,
+  // rounded up like the payment API.
+  const inAed = payCurrency === "AED" && !!aedRate && fare?.currency === "INR";
+  const amt = (inr: number) => {
+    if (inAed) {
+      const aed = Math.ceil((inr / aedRate!) * 100 - 1e-9) / 100;
       return `AED ${aed.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     return money.format(inr);
   };
+  const shownTotal = (inr: number) => (inr > 0 ? amt(inr) : "—");   // "—" while the airline price is checked
+  function chooseCurrency(cur: "INR" | "AED") {
+    setPayCurrency(cur);
+    savePrefCurrency(cur);
+  }
+  const currencySwitch = aedRate && fare?.currency === "INR" ? (
+    <div className="curSwitch" role="radiogroup" aria-label="Payment currency">
+      {(["INR", "AED"] as const).map((cur) => (
+        <button key={cur} type="button" role="radio" aria-checked={payCurrency === cur} className={payCurrency === cur ? "on" : ""}
+          disabled={submitting} onClick={() => chooseCurrency(cur)}>{cur === "INR" ? "₹ INR" : "AED"}</button>
+      ))}
+    </div>
+  ) : null;
 
   // Passport / ID scan → this traveller's fields (only fields the document gave).
   const [scanWarn, setScanWarn] = useState<Record<number, string>>({});
@@ -862,16 +883,11 @@ export default function BookPage() {
             <div><b>{fare.airlineName}</b><span>{fare.flightNumber}</span></div>
             <strong>{shownTotal(grandTotal)}</strong>
           </div>
-          {aedRate && fare.currency === "INR" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
-              <span style={{ color: "#64748b" }}>Pay by card in</span>
-              {(["INR", "AED"] as const).map((cur) => (
-                <button key={cur} type="button" onClick={() => setPayCurrency(cur)} disabled={submitting}
-                  style={{ border: `1.5px solid ${payCurrency === cur ? "#E31E24" : "#e2e8f0"}`, background: payCurrency === cur ? "#fff1f2" : "#fff", color: "#0f172a", borderRadius: 20, padding: "4px 12px", fontWeight: 700, cursor: "pointer" }}>
-                  {cur === "INR" ? "₹ INR" : "AED"}
-                </button>
-              ))}
-              {payCurrency === "AED" && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 AED = ₹{aedRate}</span>}
+          {currencySwitch && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
+              <span style={{ color: "#64748b" }}>Show prices &amp; pay in</span>
+              {currencySwitch}
+              {inAed && grandTotal > 0 && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 AED = ₹{aedRate}</span>}
             </div>
           )}
           <div className="route">
@@ -996,18 +1012,18 @@ export default function BookPage() {
                               <label>Extra baggage
                                 <select value={p.bag[seg.key] ?? ""} onChange={(e) => updSsr(i, "bag", seg.key, e.target.value)}>
                                   <option value="">None</option>
-                                  {seg.ssr.baggage.map((o) => <option key={o.code} value={o.code}>{o.desc} · {o.amount ? money.format(o.amount) : "included"}</option>)}
+                                  {seg.ssr.baggage.map((o) => <option key={o.code} value={o.code}>{o.desc} · {o.amount ? amt(o.amount) : "included"}</option>)}
                                 </select>
-                                {bag && <small className="ssrPick">{bag.amount ? `+ ${money.format(bag.amount)}` : "Covers the whole connecting journey"}</small>}
+                                {bag && <small className="ssrPick">{bag.amount ? `+ ${amt(bag.amount)}` : "Covers the whole connecting journey"}</small>}
                               </label>
                             )}
                             {seg.ssr.meal.length > 0 && (
                               <label>Meal
                                 <select value={p.meal[seg.key] ?? ""} onChange={(e) => updSsr(i, "meal", seg.key, e.target.value)}>
                                   <option value="">None</option>
-                                  {seg.ssr.meal.map((o) => <option key={o.code} value={o.code}>{o.desc}{o.amount ? ` · ${money.format(o.amount)}` : ""}</option>)}
+                                  {seg.ssr.meal.map((o) => <option key={o.code} value={o.code}>{o.desc}{o.amount ? ` · ${amt(o.amount)}` : ""}</option>)}
                                 </select>
-                                {meal && <small className="ssrPick" title={meal.desc}>{meal.amount ? `+ ${money.format(meal.amount)}` : "Included"}</small>}
+                                {meal && <small className="ssrPick" title={meal.desc}>{meal.amount ? `+ ${amt(meal.amount)}` : "Included"}</small>}
                               </label>
                             )}
                           </div>
@@ -1036,7 +1052,7 @@ export default function BookPage() {
               <div><h2>Seats</h2><p>Optional · pick a seat for each traveller. Paid seats are added to your total.</p></div>
             </div>
             {seatMaps?.length ? (
-              <SeatPicker maps={seatMaps} segments={review?.segments ?? []} travellers={passengers} onPick={pickSeat} format={(n) => money.format(n)} />
+              <SeatPicker maps={seatMaps} segments={review?.segments ?? []} travellers={passengers} onPick={pickSeat} format={(n) => amt(n)} />
             ) : (
               <button type="button" className="seatLoad" disabled={seatLoading} onClick={() => void loadSeatMap()}>
                 {seatLoading ? "Loading seat map…" : "Choose seats"}
@@ -1093,10 +1109,10 @@ export default function BookPage() {
           </section>
         )}
         {ssrSum > 0 && (
-          <p className="checkoutProgress">Meals &amp; baggage: <b>{money.format(ssrSum)}</b> added to the fare.</p>
+          <p className="checkoutProgress">Meals &amp; baggage: <b>{amt(ssrSum)}</b> added to the fare.</p>
         )}
         {seatSum > 0 && (
-          <p className="checkoutProgress">Seats: <b>{money.format(seatSum)}</b> added to the fare.</p>
+          <p className="checkoutProgress">Seats: <b>{amt(seatSum)}</b> added to the fare.</p>
         )}
 
         </>)}
@@ -1112,8 +1128,9 @@ export default function BookPage() {
         <div className="spacer" />
         <div className="pay">
           <div>
-            <span>Total</span>
+            <span>Total{inAed && grandTotal > 0 ? ` ≈ ${money.format(grandTotal)}` : ""}</span>
             <b>{fare ? shownTotal(grandTotal) : "—"}</b>
+            {currencySwitch && <div className="paySwitch">{currencySwitch}</div>}
           </div>
           <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
             {submitting ? (walletOffer ? "Paying from wallet…" : pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : walletOffer ? `Pay ₹${walletOffer.amount.toLocaleString("en-IN")} from wallet` : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}
@@ -1139,6 +1156,6 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}.holdOffer{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:12px 14px;margin:14px 0}.holdOffer div{display:flex;flex-direction:column;gap:3px;flex:1 1 240px;font-size:13px;color:#78350f}.holdOffer b{font-size:14px;color:#451a03}.holdOffer button{height:44px;padding:0 16px;border:1px solid #d97706;border-radius:12px;background:#fff;color:#92400e;font-weight:800;font-size:14px;cursor:pointer}.holdOffer button:disabled{opacity:.6}${seatCss}`;
+const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}.curSwitch{display:inline-flex;background:#f2f4f7;border-radius:999px;padding:3px;gap:2px}.curSwitch button{border:0;background:transparent;color:#475467;font-weight:800;font-size:12px;border-radius:999px;padding:5px 12px;cursor:pointer;min-height:28px}.curSwitch button.on{background:#fff;color:#ed1c24;box-shadow:0 1px 3px rgba(16,24,40,.15)}.paySwitch{margin-top:4px}.paySwitch .curSwitch button{padding:3px 9px;font-size:11px;min-height:24px}.holdOffer{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:12px 14px;margin:14px 0}.holdOffer div{display:flex;flex-direction:column;gap:3px;flex:1 1 240px;font-size:13px;color:#78350f}.holdOffer b{font-size:14px;color:#451a03}.holdOffer button{height:44px;padding:0 16px;border:1px solid #d97706;border-radius:12px;background:#fff;color:#92400e;font-weight:800;font-size:14px;cursor:pointer}.holdOffer button:disabled{opacity:.6}${seatCss}`;
 
 const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.checkError{justify-content:space-between;background:#fff7ed;border-color:#fed7aa;color:#9a3412}.checkError button{border:0;background:#ea580c;color:#fff;border-radius:8px;padding:7px 12px;font-weight:800;cursor:pointer}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.typeSelect{height:32px;border:1px solid #fecdd3;border-radius:99px;padding:0 10px;background:#fff1f2;color:#be123c;font-size:11px;font-weight:800;cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23be123c'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}.typeSelect:focus{outline:none;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;

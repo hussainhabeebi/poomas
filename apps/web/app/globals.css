@@ -2538,3 +2538,15 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
 .fare-option-book { display: block; text-align: center; background: #E31E24; color: #fff; font-weight: 800; font-size: 14px; border-radius: 10px; padding: 9px; text-decoration: none; }
 .fare-rules button { background: none; border: 0; padding: 0; color: #1d4ed8; font-size: 12px; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .fare-rules-box { margin-top: 6px; font-size: 11px; color: #334155; display: flex; flex-direction: column; gap: 4px; line-height: 1.4; }
+
+/* Site-wide currency: chosen once, kept for every search and booking. */
+.nav-currency { display: inline-flex; align-items: center; flex-shrink: 0; }
+.nav-currency select {
+  appearance: none; -webkit-appearance: none;
+  height: 34px; padding: 0 26px 0 10px; border: 1px solid #d0d5dd; border-radius: 999px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23475467' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: #1d2939; font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.nav-currency select:hover { border-color: #98a2b3; }
+.nav-currency select:focus-visible { outline: 2px solid #b91c1c; outline-offset: 2px; }
+.nav-currency .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

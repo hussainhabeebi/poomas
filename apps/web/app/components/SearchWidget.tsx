@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { AiTripSearch, type AiTripFields } from "./AiTripSearch";
 import { useRouter } from "next/navigation";
+import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
 
 const AIRPORTS = [
   { code: "BOM", city: "Mumbai",        country: "IN" },
@@ -212,17 +213,21 @@ export default function SearchWidget() {
     return () => window.clearInterval(timer);
   }, [searching]);
 
-  // Restore currency preference from localStorage on first render
+  // One currency for the whole visit (and the signed-in account): restore it and follow changes made elsewhere.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("pref_currency") as CurrencyCode | null;
-      if (saved && CURRENCIES.some((c) => c.code === saved)) setCurrencyState(saved);
-    } catch {}
+    const saved = readPrefCurrency();
+    if (saved && CURRENCIES.some((c) => c.code === saved)) setCurrencyState(saved);
+    const onChange = (e: Event) => {
+      const code = (e as CustomEvent).detail;
+      if (CURRENCIES.some((c) => c.code === code)) setCurrencyState(code);
+    };
+    window.addEventListener(CURRENCY_EVENT, onChange);
+    return () => window.removeEventListener(CURRENCY_EVENT, onChange);
   }, []);
 
   function setCurrency(code: CurrencyCode) {
     setCurrencyState(code);
-    try { localStorage.setItem("pref_currency", code); } catch {}
+    savePrefCurrency(code);
   }
 
   function swap() {
