@@ -19,9 +19,9 @@ type Passenger = {
 };
 
 type SsrOption = { code: string; amount: number; desc: string };
-type ReviewSegment = { key: string; airline: string; flightNumber: string; origin: string; destination: string; departureTime: string; ssr: { baggage: SsrOption[]; meal: SsrOption[]; extra: SsrOption[] } };
+type ReviewSegment = { key: string; airline: string; airlineName?: string; flightNumber: string; origin: string; destination: string; departureTime: string; arrivalTime?: string; duration?: number; isReturn?: boolean; ssr: { baggage: SsrOption[]; meal: SsrOption[]; extra: SsrOption[] } };
 type Review = {
-  bookingId: string; totalFare?: number; expiresAt?: string;
+  bookingId: string; totalFare?: number; displayTotal?: number; currency?: string; expiresAt?: string;
   fareIdentifiers: string[];
   fareAlert?: { oldFare?: number; newFare?: number; message?: string };
   segments: ReviewSegment[];
@@ -94,6 +94,35 @@ function withRebookTravellers(list: Passenger[], from: string, to: string): Pass
   }
 }
 
+type HandoffSession = {
+  fareId: string; supplier: string; email?: string; mobile?: string;
+  passengers: { type: Passenger["type"]; firstName: string; lastName: string; dob?: string; gender?: string; nationality?: string; passportNumber?: string; passportExpiry?: string }[];
+};
+
+// Fills flight details missing from the link (WhatsApp / Leadvyne hand-offs)
+// from the airline's fare review.
+function fillFromReview(f: FareInfo, r: Review): FareInfo {
+  const segs = r.segments ?? [];
+  const onward = segs.filter((s) => !s.isReturn);
+  const legs = onward.length ? onward : segs;
+  if (!legs.length) return f;
+  const first = legs[0], last = legs[legs.length - 1];
+  const price = r.displayTotal ?? r.totalFare;
+  return {
+    ...f,
+    airlineName:   f.airlineName || first.airlineName || first.airline,
+    flightNumber:  f.flightNumber || legs.map((s) => s.flightNumber).join(" / "),
+    origin:        f.origin || first.origin,
+    destination:   f.destination || last.destination,
+    departureTime: f.departureTime || first.departureTime,
+    arrivalTime:   f.arrivalTime || last.arrivalTime || "",
+    // Airline segment durations (local clock times differ across time zones).
+    duration:      f.duration || legs.reduce((n, s) => n + (s.duration ?? 0), 0),
+    stops:         f.departureTime ? f.stops : Math.max(0, legs.length - 1),
+    ...(!(f.totalFare > 0) && price ? { totalFare: price, currency: "INR" } : {}),
+  };
+}
+
 function getToken(): string {
   try {
     const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -148,18 +177,50 @@ export default function BookPage() {
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
+    // WhatsApp / Leadvyne hand-off: /book?session=<token> carries the fare and
+    // travellers server-side (no flight details in the link).
+    const session = q.get("session");
+    if (session && !q.get("fareId")) {
+      fetch(`${apiUrl}/api/integrations/checkout-sessions/${encodeURIComponent(session)}`, { headers: { "x-tenant-slug": "poomas" } })
+        .then(async (r) => { if (!r.ok) throw new Error(); return r.json() as Promise<HandoffSession>; })
+        .then((h) => { q.set("fareId", h.fareId); q.set("supplier", h.supplier); start(q, h); })
+        .catch(() => setReviewError("This booking link has expired. Please ask us on WhatsApp for a new one."));
+      return;
+    }
+    start(q);
+  }, []);
+
+  function start(q: URLSearchParams, handoff?: HandoffSession) {
     const fareId   = q.get("fareId") ?? "";
     const supplier = q.get("supplier") ?? "";
     if (!fareId || !supplier) return;
-    const adults   = Math.min(9, Math.max(1, Number(q.get("adults"))   || 1));
-    const children = Math.min(6, Math.max(0, Number(q.get("children")) || 0));
-    const infants  = Math.min(4, Math.max(0, Number(q.get("infants"))  || 0));
+    const count = (t: Passenger["type"]) => handoff?.passengers.filter((p) => p.type === t).length ?? 0;
+    const adults   = Math.min(9, Math.max(1, handoff ? count("ADULT") : Number(q.get("adults")) || 1));
+    const children = Math.min(6, Math.max(0, handoff ? count("CHILD") : Number(q.get("children")) || 0));
+    const infants  = Math.min(4, Math.max(0, handoff ? count("INFANT") : Number(q.get("infants")) || 0));
     const blank = [
       ...Array.from({ length: adults },   () => emptyPassenger("ADULT")),
       ...Array.from({ length: children }, () => emptyPassenger("CHILD")),
       ...Array.from({ length: infants },  () => emptyPassenger("INFANT")),
     ];
-    setPassengers(withRebookTravellers(blank, q.get("from") ?? "", q.get("to") ?? ""));
+    if (handoff) {
+      const pool = [...handoff.passengers];
+      setPassengers(blank.map((p) => {
+        const i = pool.findIndex((x) => x.type === p.type);
+        if (i < 0) return p;
+        const h = pool.splice(i, 1)[0];
+        return { ...p, firstName: h.firstName, lastName: h.lastName, dob: h.dob || "", gender: h.gender === "F" ? "F" : "M",
+          nationality: h.nationality || p.nationality, passportNumber: h.passportNumber || "", passportExpiry: h.passportExpiry || "" };
+      }));
+      if (handoff.email) setEmail(handoff.email);
+      if (handoff.mobile) setPhone(handoff.mobile);
+    } else {
+      setPassengers(withRebookTravellers(blank, q.get("from") ?? "", q.get("to") ?? ""));
+    }
+    // Without a price in the link the fare is shown in INR from the airline's
+    // review; a requested AED display becomes the card currency instead.
+    const priceKnown = Number(q.get("price")) > 0;
+    const fareCurrency = priceKnown ? (q.get("cur") ?? "INR") : "INR";
     setFare({
       fareId, supplier,
       airlineName:   q.get("airline") ?? "",
@@ -170,8 +231,8 @@ export default function BookPage() {
       arrivalTime:   q.get("arr") ?? "",
       duration:      parseInt(q.get("dur") ?? "0"),
       stops:         parseInt(q.get("stops") ?? "0"),
-      totalFare:     parseFloat(q.get("price") ?? "0"),
-      currency:      q.get("cur") ?? "INR",
+      totalFare:     priceKnown ? parseFloat(q.get("price")!) : 0,
+      currency:      fareCurrency,
       isRefundable:  q.get("ref") === "1",
       cabinChecked:  q.get("bag") ?? "",
     });
@@ -186,15 +247,15 @@ export default function BookPage() {
         body: JSON.stringify({ priceIds, ...(q.get("sid") ? { searchId: q.get("sid") } : {}) }),
       })
         .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error ?? "We couldn't confirm availability."), { code: d.errorCode }); return d as Review; })
-        .then((d) => { setReview(d); if (d.conditions.gstMandatory) setUseGst(true); })
+        .then((d) => { setReview(d); setFare((f) => f && fillFromReview(f, d)); if (d.conditions.gstMandatory) setUseGst(true); })
         .catch((e) => { if (e.code === "FARE_EXPIRED") setFareExpired(true); else setReviewError(e.message); })
         .finally(() => setReviewLoading(false));
     }
 
     // Offer AED when the admin has set a rate; start with the customer's chosen currency.
-    let wanted = q.get("pc");
+    let wanted = q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
     if (!wanted) { try { wanted = localStorage.getItem("pref_currency"); } catch {} }
-    if ((q.get("cur") ?? "INR") === "INR") {
+    if (fareCurrency === "INR") {
       fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" } })
         .then((r) => r.json())
         .then((d: { rates?: { AED?: number | null } }) => {
@@ -206,7 +267,7 @@ export default function BookPage() {
         })
         .catch(() => {});
     }
-  }, []);
+  }
 
   useEffect(() => {
     const t = getToken();
@@ -287,6 +348,7 @@ export default function BookPage() {
 
   // Amount shown in the chosen card currency (rounded up like the payment API).
   const shownTotal = (inr: number) => {
+    if (!(inr > 0)) return "—";   // price not known yet (still checking with the airline)
     if (payCurrency === "AED" && aedRate && fare?.currency === "INR") {
       const aed = Math.ceil((inr / aedRate) * 100 - 1e-9) / 100;
       return `AED ${aed.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
