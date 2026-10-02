@@ -157,7 +157,13 @@ bookDirectRoutes.post("/review", zValidator("json", z.object({
       requestSummary: { priceIds, bookingId: summary.bookingId, tf: summary.totalFare, conditions: summary.conditions,
         fareIdentifiers: summary.fareIdentifiers, fareAlert: summary.fareAlert, ssrSegments: summary.segments.filter((s) => s.ssr.baggage.length || s.ssr.meal.length).length },
       durationMs: Date.now() - started }));
-    return c.json({ ...summary, expiresAt: new Date(Date.now() + ttl * 1000).toISOString(), requestId });
+    // Customer price incl. markup, for booking pages opened without a price in
+    // the link (e.g. WhatsApp / Leadvyne hand-offs).
+    const first = summary.segments[0], last = summary.segments[summary.segments.length - 1];
+    const displayTotal = summary.totalFare
+      ? await customerPrice(db, tenantId, summary.totalFare, { origin: first?.origin ?? "", destination: last?.destination ?? "", supplier: "TRIPJACK", airline: summary.airline ?? first?.airline ?? "" })
+      : undefined;
+    return c.json({ ...summary, displayTotal, expiresAt: new Date(Date.now() + ttl * 1000).toISOString(), requestId });
   } catch (err: any) {
     persistInBackground(c, persistExchanges(c.env, db, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
     runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
