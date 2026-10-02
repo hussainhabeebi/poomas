@@ -6,6 +6,7 @@ import { ScanDocument, type ScannedTraveller } from "../components/ScanDocument"
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
+import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
 
 type Passenger = {
   type: "ADULT" | "CHILD" | "INFANT";
@@ -205,6 +206,12 @@ export default function BookPage() {
   const [walletOffer, setWalletOffer] = useState<{ amount: number; balance: number } | null>(null);
   // Card payment currency: INR, or AED at the admin-set rate (INR per 1 AED).
   const [payCurrency, setPayCurrency] = useState<"INR" | "AED">("INR");
+  // Currency changed in the site menu: follow it here (USD is shown as INR, the payable currency).
+  useEffect(() => {
+    const onChange = (e: Event) => setPayCurrency((e as CustomEvent).detail === "AED" ? "AED" : "INR");
+    window.addEventListener(CURRENCY_EVENT, onChange);
+    return () => window.removeEventListener(CURRENCY_EVENT, onChange);
+  }, []);
   const [aedRate, setAedRate] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
@@ -314,8 +321,8 @@ export default function BookPage() {
     }
 
     // Offer AED when the admin has set a rate; start with the customer's chosen currency.
-    let wanted = q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
-    if (!wanted) { try { wanted = localStorage.getItem("pref_currency"); } catch {} }
+    // The visitor's fixed currency wins; links only decide when none was chosen yet.
+    const wanted = readPrefCurrency() ?? q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
     if (fareCurrency === "INR") {
       fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" } })
         .then((r) => r.json())
@@ -420,7 +427,7 @@ export default function BookPage() {
   const shownTotal = (inr: number) => (inr > 0 ? amt(inr) : "—");   // "—" while the airline price is checked
   function chooseCurrency(cur: "INR" | "AED") {
     setPayCurrency(cur);
-    try { localStorage.setItem("pref_currency", cur); } catch {}
+    savePrefCurrency(cur);
   }
   const currencySwitch = aedRate && fare?.currency === "INR" ? (
     <div className="curSwitch" role="radiogroup" aria-label="Payment currency">

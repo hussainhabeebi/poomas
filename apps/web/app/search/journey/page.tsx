@@ -9,6 +9,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { readPrefCurrency } from "../../lib/currency-pref";
 
 type Segment = { airline: string; airlineName: string; flightNumber: string; origin: string; destination: string; departureTime: string; arrivalTime: string; duration: number; isReturn?: boolean };
 type Fare = {
@@ -84,7 +85,7 @@ function Journey() {
         departureDate: first.departureDate, ...(tripType === "ROUNDTRIP" && legs[1] ? { returnDate: legs[1].departureDate } : {}),
         ...(tripType === "MULTICITY" ? { legs } : {}),
         adults, children, infants, cabinClass: q.get("cabinClass") ?? "ECONOMY", tripType,
-        ...(fareType ? { fareType } : {}), ...(q.get("currency") ? { currency: q.get("currency") } : {}),
+        ...(fareType ? { fareType } : {}), ...((readPrefCurrency() ?? q.get("currency")) ? { currency: readPrefCurrency() ?? q.get("currency") } : {}),
       }),
     })
       .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error((typeof d.error === "string" ? d.error : d.error?.issues?.[0]?.message) ?? `Search failed (${r.status})`); return d; })
