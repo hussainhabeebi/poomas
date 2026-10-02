@@ -1,6 +1,7 @@
 import type { NormalizedFare } from "@poomas/suppliers";
 
 interface MarkupRule {
+  agentId?:    string | null;
   markupType:  string;
   markupValue: string;
   airline?:    string | null;
@@ -15,7 +16,7 @@ interface MarkupRule {
   validTo?:    Date | null;
 }
 
-// Evaluates markup rules in priority order and applies the first match
+// Evaluates markup rules in order (agent-specific first, then priority) and applies the first match
 export function applyMarkup(fare: NormalizedFare, rules: MarkupRule[]): number {
   const now = new Date();
 
@@ -23,7 +24,8 @@ export function applyMarkup(fare: NormalizedFare, rules: MarkupRule[]): number {
     .filter((r) => r.isActive)
     .filter((r) => !r.validFrom || r.validFrom <= now)
     .filter((r) => !r.validTo   || r.validTo   >= now)
-    .sort((a, b) => b.priority - a.priority);  // Highest priority first
+    // Rules allocated to an agent beat the tenant-wide defaults, then highest priority first.
+    .sort((a, b) => Number(Boolean(b.agentId)) - Number(Boolean(a.agentId)) || b.priority - a.priority);
 
   for (const rule of active) {
     if (ruleMatches(rule, fare)) {
