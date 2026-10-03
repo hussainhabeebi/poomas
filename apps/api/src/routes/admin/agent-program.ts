@@ -26,6 +26,7 @@ import {
 } from "../../lib/agent-program.js";
 import { emailShell, escapeHtml, money, notifyCustomer } from "../../lib/customer-notify.js";
 import { portalUrl, REQUEST_STATUSES } from "../agent-portal.js";
+import { bankAccountSchema, getBankAccounts, saveBankAccounts } from "../../lib/bank-accounts.js";
 
 export const agentProgramAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -130,12 +131,12 @@ agentProgramAdminRoutes.post("/requests/:id/approve-deposit", zValidator("json",
   const r = await loadRequest(c, c.req.param("id"));
   if (!r || r.type !== "DEPOSIT") return c.json({ error: "Deposit request not found" }, 404);
   const db = c.get("db");
+  const wallet = await agentWallet(db, r.tenantId, r.agentId);
+  if (!wallet) return c.json({ error: "Agency wallet not found" }, 404);
   // Claim the request first so a double click can't credit twice.
   const [claimed] = await db.update(agentRequests).set({ status: "APPROVED", amount: c.req.valid("json").amount.toFixed(2), updatedAt: new Date() })
     .where(and(eq(agentRequests.id, r.id), inArray(agentRequests.status, ["OPEN", "IN_PROGRESS"]))).returning();
   if (!claimed) return c.json({ error: `This deposit is already ${r.status.toLowerCase()}.` }, 409);
-  const wallet = await agentWallet(db, r.tenantId, r.agentId);
-  if (!wallet) return c.json({ error: "Agency wallet not found" }, 404);
   const { amount, note } = c.req.valid("json");
   const balance = await creditAgentWallet(db, wallet.id, amount, "TOPUP", {
     paymentId: `deposit_${r.id}`, performedById: c.get("userId") ?? undefined,
@@ -144,6 +145,86 @@ agentProgramAdminRoutes.post("/requests/:id/approve-deposit", zValidator("json",
   await audit(db, { tenantId: r.tenantId, userId: c.get("userId"), action: "AGENT_DEPOSIT_APPROVED", entity: "WalletAccount", entityId: wallet.id, after: { amount, requestId: r.id } });
   c.executionCtx.waitUntil(notifyAgency(c, r.agentId, r.tenantId, r.id, "Deposit credited", `${money(amount, wallet.currency)} added to your wallet. New balance ${money(balance, wallet.currency)}.`).catch(() => {}));
   return c.json({ ok: true, balance });
+});
+
+// Reject a deposit (wrong amount, payment not received …): the agency sees the reason.
+agentProgramAdminRoutes.post("/requests/:id/reject-deposit", zValidator("json", z.object({ reason: z.string().trim().min(3).max(500) })), async (c) => {
+  const r = await loadRequest(c, c.req.param("id"));
+  if (!r || r.type !== "DEPOSIT") return c.json({ error: "Deposit request not found" }, 404);
+  const { reason } = c.req.valid("json");
+  const db = c.get("db");
+  const [done] = await db.update(agentRequests).set({ status: "REJECTED", adminNote: reason, updatedAt: new Date() })
+    .where(and(eq(agentRequests.id, r.id), inArray(agentRequests.status, ["OPEN", "IN_PROGRESS"]))).returning();
+  if (!done) return c.json({ error: `This deposit is already ${r.status.toLowerCase()}.` }, 409);
+  await audit(db, { tenantId: r.tenantId, userId: c.get("userId"), action: "AGENT_DEPOSIT_REJECTED", entity: "AgentRequest", entityId: r.id, after: { reason } });
+  c.executionCtx.waitUntil(notifyAgency(c, r.agentId, r.tenantId, r.id, "Deposit not approved", `${r.title}: ${reason}`).catch(() => {}));
+  return c.json({ ok: true });
+});
+
+// ── Wallet recharges: queue of bank-transfer deposits with their screenshots ──
+agentProgramAdminRoutes.get("/recharges", async (c) => {
+  const status = c.req.query("status") ?? "PENDING";
+  const statuses = status === "PENDING" ? ["OPEN", "IN_PROGRESS"] : status === "ALL" ? null : [status];
+  const db = c.get("db");
+  const rows = await db.select({ r: agentRequests, agentName: agents.businessName, agentNumber: agents.agentNumber, agentEmail: agents.email })
+    .from(agentRequests).innerJoin(agents, eq(agents.id, agentRequests.agentId))
+    .where(and(eq(agentRequests.tenantId, c.get("tenantId")), eq(agentRequests.type, "DEPOSIT"), ...(statuses ? [inArray(agentRequests.status, statuses)] : [])))
+    .orderBy(status === "PENDING" ? asc(agentRequests.createdAt) : desc(agentRequests.updatedAt)).limit(200);
+  const [counts] = await db.select({ pending: sql<number>`count(*) filter (where ${agentRequests.status} in ('OPEN','IN_PROGRESS'))::int` })
+    .from(agentRequests).where(and(eq(agentRequests.tenantId, c.get("tenantId")), eq(agentRequests.type, "DEPOSIT")));
+  const wallets = new Map<string, { balance: number; currency: string }>();
+  for (const id of [...new Set(rows.map((x: { r: { agentId: string } }) => x.r.agentId))]) {
+    const w = await agentWallet(db, c.get("tenantId"), id);
+    if (w) wallets.set(id, { balance: Number(w.balance), currency: w.currency });
+  }
+  return c.json({
+    pending: counts?.pending ?? 0,
+    recharges: rows.map(({ r, agentName, agentNumber, agentEmail }: any) => ({
+      id: r.id, status: r.status, title: r.title, amount: r.amount === null ? null : Number(r.amount), currency: r.currency,
+      details: r.details, attachments: r.attachments, adminNote: r.adminNote, createdAt: r.createdAt, updatedAt: r.updatedAt,
+      agent: { id: r.agentId, name: agentName, number: agentNumber, email: agentEmail, wallet: wallets.get(r.agentId) ?? null },
+    })),
+  });
+});
+
+agentProgramAdminRoutes.get("/bank-accounts", async (c) => c.json({ accounts: await getBankAccounts(c.env, c.get("tenantId")) }));
+
+agentProgramAdminRoutes.post("/bank-accounts", zValidator("json", bankAccountSchema, (r, c) => {
+  if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the bank details" }, 400);
+}), async (c) => {
+  const tenantId = c.get("tenantId");
+  const list = await getBankAccounts(c.env, tenantId);
+  if (list.length >= 20) return c.json({ error: "Up to 20 bank accounts" }, 400);
+  const now = new Date().toISOString();
+  const account = { ...c.req.valid("json"), id: crypto.randomUUID(), createdAt: now, updatedAt: now };
+  await saveBankAccounts(c.env, tenantId, [...list, account]);
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "BANK_ACCOUNT_ADDED", entity: "BankAccount", entityId: account.id, after: { label: account.label, accountNumber: account.accountNumber } });
+  return c.json({ account }, 201);
+});
+
+agentProgramAdminRoutes.patch("/bank-accounts/:id", zValidator("json", bankAccountSchema.partial(), (r, c) => {
+  if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the bank details" }, 400);
+}), async (c) => {
+  const tenantId = c.get("tenantId");
+  const list = await getBankAccounts(c.env, tenantId);
+  const i = list.findIndex((a) => a.id === c.req.param("id"));
+  if (i < 0) return c.json({ error: "Bank account not found" }, 404);
+  const before = list[i];
+  const patch = Object.fromEntries(Object.entries(c.req.valid("json")).filter(([, v]) => v !== undefined));
+  list[i] = { ...before, ...patch, updatedAt: new Date().toISOString() };
+  await saveBankAccounts(c.env, tenantId, list);
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "BANK_ACCOUNT_UPDATED", entity: "BankAccount", entityId: before.id, before, after: list[i] });
+  return c.json({ account: list[i] });
+});
+
+agentProgramAdminRoutes.delete("/bank-accounts/:id", async (c) => {
+  const tenantId = c.get("tenantId");
+  const list = await getBankAccounts(c.env, tenantId);
+  const gone = list.find((a) => a.id === c.req.param("id"));
+  if (!gone) return c.json({ error: "Bank account not found" }, 404);
+  await saveBankAccounts(c.env, tenantId, list.filter((a) => a.id !== gone.id));
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "BANK_ACCOUNT_REMOVED", entity: "BankAccount", entityId: gone.id, before: gone });
+  return c.json({ ok: true });
 });
 
 agentProgramAdminRoutes.get("/requests/:id/file", async (c) => {

@@ -98,7 +98,7 @@ export const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
 export type Role = "AGENT_ADMIN" | "AGENT_STAFF" | "AGENT_ACCOUNTANT";
 
 export interface Me {
-  agent: { id: string; businessName: string; ownerName: string; email: string; phone: string; whatsapp: string | null; region: string; currency: string; status: string; iataCode: string | null; parentAgentId: string | null; parentName: string | null; createdAt: string };
+  agent: { id: string; businessName: string; ownerName: string; email: string; phone: string; whatsapp: string | null; region: string; currency: string; status: string; iataCode: string | null; parentAgentId: string | null; parentName: string | null; createdAt: string; agentNumber?: string | null };
   settings: {
     displayName?: string; logoUrl?: string | null; brandColor?: string; contactPhone?: string; contactEmail?: string; address?: string; gstNumber?: string;
     slug?: string; miniSite?: boolean; ownMarkup?: { type: "FLAT" | "PERCENTAGE"; value: number }; frozen?: boolean; frozenReason?: string;

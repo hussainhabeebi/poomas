@@ -9,6 +9,7 @@
 // Trips   /api/agent/trips/*   the My Trips routes, scoped to the agency tree.
 
 import { assignAgentNumber, resolveAgentNumber } from "../lib/agent-number.js";
+import { getBankAccounts, visibleAccounts } from "../lib/bank-accounts.js";
 import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -291,7 +292,7 @@ agentPortalRoutes.get("/me", async (c) => {
     agent: {
       id: a.id, businessName: a.businessName, ownerName: a.ownerName, email: a.email, phone: a.phone, whatsapp: a.whatsapp,
       region: a.region, currency: a.currency, status: a.status, iataCode: a.iataCode, parentAgentId: a.parentAgentId,
-      parentName: parent?.businessName ?? null, createdAt: a.createdAt,
+      parentName: parent?.businessName ?? null, createdAt: a.createdAt, agentNumber: a.agentNumber,
     },
     settings: { ...s, logoUrl: logoUrl(a.id, s) },
     user: { id: c.get("userId"), role: c.get("userRole"), name: user?.name ?? "", email: user?.email ?? "" },
@@ -675,23 +676,54 @@ agentPortalRoutes.post("/requests/upload", async (c) => {
   return c.json({ request: r }, 201);
 });
 
-// Bank transfer / cash deposit with a receipt; credited when staff approve it.
+// Company bank accounts the agency can pay into (Admin → Wallet recharges → Bank accounts).
+agentPortalRoutes.get("/wallet/bank-accounts", async (c) => {
+  const tenantId = c.get("tenantId");
+  const wallet = await agentWallet(c.get("db"), tenantId, c.get("agentId")!);
+  const settings = await c.env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:payments`, "json").catch(() => null) as { nomod?: { enabled?: boolean } } | null;
+  return c.json({
+    walletCurrency: wallet?.currency ?? null,
+    onlineTopup: Boolean(settings?.nomod?.enabled),
+    accounts: visibleAccounts(await getBankAccounts(c.env, tenantId), wallet?.currency ?? ""),
+  });
+});
+
+// Bank transfer / cash deposit with a payment screenshot; credited once when staff approve it.
 agentPortalRoutes.post("/deposits", async (c) => {
   requireMoney(c);
   const { form, files } = await filesFrom(c, "receipt");
   const amount = Number(form.get("amount"));
   const method = String(form.get("method") ?? "BANK_TRANSFER").slice(0, 30);
   const reference = String(form.get("reference") ?? "").trim().slice(0, 80);
+  const bankAccountId = String(form.get("bankAccountId") ?? "").trim();
   if (!(amount > 0) || amount > 10_000_000) return c.json({ error: "Enter the amount you paid" }, 400);
-  if (!reference && !files.length) return c.json({ error: "Add the transfer reference or a receipt" }, 400);
+  if (!files.length) return c.json({ error: "Upload the payment screenshot or receipt" }, 400);
+  const bad = files.find((f) => !/^(image\/|application\/pdf$)/.test(f.type) || f.size > 8 * 1024 * 1024);
+  if (bad) return c.json({ error: "The receipt must be a photo, screenshot or PDF under 8 MB" }, 400);
+  const tenantId = c.get("tenantId");
+  const accounts = (await getBankAccounts(c.env, tenantId)).filter((x) => x.active);
+  const bank = bankAccountId ? accounts.find((x) => x.id === bankAccountId) : null;
+  if (bankAccountId && !bank) return c.json({ error: "Choose one of the listed bank accounts" }, 400);
+  if (method === "BANK_TRANSFER" && accounts.length && !bank) return c.json({ error: "Choose the bank account you paid into" }, 400);
   const a = await me(c);
+  // The same transfer reference can't be credited twice.
+  if (reference) {
+    const [dup] = await c.get("db").select({ id: agentRequests.id, status: agentRequests.status }).from(agentRequests)
+      .where(and(eq(agentRequests.agentId, a.id), eq(agentRequests.type, "DEPOSIT"), sql`lower(${agentRequests.details}->>'reference') = ${reference.toLowerCase()}`,
+        inArray(agentRequests.status, ["OPEN", "IN_PROGRESS", "APPROVED"]))).limit(1);
+    if (dup) return c.json({ error: `A deposit with reference ${reference} was already submitted (${dup.status.toLowerCase().replace("_", " ")}).` }, 409);
+  }
   const attachments = [];
   for (const f of files) attachments.push(await saveUpload(c.env, `agent-deposits/${a.id}`, f));
   const r = await createRequest(c, {
     type: "DEPOSIT", title: `Deposit ${money(amount, a.currency)} · ${method.replace("_", " ").toLowerCase()}`,
-    details: { method, reference, paidOn: String(form.get("paidOn") ?? "").slice(0, 10) || null }, amount, currency: a.currency, attachments,
+    details: {
+      method, reference, paidOn: String(form.get("paidOn") ?? "").slice(0, 10) || null,
+      ...(bank ? { bankAccountId: bank.id, bankAccount: { label: bank.label, bankName: bank.bankName, accountNumber: bank.accountNumber, currency: bank.currency } } : {}),
+    },
+    amount, currency: a.currency, attachments,
   });
-  return c.json({ request: r, message: "Deposit submitted. It's added to your wallet once our team confirms the payment." }, 201);
+  return c.json({ request: r, message: "Deposit submitted. It's added to your wallet once our team checks the payment." }, 201);
 });
 
 async function ownRequest(c: Ctx, id: string) {
