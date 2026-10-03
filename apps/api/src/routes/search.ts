@@ -4,7 +4,7 @@ import { z } from "zod";
 import { searchFares, type SupplierConfig, type PlatformCredentials, type SupplierDiagnostic } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
-import { getAedRate } from "../lib/fx.js";
+import { DISPLAY_CURRENCIES, getFx } from "../lib/fx.js";
 import { collectExchanges, persistExchanges, persistInBackground } from "../lib/api-exchanges.js";
 import { recordFareObservation, sendFareAlerts } from "../lib/fare-insights.js";
 import { optionalAgentId } from "../lib/agent-markup.js";
@@ -20,7 +20,7 @@ const searchSchema = z.object({
   infants:       z.number().int().min(0).max(4).default(0),
   cabinClass:    z.enum(["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"]).default("ECONOMY"),
   tripType:      z.enum(["ONEWAY", "ROUNDTRIP", "MULTICITY"]).default("ONEWAY"),
-  currency:      z.enum(["INR", "AED", "USD"]).optional(),
+  currency:      z.enum(DISPLAY_CURRENCIES).optional(),
   // Multi-city legs (2–6); round trips can use returnDate instead.
   legs: z.array(z.object({
     origin:        z.string().length(3).toUpperCase(),
@@ -257,18 +257,21 @@ async function runSearch(
   const tenantId = c.get("tenantId");
   const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
-  let currency = params.currency as "INR" | "AED" | "USD" | undefined;
+  let currency = params.currency as string | undefined;
 
   // Session preferences are optional. KV trouble must never block live supplier search.
   if (!currency && sessionId) {
     try {
       const prefs = await c.env.SESSIONS_KV.get(`session_prefs:${tenantId}:${sessionId}`, "json") as { currency?: string } | null;
-      currency = prefs?.currency as "INR" | "AED" | "USD" | undefined;
+      currency = prefs?.currency;
     } catch (err) {
       console.error("[search] session preference KV unavailable", err);
     }
   }
-  currency = currency ?? (tenant.defaultCurrency as "INR" | "AED" | "USD");
+  currency = currency ?? (tenant.defaultCurrency as string);
+  // GCC display currencies (SAR, QAR…) are converted on the website from the INR fares: search in INR.
+  if (!["INR", "AED", "USD"].includes(currency)) currency = "INR";
+  const searchCurrency = currency as "INR" | "AED" | "USD";
 
   const availableSuppliers = supplierConfigs.filter((s) => s.isEnabled).map((s) => s.name);
   const credentialAvailability = {
@@ -315,7 +318,7 @@ async function runSearch(
   const collector = collectExchanges();
   const result = await searchFares(
     {
-      ...params, currency,
+      ...params, currency: searchCurrency,
       legs: params.legs?.map((l) => ({ origin: l.origin, destination: l.destination, date: l.departureDate })),
     },
     supplierConfigs.map((s) => s.name === "TRIPJACK" && s.credentials ? { ...s, credentials: { ...s.credentials, recorder: collector.recorder } } : s),
@@ -341,7 +344,7 @@ async function runSearch(
     console.error("[search] markup unavailable; returning raw supplier prices", err);
   }
 
-  logSearchOutcome(c, tenantId, searchId, { ...params, currency }, availableSuppliers, result.diagnostics ?? {});
+  logSearchOutcome(c, tenantId, searchId, { ...params, currency: searchCurrency }, availableSuppliers, result.diagnostics ?? {});
 
   const hasErrors = Object.keys(result.errors).length > 0;
   const response = {
@@ -410,9 +413,10 @@ async function agentFares(c: Context<{ Bindings: Env; Variables: Variables }>, t
 }
 
 // Display/payment conversion rate (INR per 1 AED) set by admin; null = AED payment off.
+// Display / payment rates (INR per 1 unit) from the automatic exchange-rate tool.
 searchRoutes.get("/fx", async (c) => {
-  const aedRate = await getAedRate(c.env, c.get("tenantId"));
-  return c.json({ base: "INR", rates: { AED: aedRate } }, 200, { "Cache-Control": "no-store" });
+  const fx = await getFx(c.env, c.get("tenantId"), c.executionCtx);
+  return c.json({ base: "INR", unit: "INR per 1 unit", rates: fx.rates, updatedAt: fx.autoUpdatedAt }, 200, { "Cache-Control": "no-store" });
 });
 
 // Safe operational status: exposes only booleans/names, never secret values.

@@ -7,6 +7,7 @@ import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
 import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
+import { convertInr, fetchFxRates, formatIn, GCC, isDisplayCurrency, type DisplayCurrency, type FxRates } from "../lib/fx";
 
 type Passenger = {
   type: "ADULT" | "CHILD" | "INFANT";
@@ -204,15 +205,17 @@ export default function BookPage() {
   const [pendingPayment, setPendingPayment] = useState<{ bookingId: string; checkoutToken: string } | null>(null);
   // Offered when a signed-in customer's wallet covers the whole (INR) fare.
   const [walletOffer, setWalletOffer] = useState<{ amount: number; balance: number } | null>(null);
-  // Card payment currency: INR, or AED at the admin-set rate (INR per 1 AED).
-  const [payCurrency, setPayCurrency] = useState<"INR" | "AED">("INR");
-  // Currency changed in the site menu: follow it here (USD is shown as INR, the payable currency).
+  // Prices are shown in the visitor's currency (automatic exchange rates, INR per 1 unit).
+  // Cards are charged in INR, or in AED for the GCC currencies.
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("INR");
+  const [rates, setRates] = useState<FxRates>({});
+  // Currency changed in the site menu: follow it here.
   useEffect(() => {
-    const onChange = (e: Event) => setPayCurrency((e as CustomEvent).detail === "AED" ? "AED" : "INR");
+    const onChange = (e: Event) => { const c = (e as CustomEvent).detail; if (isDisplayCurrency(c)) setDisplayCurrency(c); };
     window.addEventListener(CURRENCY_EVENT, onChange);
     return () => window.removeEventListener(CURRENCY_EVENT, onChange);
   }, []);
-  const [aedRate, setAedRate] = useState<number | null>(null);
+  const aedRate = rates.AED ?? null;
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
@@ -324,16 +327,10 @@ export default function BookPage() {
     // The visitor's fixed currency wins; links only decide when none was chosen yet.
     const wanted = readPrefCurrency() ?? q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
     if (fareCurrency === "INR") {
-      fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" } })
-        .then((r) => r.json())
-        .then((d: { rates?: { AED?: number | null } }) => {
-          const rate = Number(d.rates?.AED);
-          if (Number.isFinite(rate) && rate > 0) {
-            setAedRate(rate);
-            if (wanted === "AED") setPayCurrency("AED");
-          }
-        })
-        .catch(() => {});
+      fetchFxRates(apiUrl).then((r) => {
+        setRates(r);
+        if (isDisplayCurrency(wanted) && (wanted === "INR" || r[wanted])) setDisplayCurrency(wanted);
+      });
     }
   }
 
@@ -416,24 +413,32 @@ export default function BookPage() {
 
   // Any amount (fare, extra bag, meal, seat) in the chosen card currency,
   // rounded up like the payment API.
-  const inAed = payCurrency === "AED" && !!aedRate && fare?.currency === "INR";
+  const fareInInr = fare?.currency === "INR";
+  const shownCur: DisplayCurrency = fareInInr && displayCurrency !== "INR" && rates[displayCurrency] ? displayCurrency : "INR";
+  const payCurrency: "INR" | "AED" = shownCur !== "INR" && (GCC as readonly string[]).includes(shownCur) && aedRate ? "AED" : "INR";
+  const inForeign = shownCur !== "INR";
   const amt = (inr: number) => {
-    if (inAed) {
-      const aed = Math.ceil((inr / aedRate!) * 100 - 1e-9) / 100;
-      return `AED ${aed.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
-    return money.format(inr);
+    const v = inForeign ? convertInr(inr, shownCur, rates) : null;
+    return v === null ? money.format(inr) : formatIn(v, shownCur);
   };
   const shownTotal = (inr: number) => (inr > 0 ? amt(inr) : "—");   // "—" while the airline price is checked
-  function chooseCurrency(cur: "INR" | "AED") {
-    setPayCurrency(cur);
+  // What the card is charged when it differs from the shown currency.
+  const chargedNote = (inr: number) => {
+    if (!inForeign || inr <= 0 || payCurrency === shownCur) return "";
+    const v = payCurrency === "AED" ? convertInr(inr, "AED", rates) : inr;
+    return v === null ? "" : `Charged ${payCurrency === "AED" ? formatIn(v, "AED") : money.format(v)}`;
+  };
+  function chooseCurrency(cur: DisplayCurrency) {
+    setDisplayCurrency(cur);
     savePrefCurrency(cur);
   }
-  const currencySwitch = aedRate && fare?.currency === "INR" ? (
-    <div className="curSwitch" role="radiogroup" aria-label="Payment currency">
-      {(["INR", "AED"] as const).map((cur) => (
-        <button key={cur} type="button" role="radio" aria-checked={payCurrency === cur} className={payCurrency === cur ? "on" : ""}
-          disabled={submitting} onClick={() => chooseCurrency(cur)}>{cur === "INR" ? "₹ INR" : "AED"}</button>
+  const switchOptions = (["INR", "AED", ...(shownCur !== "INR" && shownCur !== "AED" ? [shownCur] : [])] as DisplayCurrency[])
+    .filter((c) => c === "INR" || rates[c]);
+  const currencySwitch = fareInInr && switchOptions.length > 1 ? (
+    <div className="curSwitch" role="radiogroup" aria-label="Price currency">
+      {switchOptions.map((cur) => (
+        <button key={cur} type="button" role="radio" aria-checked={shownCur === cur} className={shownCur === cur ? "on" : ""}
+          disabled={submitting} onClick={() => chooseCurrency(cur)}>{cur === "INR" ? "₹ INR" : cur}</button>
       ))}
     </div>
   ) : null;
@@ -885,9 +890,9 @@ export default function BookPage() {
           </div>
           {currencySwitch && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
-              <span style={{ color: "#64748b" }}>Show prices &amp; pay in</span>
+              <span style={{ color: "#64748b" }}>Show prices in</span>
               {currencySwitch}
-              {inAed && grandTotal > 0 && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 AED = ₹{aedRate}</span>}
+              {inForeign && grandTotal > 0 && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 {shownCur} = ₹{rates[shownCur]}{chargedNote(grandTotal) ? ` · ${chargedNote(grandTotal)}` : ""}</span>}
             </div>
           )}
           <div className="route">
@@ -1128,7 +1133,7 @@ export default function BookPage() {
         <div className="spacer" />
         <div className="pay">
           <div>
-            <span>Total{inAed && grandTotal > 0 ? ` ≈ ${money.format(grandTotal)}` : ""}</span>
+            <span>Total{inForeign && grandTotal > 0 ? ` ≈ ${money.format(grandTotal)}` : ""}{chargedNote(grandTotal) ? ` · ${chargedNote(grandTotal)}` : ""}</span>
             <b>{fare ? shownTotal(grandTotal) : "—"}</b>
             {currencySwitch && <div className="paySwitch">{currencySwitch}</div>}
           </div>

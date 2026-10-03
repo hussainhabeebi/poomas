@@ -2,12 +2,13 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import type { Env, Variables } from "../types.js";
+import { DISPLAY_CURRENCIES } from "../lib/fx.js";
 
 const SESSION_PREFS_TTL = 60 * 60 * 24 * 30; // 30 days
 const ACCOUNT_PREFS_TTL = 60 * 60 * 24 * 365; // signed-in customers: kept with the login
 
 const prefsSchema = z.object({
-  currency: z.enum(["INR", "AED", "USD"]),
+  currency: z.enum(DISPLAY_CURRENCIES),
 });
 
 export const sessionRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();

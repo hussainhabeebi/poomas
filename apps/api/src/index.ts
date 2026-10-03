@@ -26,6 +26,7 @@ import { TenantRateLimiter }   from "./lib/rate-limiter.js";
 import { handleBookingQueue, handleNotifyQueue } from "./queue-consumer.js";
 import { paymentRoutes }       from "./routes/payments.js";
 import { eticketRoutes }       from "./routes/eticket.js";
+import { refreshAutoRates } from "./lib/fx.js";
 import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
@@ -135,5 +136,7 @@ export default {
   // Cron (wrangler.toml [triggers]): re-check routes with fare alerts.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(sweepFareAlerts(env).then((r) => console.info("[fare-alert-sweep]", r)).catch((err) => console.error("[fare-alert-sweep]", err)));
+    // Automatic exchange rates (INR ↔ GCC currencies, USD) for prices and AED payments.
+    ctx.waitUntil(refreshAutoRates(env).then((r) => console.info("[fx] auto rates", r.ok ? r.rates.source : r.error)).catch((err) => console.error("[fx]", err)));
   },
 };

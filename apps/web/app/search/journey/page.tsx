@@ -10,6 +10,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { readPrefCurrency } from "../../lib/currency-pref";
+import { convertInr, fetchFxRates, formatIn, type FxRates } from "../../lib/fx";
 
 type Segment = { airline: string; airlineName: string; flightNumber: string; origin: string; destination: string; departureTime: string; arrivalTime: string; duration: number; isReturn?: boolean };
 type Fare = {
@@ -67,6 +68,16 @@ function Journey() {
   const directOnly = q.get("stops") === "0";
 
   const [fares, setFares] = useState<Fare[] | null>(null);
+  // Prices in the visitor's chosen currency (automatic exchange rates); INR fares otherwise.
+  const [fx, setFx] = useState<{ cur: string; rates: FxRates }>({ cur: "INR", rates: {} });
+  useEffect(() => {
+    const cur = readPrefCurrency();
+    if (cur && cur !== "INR") fetchFxRates(API).then((rates) => setFx({ cur, rates }));
+  }, []);
+  const show = (n: number, cur: string) => {
+    const v = cur === "INR" && fx.cur !== "INR" ? convertInr(n, fx.cur, fx.rates) : null;
+    return v === null ? money(n, cur) : formatIn(v, fx.cur);
+  };
   const [searchId, setSearchId] = useState<string>();
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<Record<string, Fare>>({});
@@ -187,7 +198,7 @@ function Journey() {
           <p style={muted}>One fare covers every flight in this journey.</p>
           <div style={{ display: "grid", gap: 10 }}>
             {combo.slice(0, limit.COMBO ?? 20).map((f) => (
-              <FareRow travellers={adults + children + infants} key={f.id} fare={f} selected={comboPick?.id === f.id} onPick={() => { setComboPick(f); setPicked({}); }} showSegments />
+              <FareRow show={show} travellers={adults + children + infants} key={f.id} fare={f} selected={comboPick?.id === f.id} onPick={() => { setComboPick(f); setPicked({}); }} showSegments />
             ))}
           </div>
           {combo.length > (limit.COMBO ?? 20) && <button style={moreBtn} onClick={() => setLimit((l) => ({ ...l, COMBO: (l.COMBO ?? 20) + 20 }))}>Show more</button>}
@@ -206,7 +217,7 @@ function Journey() {
             {key === "RETURN" && !picked.ONWARD && <p style={muted}>Choose your departure flight first to see Special Return pairings.</p>}
             <div style={{ display: "grid", gap: 10 }}>
               {opts.slice(0, limit[key] ?? 15).map((f) => (
-                <FareRow travellers={adults + children + infants} key={f.id} fare={f} selected={picked[key]?.id === f.id} onPick={() => pickAndAdvance(key, f)} />
+                <FareRow show={show} travellers={adults + children + infants} key={f.id} fare={f} selected={picked[key]?.id === f.id} onPick={() => pickAndAdvance(key, f)} />
               ))}
               {!opts.length && <p style={muted}>No matching flights.</p>}
             </div>
@@ -230,7 +241,7 @@ function Journey() {
                 ))}
               </div>
             )}
-            <b style={{ fontSize: 20 }}>{selection.length ? money(total, currency) : money(legKeys.reduce((n, k) => n + (picked[k] ? price(picked[k]) : 0), 0), currency)}</b>
+            <b style={{ fontSize: 20 }}>{selection.length ? show(total, currency) : show(legKeys.reduce((n, k) => n + (picked[k] ? price(picked[k]) : 0), 0), currency)}</b>
             {!selection.length && <span style={{ fontSize: 12, color: "#667085" }}> so far</span>}
           </div>
           {selection.length ? (
@@ -246,7 +257,7 @@ function Journey() {
   );
 }
 
-function FareRow({ fare, selected, onPick, showSegments, travellers = 1 }: { fare: Fare; selected: boolean; onPick: () => void; showSegments?: boolean; travellers?: number }) {
+function FareRow({ fare, selected, onPick, showSegments, travellers = 1, show = money }: { fare: Fare; selected: boolean; onPick: () => void; showSegments?: boolean; travellers?: number; show?: (n: number, cur: string) => string }) {
   const segs = fare.segments ?? [];
   const outbound = segs.filter((s) => !s.isReturn);
   const inbound = segs.filter((s) => s.isReturn);
@@ -271,7 +282,7 @@ function FareRow({ fare, selected, onPick, showSegments, travellers = 1 }: { far
           )}
         </div>
         <div style={{ textAlign: "right" }}>
-          <b style={{ fontSize: 18, color: "#E31E24" }}>{money(price(fare), fare.currency)}</b>
+          <b style={{ fontSize: 18, color: "#E31E24" }}>{show(price(fare), fare.currency)}</b>
           {travellers > 1 && <small style={{ display: "block", color: "#667085", fontSize: 11 }}>total for {travellers} travellers</small>}
         </div>
       </div>
