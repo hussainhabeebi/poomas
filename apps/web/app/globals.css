@@ -2550,3 +2550,25 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
 .nav-currency select:hover { border-color: #98a2b3; }
 .nav-currency select:focus-visible { outline: 2px solid #b91c1c; outline-offset: 2px; }
 .nav-currency .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Keep the two desktop account controls aligned without changing mobile navigation. */
+@media (min-width: 1024px) {
+  body .site-nav > .nav-currency select,
+  body .site-nav > .home-account-link,
+  body:has(.home-phase1) .site-nav > .home-account-link {
+    box-sizing: border-box;
+    height: 48px;
+    min-height: 48px;
+    border-radius: 23px;
+    padding: 0 12px;
+    align-items: center;
+  }
+  body .site-nav > .nav-currency select {
+    min-width: 86px;
+    padding-right: 32px;
+  }
+  body .site-nav > .nav-currency + .home-account-link,
+  body:has(.home-phase1) .site-nav > .nav-currency + .home-account-link {
+    margin-left: 12px;
+  }
+}
