@@ -201,6 +201,8 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
               destination={params.destination.toUpperCase()}
               departureDate={params.departureDate}
               currency={String(allFares[0]?.currency ?? requestedCurrency ?? "INR")}
+              displayCurrency={requestedCurrency}
+              rates={aedRate}
               cheapest={cheapestPerAdult(allFares, adults)}
               airline={filteredFares[0]?.airline}
               query={new URLSearchParams(Object.entries(params).filter(([, v]) => typeof v === "string") as [string, string][]).toString()}
