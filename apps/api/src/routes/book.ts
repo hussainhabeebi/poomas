@@ -12,6 +12,7 @@ import { logSupplierCall } from "../lib/supplier-logger.js";
 import { signToken, verifyToken } from "./checkout.js";
 import { optionalCustomerId } from "../lib/optional-customer.js";
 import { optionalAgent } from "../lib/agent-markup.js";
+import { resolveAgentNumber } from "../lib/agent-number.js";
 import { AgentBlocked, agentPricing, assertAgentCanBook } from "../lib/agent-program.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -64,6 +65,8 @@ const directBookSchema = z.object({
   totalFare:     z.number().positive(),
   currency:      z.enum(["INR", "AED", "USD"]).default("INR"),
   searchId:      z.string().uuid().optional(),   // links the booking to its search's TripJack logs
+  // Leadvyne Live Agency hand-off: the agency's FlyPoomas agent number (analytics only).
+  leadAgentNumber: z.string().max(20).optional(),
   // Review-first flow (round trip / multi-city / SSR / GST): the bookingId from
   // POST /api/book/review. The fareId is then only informational.
   reviewBookingId: z.string().min(5).optional(),
@@ -250,6 +253,11 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   const customerId = await optionalCustomerId(c);
   // B2B: an agency login books for its customers (paid from the agency wallet).
   const agent = customerId ? null : await optionalAgent(c);
+  // Customer sent by a Leadvyne Live Agency: tag the booking with the agency (no wallet / pricing effect).
+  const leadAgent = !agent && body.leadAgentNumber
+    ? await resolveAgentNumber(c.env, db, tenantId, body.leadAgentNumber).catch(() => null)
+    : null;
+  const leadAgentTag = leadAgent ? { leadAgent: { id: leadAgent.id, number: leadAgent.number } } : {};
   if (agent) {
     try {
       await assertAgentCanBook(c.env, db, tenantId, agent.agentId, {
@@ -450,6 +458,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         flightData:         {
           id: body.fareId,
           ...(body.searchId ? { searchId: body.searchId } : {}),
+          ...leadAgentTag,
           ...(agent && agentQuote ? { agentPricing: {
             agentUserId: agent.userId, companyPrice: companyFareAmount, net: agentQuote.net,
             selling: Math.round((agentQuote.selling + ssrAmount) * 100) / 100, shares: agentQuote.shares,
@@ -632,7 +641,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     origin:             body.origin.toUpperCase(),
     destination:        body.destination.toUpperCase(),
     departureDate:      new Date(body.departureDate),
-    flightData:         { id: body.fareId, ...(body.searchId ? { searchId: body.searchId } : {}) },
+    flightData:         { id: body.fareId, ...(body.searchId ? { searchId: body.searchId } : {}), ...leadAgentTag },
     adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
     childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
     infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,

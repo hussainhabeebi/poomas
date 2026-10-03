@@ -1,5 +1,5 @@
 import {
-  pgTable, text, boolean, decimal, timestamp, uniqueIndex, index, jsonb, date,
+  pgTable, text, boolean, decimal, timestamp, uniqueIndex, index, jsonb, date, integer, primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenant.js";
@@ -19,6 +19,8 @@ export const agents = pgTable("agents", {
 
   status:   agentStatusEnum("status").notNull().default("PENDING"),
   iataCode: text("iata_code"),
+  // FlyPoomas agent number (FPA10001 …), given to every agency; Leadvyne tags traffic with it.
+  agentNumber: text("agent_number"),
 
   // Sub-agent hierarchy within a tenant
   parentAgentId: text("parent_agent_id"),  // self-referential FK
@@ -38,6 +40,19 @@ export const agents = pgTable("agents", {
 }, (t) => ({
   emailIdx: uniqueIndex("agents_tenant_email_idx").on(t.tenantId, t.email),
   statusIdx: index("agents_tenant_status_idx").on(t.tenantId, t.status),
+  numberIdx: uniqueIndex("agents_tenant_number_idx").on(t.tenantId, t.agentNumber),
+}));
+
+// Daily searches / checkout links per agency (Leadvyne Live Agency analytics).
+export const agentActivityDaily = pgTable("agent_activity_daily", {
+  agentId:   text("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+  day:       date("day").notNull(),
+  tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  searches:  integer("searches").notNull().default(0),
+  checkouts: integer("checkouts").notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.agentId, t.day] }),
+  tenantIdx: index("agent_activity_daily_tenant_idx").on(t.tenantId, t.day),
 }));
 
 export const agentDocuments = pgTable("agent_documents", {
