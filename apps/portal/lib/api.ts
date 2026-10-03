@@ -107,6 +107,15 @@ export interface Me {
   credit: { balance: number; creditLimit: number; available: number; creditUsed: number; dueAt: string | null; overdue: boolean };
   tier: { name: string; commissionPercent: number; sales: number; next: { name: string; needed: number } | null };
   program: { creditDays: number; tiers: { name: string; minMonthlySales: number; commissionPercent: number }[] };
+  onboarding: Onboarding | null;
+}
+
+export interface Onboarding {
+  enforce: boolean;
+  required: { type: string; label: string; status: "MISSING" | "UPLOADED" | "VERIFIED" }[];
+  kycDone: boolean;
+  mou: { required: boolean; version: string; accepted: boolean; acceptedAt: string | null; acceptedBy: string | null };
+  complete: boolean;
 }
 
 let meCache: Promise<Me> | null = null;

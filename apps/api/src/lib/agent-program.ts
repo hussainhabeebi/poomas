@@ -67,6 +67,7 @@ export interface AgentSettings {
   slug?: string;               // mini-site: portal /a/<slug>
   miniSite?: boolean;
   ownMarkup?: { type: "FLAT" | "PERCENTAGE"; value: number };   // selling markup shown to its customers
+  mou?: { version: string; acceptedAt: string; name: string; designation: string; hash: string; r2Key: string; userId: string | null; email: string | null; ip: string | null; userAgent: string | null };   // signed MOU
   frozen?: boolean;            // admin credit / booking freeze
   frozenReason?: string;
   creditUsedSince?: string;    // when the balance went below zero

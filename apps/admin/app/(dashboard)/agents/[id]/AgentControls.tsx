@@ -7,11 +7,18 @@ interface Overview {
   tier: { name: string; commissionPercent: number; suggestedCreditLimit: number; sales: number; next: { name: string; needed: number } | null };
   credit: { balance: number; creditLimit: number; available: number; creditUsed: number; dueAt: string | null; overdue: boolean };
   settings: { frozen?: boolean; frozenReason?: string; gstNumber?: string; slug?: string; displayName?: string };
-  team: { id: string; name: string; email: string; role: string; isActive: boolean; lastLoginAt: string | null }[];
+  team: { id: string; name: string; email: string; role: string; isActive: boolean; lastLoginAt: string | null; hasPassword?: boolean }[];
   documents: { id: string; docType: string; fileName: string; uploadedAt: string; verifiedAt: string | null }[];
   subAgents: { id: string; businessName: string; status: string }[];
   walletCurrency: string;
+  email: string;
+  onboarding: {
+    enforce: boolean; kycDone: boolean; complete: boolean;
+    required: { type: string; label: string; status: "MISSING" | "UPLOADED" | "VERIFIED" }[];
+    mou: { required: boolean; version: string; accepted: boolean; acceptedAt: string | null; acceptedBy: string | null };
+  } | null;
 }
+type ResetResult = { email: string; link?: string; temporaryPassword?: string; created?: boolean };
 
 // Agency programme controls on the admin agency page.
 export default function AgentControls({ agentId }: { agentId: string }) {
@@ -21,6 +28,7 @@ export default function AgentControls({ agentId }: { agentId: string }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reset, setReset] = useState<ResetResult | null>(null);
 
   const load = useCallback(() => adminApi<Overview>(`/api/admin/agent-program/agents/${agentId}`).then((d) => { setO(d); setCredit(String(d.credit.creditLimit)); }).catch((e) => setError(e.message)), [agentId]);
   useEffect(() => { load(); }, [load]);
@@ -29,6 +37,18 @@ export default function AgentControls({ agentId }: { agentId: string }) {
     setBusy(true); setError(""); setNotice("");
     try { await fn(); setNotice(ok); await load(); } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(false); }
   }
+
+  async function resetPassword(mode: "link" | "temporary", userId?: string) {
+    if (mode === "temporary" && !confirm("Set a new temporary password? The current password stops working.")) return;
+    setBusy(true); setError(""); setNotice(""); setReset(null);
+    try {
+      const r = await adminApi<ResetResult>(`/api/admin/agent-program/agents/${agentId}/password-reset`, { method: "POST", body: JSON.stringify({ mode, ...(userId ? { userId } : {}) }) });
+      setReset(r);
+      setNotice(mode === "link" ? `Reset link emailed to ${r.email}${r.created ? " (login created)" : ""}.` : `Temporary password set for ${r.email}${r.created ? " (login created)" : ""}.`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(false); }
+  }
+  const copy = (t: string) => { void navigator.clipboard?.writeText(t); setNotice("Copied."); };
 
   if (!o) return error ? <div style={ui.err}>{error}</div> : null;
   const cur = o.walletCurrency;
@@ -68,6 +88,25 @@ export default function AgentControls({ agentId }: { agentId: string }) {
         </div>
       </div>
 
+      {o.onboarding && (
+        <div style={ui.card}>
+          <h2 style={ui.h2}>Onboarding {o.onboarding.complete ? <span style={{ color: "#4ade80", fontSize: 12 }}>· complete</span> : <span style={{ color: "#fbbf24", fontSize: 12 }}>· not finished</span>}</h2>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            {o.onboarding.required.map((r) => (
+              <span key={r.type} style={{ ...ui.text, fontSize: 12, padding: "4px 10px", borderRadius: 999, border: "1px solid #334155",
+                color: r.status === "VERIFIED" ? "#4ade80" : r.status === "UPLOADED" ? "#93c5fd" : "#fca5a5" }}>
+                {r.status === "VERIFIED" ? "✓" : r.status === "UPLOADED" ? "•" : "✗"} {r.label}
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", ...ui.text }}>
+            <span>MOU v{o.onboarding.mou.version}: {o.onboarding.mou.accepted ? <b style={{ color: "#4ade80" }}>signed by {o.onboarding.mou.acceptedBy} on {new Date(o.onboarding.mou.acceptedAt!).toLocaleString("en-GB")}</b> : <b style={{ color: "#fbbf24" }}>not signed</b>}</span>
+            <button style={ui.ghost} onClick={() => openAdminFile(`/api/admin/agent-program/agents/${agentId}/mou`).catch((e) => setError(e.message))}>{o.onboarding.mou.accepted ? "View signed MOU" : "Preview MOU"}</button>
+            {o.onboarding.mou.accepted && <button style={ui.ghost} disabled={busy} onClick={() => { if (confirm("Ask this agency to review and sign the MOU again?")) void run(() => adminApi(`/api/admin/agent-program/agents/${agentId}/mou/reset`, { method: "POST" }), "The agency will be asked to sign again."); }}>Ask to sign again</button>}
+          </div>
+        </div>
+      )}
+
       <div style={ui.card}>
         <h2 style={ui.h2}>KYC documents</h2>
         {o.documents.length === 0 ? <p style={ui.muted}>No documents uploaded yet.</p> : o.documents.map((d) => (
@@ -82,9 +121,35 @@ export default function AgentControls({ agentId }: { agentId: string }) {
       </div>
 
       <div style={ui.card}>
-        <h2 style={ui.h2}>Logins & sub-agents</h2>
-        {o.team.map((u) => <div key={u.id} style={{ ...ui.text, padding: "3px 0" }}>{u.name} · {u.email} · {u.role.replace("AGENT_", "").toLowerCase()}{u.isActive ? "" : " (disabled)"} <span style={ui.muted}>{u.lastLoginAt ? `last in ${new Date(u.lastLoginAt).toLocaleDateString("en-IN")}` : "never signed in"}</span></div>)}
-        {o.team.length === 0 && <p style={ui.muted}>No logins yet (invitation not accepted).</p>}
+        <h2 style={ui.h2}>Logins, passwords & sub-agents</h2>
+        {o.team.map((u) => (
+          <div key={u.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #1f2a3c" }}>
+            <span style={ui.text}>{u.name} · {u.email} · {u.role.replace("AGENT_", "").toLowerCase()}{u.isActive ? "" : " (disabled)"}{" "}
+              <span style={ui.muted}>{!u.hasPassword ? "no password set" : u.lastLoginAt ? `last in ${new Date(u.lastLoginAt).toLocaleDateString("en-IN")}` : "never signed in"}</span></span>
+            <span style={{ display: "flex", gap: 6 }}>
+              <button style={ui.ghost} disabled={busy} onClick={() => resetPassword("link", u.id)}>Email reset link</button>
+              <button style={ui.ghost} disabled={busy} onClick={() => resetPassword("temporary", u.id)}>Set temporary password</button>
+            </span>
+          </div>
+        ))}
+        {o.team.length === 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={ui.muted}>No login yet (invitation not accepted). Create one for {o.email}:</span>
+            <button style={ui.btn} disabled={busy} onClick={() => resetPassword("link")}>Create login & email link</button>
+            <button style={ui.ghost} disabled={busy} onClick={() => resetPassword("temporary")}>Create login with temporary password</button>
+          </div>
+        )}
+        {reset && (reset.temporaryPassword || reset.link) && (
+          <div style={{ ...ui.ok, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            {reset.temporaryPassword ? (
+              <>Temporary password for {reset.email}: <b style={{ fontFamily: "monospace", fontSize: 15, color: "#f1f5f9" }}>{reset.temporaryPassword}</b>
+                <button style={ui.ghost} onClick={() => copy(reset.temporaryPassword!)}>Copy</button>
+                <span style={ui.muted}>Shown once — share it securely and ask them to change it (Forgot password).</span></>
+            ) : (
+              <>Reset link for {reset.email} (valid 1 hour): <button style={ui.ghost} onClick={() => copy(reset.link!)}>Copy link</button></>
+            )}
+          </div>
+        )}
         {o.subAgents.length > 0 && <div style={{ marginTop: 10, ...ui.text }}>Sub-agents: {o.subAgents.map((s, i) => <span key={s.id}>{i ? ", " : ""}<a href={`/agents/${s.id}`} style={{ color: "#93c5fd" }}>{s.businessName}</a> ({s.status.toLowerCase()})</span>)}</div>}
       </div>
     </>
