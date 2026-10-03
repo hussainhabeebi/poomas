@@ -5,6 +5,7 @@
 // link to the baggage & visa checker.
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { convertInr, formatIn, type DisplayCurrency, type FxRates } from "../lib/fx";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const HEADERS = { "x-tenant-slug": "poomas" };
@@ -17,8 +18,9 @@ const addDays = (iso: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-export function FareTools({ origin, destination, departureDate, currency, cheapest, airline, query }: {
+export function FareTools({ origin, destination, departureDate, currency, displayCurrency, rates, cheapest, airline, query }: {
   origin: string; destination: string; departureDate: string; currency: string;
+  displayCurrency?: string | null; rates?: FxRates;
   cheapest: number | null; airline?: string; query: string;
 }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -37,7 +39,15 @@ export function FareTools({ origin, destination, departureDate, currency, cheape
 
   const known = days.map((d) => prices[d]?.price).filter((p): p is number => typeof p === "number");
   const low = known.length ? Math.min(...known) : null;
-  const fmt = (n: number) => { try { return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(n); } catch { return `${currency} ${n}`; } };
+  // Calendar prices are stored in the fare currency (INR); show them in the
+  // visitor's chosen currency, like the fare cards, when a rate is available.
+  const shownCurrency = displayCurrency && displayCurrency !== currency && currency === "INR" && convertInr(1, displayCurrency, rates) !== null ? displayCurrency : currency;
+  const rate = shownCurrency === currency ? 1 : rates?.[shownCurrency as DisplayCurrency] ?? 1;
+  const toShown = (n: number) => (shownCurrency === currency ? n : convertInr(n, shownCurrency, rates) ?? n);
+  const fmt = (n: number) => {
+    if (shownCurrency !== currency) return formatIn(toShown(n), shownCurrency);
+    try { return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(n); } catch { return `${currency} ${n}`; }
+  };
   const href = (date: string) => { const q = new URLSearchParams(query); q.set("departureDate", date); return `/search?${q}`; };
 
   return (
@@ -62,18 +72,21 @@ export function FareTools({ origin, destination, departureDate, currency, cheape
         </div>
       )}
       <div className="ft-actions">
-        <PriceAlert origin={origin} destination={destination} date={departureDate} currency={currency} cheapest={cheapest} fmt={fmt} />
+        <PriceAlert origin={origin} destination={destination} date={departureDate} currency={currency} cheapest={cheapest} fmt={fmt}
+          shownCurrency={shownCurrency} toShown={toShown} rate={rate} />
         <a className="ft-link" href={`/travel-check?${new URLSearchParams({ from: origin, to: destination, ...(airline ? { airline } : {}) })}`}>🧳 Baggage &amp; visa check</a>
       </div>
     </div>
   );
 }
 
-function PriceAlert({ origin, destination, date, currency, cheapest, fmt }: {
+function PriceAlert({ origin, destination, date, currency, cheapest, fmt, shownCurrency, toShown, rate }: {
   origin: string; destination: string; date: string; currency: string; cheapest: number | null; fmt: (n: number) => string;
+  shownCurrency: string; toShown: (n: number) => number; rate: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [target, setTarget] = useState(cheapest ? String(Math.floor(cheapest * 0.95)) : "");
+  // The target is typed in the shown currency and saved in the fare currency.
+  const [target, setTarget] = useState(cheapest ? String(Math.floor(toShown(cheapest) * 0.95)) : "");
   const [contact, setContact] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
@@ -90,7 +103,7 @@ function PriceAlert({ origin, destination, date, currency, cheapest, fmt }: {
     try {
       const res = await fetch(`${API}/api/fares/alerts`, {
         method: "POST", headers: { ...HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({ origin, destination, date, currency, targetPrice: Number(target), ...(isEmail ? { email: value } : { phone: value }) }),
+        body: JSON.stringify({ origin, destination, date, currency, targetPrice: Math.round(Number(target) * rate), ...(isEmail ? { email: value } : { phone: value }) }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setError(typeof d.error === "string" ? d.error : "Couldn't create the alert."); return; }
@@ -108,8 +121,8 @@ function PriceAlert({ origin, destination, date, currency, cheapest, fmt }: {
   return (
     <form className="ft-alert" onSubmit={submit}>
       <b>Price alert · {origin} → {destination}</b>
-      <label>Tell me when it&apos;s at or under (per adult)
-        <input type="number" min={1} required value={target} onChange={(e) => setTarget(e.target.value)} inputMode="numeric" />
+      <label>Tell me when it&apos;s at or under ({shownCurrency}, per adult)
+        <input type="number" min={shownCurrency === currency ? 1 : 0.001} step="any" required value={target} onChange={(e) => setTarget(e.target.value)} inputMode="numeric" />
       </label>
       {cheapest && <small>Cheapest now: {fmt(cheapest)}</small>}
       <label>Email or WhatsApp number
