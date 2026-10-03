@@ -381,6 +381,9 @@ select.search-input {
   border-color: var(--color-primary);
   color: #fff;
 }
+/* "More" currencies (SAR, QAR, OMR, KWD, BHD, USD) */
+select.currency-more { appearance: none; -webkit-appearance: none; font-family: inherit; text-align: center; text-align-last: center; padding-right: 10px; }
+select.currency-more option { color: #111827; background: #fff; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Login presentation: the conventional form is used at every viewport.

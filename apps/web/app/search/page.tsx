@@ -4,11 +4,12 @@ import SearchResultControls, { ChangeDatesAction } from "./SearchResultControls"
 import { FareTools } from "./FareTools";
 import FareRulesButton from "./FareRulesButton";
 import { altOptions, fareLabel, flightKey, groupFareOptions, optionPerks, optionPrice } from "../lib/fare-options";
+import { convertInr, currencyMeta, fetchFxRates, formatIn, isDisplayCurrency, type FxRates } from "../lib/fx";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
   returnDate?: string; adults?: string; children?: string; infants?: string;
-  cabinClass?: string; tripType?: string; currency?: "INR" | "AED" | "USD"; all?: string;
+  cabinClass?: string; tripType?: string; currency?: string; all?: string;
   sort?: "price" | "duration" | "departure" | "best"; stops?: string;
   refundable?: string; baggage?: string; airlines?: string; depBand?: string;
   fareType?: string; legs?: string;
@@ -45,21 +46,17 @@ function displaySearchDate(value?: string) {
 
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
-// Admin-set INR→AED rate (INR per 1 AED); null when AED payment isn't offered.
-async function fetchAedRate(): Promise<number | null> {
-  try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
-    // No caching: a rate saved in Admin must apply to the very next search.
-    const res = await fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" }, cache: "no-store" });
-    const data = await res.json() as { rates?: { AED?: number | null } };
-    const rate = Number(data.rates?.AED);
-    return Number.isFinite(rate) && rate > 0 ? rate : null;
-  } catch { return null; }
+// Rates from the automatic exchange-rate tool (INR per 1 unit). No caching: a new rate applies to the very next search.
+async function fetchRates(): Promise<FxRates> {
+  return fetchFxRates(process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com");
 }
 
 // Price in the currency the customer chose (rounded up like the payment API).
-function inChosenCurrency(price: number, fareCurrency: string, chosen: string | null, aedRate: number | null) {
-  if (chosen === "AED" && fareCurrency === "INR" && aedRate) return { amount: Math.ceil((price / aedRate) * 100 - 1e-9) / 100, currency: "AED", converted: true };
+function inChosenCurrency(price: number, fareCurrency: string, chosen: string | null, rates: FxRates) {
+  if (chosen && chosen !== fareCurrency && fareCurrency === "INR") {
+    const amount = convertInr(price, chosen, rates);
+    if (amount !== null) return { amount, currency: chosen, converted: true };
+  }
   return { amount: price, currency: fareCurrency, converted: false };
 }
 
@@ -123,12 +120,12 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
     const s = await cookies();
     sessionId = s.get("sid")?.value ?? null;
     const cur = s.get("fp_cur")?.value;
-    if (cur === "INR" || cur === "AED" || cur === "USD") prefCurrency = cur;
+    if (isDisplayCurrency(cur)) prefCurrency = cur;
   } catch {}
   // The visitor's chosen currency stays fixed across searches, whatever the link says.
   if (prefCurrency) params.currency = prefCurrency as SearchParams["currency"];
 
-  const [result, aedRate] = await Promise.all([searchFlights(params, sessionId), fetchAedRate()]);
+  const [result, aedRate] = await Promise.all([searchFlights(params, sessionId), fetchRates()]);
   const requestedCurrency = params.currency ?? null;
   const failingSuppliers = Object.keys(result.supplierErrors ?? {});
   const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
@@ -185,9 +182,9 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
 
         {/* Results column */}
         <div className="search-results-column">
-          {requestedCurrency === "AED" && !aedRate && filteredFares.length > 0 && (
+          {requestedCurrency && requestedCurrency !== "INR" && !aedRate[requestedCurrency as keyof FxRates] && filteredFares.some((f) => String(f.currency ?? "INR") === "INR") && (
             <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
-              AED prices aren't available right now, so fares are shown in Indian rupees (INR).
+              {requestedCurrency} prices aren't available right now, so fares are shown in Indian rupees (INR).
             </div>
           )}
 
@@ -341,6 +338,7 @@ function recommendedFares(fares: any[]): any[] {
 
 function formatMoney(amount: number, currency: string): string {
   const code = (currency || "").toUpperCase();
+  if (currencyMeta(code)) return formatIn(amount, code);
   const locale = CURRENCY_LOCALES[code] ?? "en-US";
   try { return new Intl.NumberFormat(locale, { style: "currency", currency: code || "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount); }
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
@@ -382,7 +380,7 @@ function optionLinkParams(fare: any, options: any[]): Record<string, string> {
   return extra;
 }
 
-function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults, children = 0, infants = 0 }: { fare: any; options: any[]; requestedCurrency: string | null; aedRate: number | null; searchId?: string; adults: number; children?: number; infants?: number }) {
+function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults, children = 0, infants = 0 }: { fare: any; options: any[]; requestedCurrency: string | null; aedRate: FxRates; searchId?: string; adults: number; children?: number; infants?: number }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });

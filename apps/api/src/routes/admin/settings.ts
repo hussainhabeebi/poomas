@@ -4,12 +4,16 @@
 // PUT  /api/admin/settings/whatsapp   — save Leadvyne config
 // GET  /api/admin/settings/eticket    — get e-ticket delivery config
 // PUT  /api/admin/settings/eticket    — save e-ticket delivery config
+// GET  /api/admin/settings/fx         — exchange rates: automatic, manual, effective
+// PUT  /api/admin/settings/fx         — save mode (auto/manual), margin %, manual rates
+// POST /api/admin/settings/fx/refresh — fetch live rates now
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import type { Env, Variables } from "../../types.js";
 import { RAZORPAY_ENABLED } from "../../lib/payment-gateway.js";
+import { FOREIGN_CURRENCIES, getFx, getFxSettings, readAutoRates, refreshAutoRates, saveFxSettings, type FxSettings } from "../../lib/fx.js";
 
 export const settingsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -224,4 +228,38 @@ settingsAdminRoutes.put("/eticket", zValidator("json", eticketSchema), async (c)
   const tenantId = c.get("tenantId");
   await saveSettings(c.env, tenantId, "eticket", c.req.valid("json"));
   return c.json({ ok: true });
+});
+
+// ── Exchange rates (automatic exchange-rate tool) ─────────────────────────────
+
+async function fxOverview(c: any) {
+  const tenantId = c.get("tenantId");
+  const [settings, auto, fx] = await Promise.all([getFxSettings(c.env, tenantId), readAutoRates(c.env), getFx(c.env, tenantId)]);
+  return { settings, auto, effective: fx.rates, sources: fx.sources, currencies: FOREIGN_CURRENCIES };
+}
+
+settingsAdminRoutes.get("/fx", async (c) => c.json(await fxOverview(c)));
+
+const fxSchema = z.object({
+  mode:      z.enum(["auto", "manual"]),
+  marginPct: z.number().min(0).max(10),
+  manual:    z.record(z.string(), z.number().positive().max(1000).nullable()).default({}),
+});
+
+settingsAdminRoutes.put("/fx", zValidator("json", fxSchema), async (c) => {
+  const body = c.req.valid("json");
+  const manual: FxSettings["manual"] = {};
+  for (const cur of FOREIGN_CURRENCIES) {
+    const v = body.manual[cur];
+    if (v) manual[cur] = v;
+  }
+  await saveFxSettings(c.env, c.get("tenantId"), { mode: body.mode, marginPct: body.marginPct, manual });
+  return c.json({ ok: true, ...(await fxOverview(c)) });
+});
+
+// force: accept a move of more than 10% since the last rates (after checking it is real).
+settingsAdminRoutes.post("/fx/refresh", async (c) => {
+  const force = c.req.query("force") === "1";
+  const r = await refreshAutoRates(c.env, fetch, Date.now(), force);
+  return c.json({ ...r, ...(await fxOverview(c)) }, r.ok ? 200 : 502);
 });
