@@ -95,6 +95,11 @@ export default function SiteFooter() {
         <div className="footer-bottom">
           <span>© {year} FlyPoomas. All rights reserved.</span>
           <span className="footer-bottom-note">Fares are subject to availability until ticketed.</span>
+          <span className="footer-credits">
+            <span>Built by team <a href="https://aiingo.com" target="_blank" rel="noopener">aiingo.com</a></span>
+            <span aria-hidden="true">·</span>
+            <span>Powered by <a href="https://leadvyne.com" target="_blank" rel="noopener">leadvyne.com</a></span>
+          </span>
         </div>
       </div>
     </footer>
