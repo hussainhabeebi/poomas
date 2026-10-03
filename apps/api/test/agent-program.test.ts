@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { chainShares, creditStatus, DEFAULT_PROGRAM, rulesFor, sellingPrice, tierFor, type AgentNode } from "../src/lib/agent-program.js";
+import { applyMarkup } from "../src/lib/markup.js";
 import { cleanTicket } from "../src/lib/ticket-scan.js";
 import { agentPortalRoutes } from "../src/routes/agent-portal.js";
 
@@ -32,6 +33,16 @@ test("agency markup rules never leak to the public or other agencies", () => {
   const rules = [{ id: "all", agentId: null }, { id: "a1", agentId: "agent-1" }, { id: "a2", agentId: "agent-2" }];
   assert.deepEqual(rulesFor(rules, null).map((r) => r.id), ["all"]);
   assert.deepEqual(rulesFor(rules, "agent-1").map((r) => r.id), ["all", "a1"]);
+});
+
+test("a markup rule allocated to an agent wins over the default rules", () => {
+  const fare = { totalFare: 1000, airline: "6E", origin: "COK", destination: "DXB", cabinClass: "ECONOMY", supplier: "TRIPJACK" } as never;
+  const rule = (agentId: string | null, value: string, priority: number) =>
+    ({ agentId, markupType: "FLAT", markupValue: value, priority, isActive: true });
+  const rules = [rule(null, "250", 50), rule("agent-1", "100", 0), rule("agent-2", "999", 0)];
+  assert.equal(applyMarkup(fare, rulesFor(rules, null)), 1250);
+  assert.equal(applyMarkup(fare, rulesFor(rules, "agent-1")), 1100);
+  assert.equal(applyMarkup(fare, rulesFor(rules, "agent-3")), 1250);
 });
 
 test("tiers follow monthly sales", () => {
