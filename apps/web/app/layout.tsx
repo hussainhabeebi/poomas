@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import SiteNav from "./components/SiteNav";
+import SiteFooter from "./components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "FlyPoomas",
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <SiteNav />
         </header>
         {children}
+        <SiteFooter />
       </body>
     </html>
   );
