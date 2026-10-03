@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/agents",       label: "Agents",        icon: "👥" },
   { href: "/leadvyne-agencies", label: "Leadvyne agencies", icon: "💬" },
   { href: "/agent-requests", label: "Agent requests", icon: "📨" },
+  { href: "/wallet-recharges", label: "Wallet recharges", icon: "🏦" },
   { href: "/agent-program", label: "Agent programme", icon: "🏅" },
   { href: "/suppliers",    label: "Suppliers",     icon: "🔌" },
   { href: "/finance",      label: "Finance",       icon: "💰" },
