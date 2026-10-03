@@ -6,7 +6,7 @@ import AgentControls from "./AgentControls";
 
 interface Agent {
   id: string; businessName: string; ownerName: string; email: string; phone: string; whatsapp: string | null;
-  region: string; currency: string; status: string; iataCode: string | null; creditLimit: string; minimumDeposit: string;
+  region: string; currency: string; status: string; iataCode: string | null; agentNumber?: string | null; creditLimit: string; minimumDeposit: string;
   approvedAt: string | null; createdAt: string; tenantId: string; tenantSlug: string | null; tenantName: string | null; plan: string | null;
   documents: Array<{ id: string; docType: string; fileName: string; fileUrl: string; createdAt?: string }>;
   stats: { bookings: number; bookingValue: string };
@@ -66,6 +66,7 @@ export default function AgentDetailPage() {
           <Row k="Phone" v={a.phone} />
           <Row k="WhatsApp" v={a.whatsapp ?? "—"} />
           <Row k="Region / currency" v={`${a.region} · ${a.currency}`} />
+          <Row k="Agent number" v={a.agentNumber ?? "—"} />
           <Row k="IATA code" v={a.iataCode ?? "—"} />
           <Row k="Joined" v={new Date(a.createdAt).toLocaleString("en-IN")} />
           <Row k="Approved" v={a.approvedAt ? new Date(a.approvedAt).toLocaleString("en-IN") : "—"} />

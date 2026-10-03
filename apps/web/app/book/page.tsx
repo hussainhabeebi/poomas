@@ -98,6 +98,7 @@ function withRebookTravellers(list: Passenger[], from: string, to: string): Pass
 
 type HandoffSession = {
   fareId: string; supplier: string; email?: string; mobile?: string;
+  agentNumber?: string; agentCurrency?: string;   // Leadvyne Live Agency that sent the customer
   passengers: { type: Passenger["type"]; firstName: string; lastName: string; dob?: string; gender?: string; nationality?: string; passportNumber?: string; passportExpiry?: string }[];
 };
 
@@ -209,6 +210,8 @@ export default function BookPage() {
   // Cards are charged in INR, or in AED for the GCC currencies.
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("INR");
   const [rates, setRates] = useState<FxRates>({});
+  // Leadvyne Live Agency that sent this customer (from the checkout link): tags the booking.
+  const [leadAgentNumber, setLeadAgentNumber] = useState("");
   // Currency changed in the site menu: follow it here.
   useEffect(() => {
     const onChange = (e: Event) => { const c = (e as CustomEvent).detail; if (isDisplayCurrency(c)) setDisplayCurrency(c); };
@@ -254,7 +257,12 @@ export default function BookPage() {
     if (session && !q.get("fareId")) {
       fetch(`${apiUrl}/api/integrations/checkout-sessions/${encodeURIComponent(session)}`, { headers: { "x-tenant-slug": "poomas" } })
         .then(async (r) => { if (!r.ok) throw new Error(); return r.json() as Promise<HandoffSession>; })
-        .then((h) => { q.set("fareId", h.fareId); q.set("supplier", h.supplier); start(q, h); })
+        .then((h) => {
+          q.set("fareId", h.fareId); q.set("supplier", h.supplier);
+          if (h.agentNumber) setLeadAgentNumber(h.agentNumber);
+          if (h.agentCurrency && !q.get("pc")) q.set("pc", h.agentCurrency);
+          start(q, h);
+        })
         .catch(() => setReviewError("This booking link has expired. Please ask us on WhatsApp for a new one."));
       return;
     }
@@ -617,6 +625,7 @@ export default function BookPage() {
         name: emergency.name.trim(), phone: emergency.phone.trim(), ...(emergency.email.trim() ? { email: emergency.email.trim() } : {}),
       } } : {}),
       ...(new URLSearchParams(window.location.search).get("sid") ? { searchId: new URLSearchParams(window.location.search).get("sid") } : {}),
+      ...(leadAgentNumber ? { leadAgentNumber } : {}),
       passengers:    passengers.map((p) => ({
         type:           p.type,
         gender:         p.gender,

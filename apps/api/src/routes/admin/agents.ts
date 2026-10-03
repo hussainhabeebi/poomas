@@ -17,6 +17,7 @@ agentsAdminRoutes.get("/", async (c) => {
   const rows = await db
     .select({
       id:           agents.id,
+      agentNumber:  agents.agentNumber,
       businessName: agents.businessName,
       contactEmail: agents.email,
       contactPhone: agents.phone,

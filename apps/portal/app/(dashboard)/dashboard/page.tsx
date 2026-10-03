@@ -5,7 +5,7 @@ import { api, fmtDate, money, STATUS_STYLE } from "../../../lib/api";
 import { useMe } from "../Shell";
 
 interface Dash {
-  agent: { businessName: string; status: string; currency: string };
+  agent: { businessName: string; status: string; currency: string; agentNumber?: string | null };
   credit: { balance: number; creditLimit: number; available: number; creditUsed: number; dueAt: string | null; overdue: boolean };
   tier: { name: string; commissionPercent: number; sales: number; next: { name: string; needed: number } | null };
   today: { bookings: number; value: number };
@@ -30,7 +30,7 @@ export default function DashboardPage() {
       <div className="page-head">
         <div>
           <h1>Welcome{me ? `, ${me.user.name.split(" ")[0]}` : ""}</h1>
-          <p>{d?.agent.businessName ?? "Your agency"} · {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</p>
+          <p>{d?.agent.businessName ?? "Your agency"}{d?.agent.agentNumber ? <> · Agent no. <b>{d.agent.agentNumber}</b></> : null} · {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</p>
         </div>
         <div className="row">
           <a className="btn primary" href="/search">✈️ Book a flight</a>

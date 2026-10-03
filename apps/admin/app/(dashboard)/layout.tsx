@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { href: "/bookings",     label: "Bookings",      icon: "📋" },
   { href: "/tripsafe",     label: "TripSafe",      icon: "🛡️" },
   { href: "/agents",       label: "Agents",        icon: "👥" },
+  { href: "/leadvyne-agencies", label: "Leadvyne agencies", icon: "💬" },
   { href: "/agent-requests", label: "Agent requests", icon: "📨" },
   { href: "/agent-program", label: "Agent programme", icon: "🏅" },
   { href: "/suppliers",    label: "Suppliers",     icon: "🔌" },

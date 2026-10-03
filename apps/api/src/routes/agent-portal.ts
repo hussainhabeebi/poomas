@@ -8,6 +8,7 @@
 //                              saved travellers, quotes, offline ticket import.
 // Trips   /api/agent/trips/*   the My Trips routes, scoped to the agency tree.
 
+import { assignAgentNumber, resolveAgentNumber } from "../lib/agent-number.js";
 import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -127,12 +128,21 @@ agentPublicRoutes.post("/register", zValidator("json", registerSchema, (r, c) =>
     settings: { ...(b.gstNumber ? { gstNumber: b.gstNumber.toUpperCase() } : {}), ...(b.address ? { address: b.address } : {}) },
   }).returning();
   await db.insert(walletAccounts).values({ tenantId, agentId: agent.id, currency: b.currency }).onConflictDoNothing();
+  await assignAgentNumber(db, tenantId, agent.id).catch((err) => console.error("[agent-number]", err));
   const [user] = await db.insert(users).values({
     tenantId, name: b.ownerName, email: b.email, phone: b.phone, passwordHash: await pbkdf2HashPassword(b.password),
     role: "AGENT_ADMIN", agentId: agent.id, isActive: true, emailVerified: false,
   }).returning();
   await audit(db, { tenantId, userId: user.id, action: "AGENT_REGISTERED", entity: "Agent", entityId: agent.id, after: { businessName: agent.businessName }, ip: ip(c) });
   return c.json({ ...(await issueStaffToken(c.env, db, { id: user.id, tenantId, role: user.role, agentId: agent.id })), agentId: agent.id, status: agent.status }, 201);
+});
+
+// Leadvyne Live Agency onboarding form: confirm an agent number and show the agency's currency.
+agentPublicRoutes.get("/agent-number/:number", async (c) => {
+  if (await rateLimited(c, "agentno", 60)) return c.json({ error: "Too many checks. Try again later." }, 429);
+  const agent = await resolveAgentNumber(c.env, c.get("db"), c.get("tenantId"), c.req.param("number"));
+  if (!agent || agent.status !== "APPROVED") return c.json({ valid: false }, 404);
+  return c.json({ valid: true, agentNumber: agent.number, businessName: agent.businessName, currency: agent.currency });
 });
 
 interface Invite { tenantId: string; agentId: string; email: string; name: string; role: (typeof AGENT_ROLES)[number]; invitedBy: string | null }
@@ -378,7 +388,7 @@ agentPortalRoutes.get("/dashboard", async (c) => {
   const commissionRows = await db.select({ total: sql<string>`coalesce(sum(${walletTransactions.amount}),0)` }).from(walletTransactions)
     .where(and(eq(walletTransactions.walletAccountId, wallet?.id ?? "-"), eq(walletTransactions.type, "COMMISSION_CREDIT"), gte(walletTransactions.createdAt, monthStart)));
   return c.json({
-    agent: { businessName: a.businessName, status: a.status, currency: a.currency },
+    agent: { businessName: a.businessName, status: a.status, currency: a.currency, agentNumber: a.agentNumber },
     credit: creditStatus(wallet, settingsOf(a), program),
     tier,
     today: { bookings: todayRows[0]?.n ?? 0, value: Number(todayRows[0]?.total ?? 0) },

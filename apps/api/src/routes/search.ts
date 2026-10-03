@@ -4,7 +4,8 @@ import { z } from "zod";
 import { searchFares, type SupplierConfig, type PlatformCredentials, type SupplierDiagnostic } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
-import { DISPLAY_CURRENCIES, getFx } from "../lib/fx.js";
+import { DISPLAY_CURRENCIES, getFx, type ForeignCurrency } from "../lib/fx.js";
+import { agentNumberFrom, resolveAgentNumber, trackAgentActivity, type ResolvedAgent } from "../lib/agent-number.js";
 import { collectExchanges, persistExchanges, persistInBackground } from "../lib/api-exchanges.js";
 import { recordFareObservation, sendFareAlerts } from "../lib/fare-insights.js";
 import { optionalAgentId } from "../lib/agent-markup.js";
@@ -21,6 +22,8 @@ const searchSchema = z.object({
   cabinClass:    z.enum(["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"]).default("ECONOMY"),
   tripType:      z.enum(["ONEWAY", "ROUNDTRIP", "MULTICITY"]).default("ONEWAY"),
   currency:      z.enum(DISPLAY_CURRENCIES).optional(),
+  // Leadvyne Live Agency: the agency's FlyPoomas agent number (or header X-FP-Agent).
+  agentNumber:   z.string().max(20).optional(),
   // Multi-city legs (2–6); round trips can use returnDate instead.
   legs: z.array(z.object({
     origin:        z.string().length(3).toUpperCase(),
@@ -228,11 +231,13 @@ function logSearchOutcome(
 export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
-  const params = c.req.valid("json");
+  const { agentNumber, ...params } = c.req.valid("json");
   const tenantId = c.get("tenantId");
   const searchId = crypto.randomUUID();
   try {
-    return await runSearch(c, params, searchId);
+    const leadAgent = await resolveLeadAgent(c, agentNumber);
+    const res = await runSearch(c, params, searchId);
+    return leadAgent ? await withAgentCurrency(c, res, leadAgent) : res;
   } catch (err) {
     // Unexpected crash (config/KV/DB/code bug) — surface it in Admin logs, not just Worker logs.
     const message = err instanceof Error ? err.message : String(err);
@@ -246,6 +251,42 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     return c.json({ error: "Flight search failed", searchId }, 500);
   }
 });
+
+// Leadvyne Live Agency traffic: count the search for the agency and add prices in its currency.
+async function resolveLeadAgent(c: Context<{ Bindings: Env; Variables: Variables }>, bodyNumber?: string) {
+  const n = agentNumberFrom(c, { agentNumber: bodyNumber });
+  if (!n) return null;
+  try {
+    const agent = await resolveAgentNumber(c.env, c.get("db"), c.get("tenantId"), n);
+    if (agent && agent.status === "APPROVED") {
+      c.executionCtx.waitUntil(trackAgentActivity(c.get("db"), c.get("tenantId"), agent.id, "searches").catch((err) => console.error("[agent-activity]", err)));
+    }
+    return agent;
+  } catch (err) {
+    console.error("[search] agent number lookup failed", err);   // never blocks the search
+    return null;
+  }
+}
+
+export async function withAgentCurrency(c: Context<{ Bindings: Env; Variables: Variables }>, res: Response, agent: ResolvedAgent) {
+  if (!res.ok) return res;
+  const data = await res.json() as { fares?: { totalFare?: number; displayPrice?: number; currency?: string }[] };
+  const fx = await getFx(c.env, c.get("tenantId"), c.executionCtx);
+  const cur = agent.currency;
+  const rate = cur === "INR" ? 1 : fx.rates[cur as ForeignCurrency] ?? null;
+  const decimals = ["OMR", "KWD", "BHD"].includes(cur) ? 3 : 2;
+  const conv = (inr: number) => rate ? Math.ceil((inr / rate) * 10 ** decimals - 1e-9) / 10 ** decimals : null;
+  return c.json({
+    ...data,
+    agent: { number: agent.number, businessName: agent.businessName, currency: cur, status: agent.status },
+    agentCurrency: { code: cur, inrPerUnit: rate, available: Boolean(rate) },
+    fares: (data.fares ?? []).map((f) => {
+      const inr = Number(f.displayPrice ?? f.totalFare ?? 0);
+      const amount = (f.currency ?? "INR") === "INR" ? conv(inr) : null;
+      return amount === null ? f : { ...f, agentPrice: { amount, currency: cur } };
+    }),
+  }, res.status as 200);
+}
 
 async function runSearch(
   c: Context<{ Bindings: Env; Variables: Variables }>,
