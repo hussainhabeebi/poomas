@@ -20,6 +20,8 @@ export default function DashboardPage() {
   const { me } = useMe();
   const [d, setD] = useState<Dash | null>(null);
   const [error, setError] = useState("");
+  const [today, setToday] = useState("");   // set after mount so server and browser render the same text
+  useEffect(() => { setToday(new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })); }, []);
 
   useEffect(() => { api<Dash>("/api/agent/dashboard").then(setD).catch((e) => setError(e.message)); }, []);
   const cur = d?.agent.currency ?? "INR";
@@ -30,7 +32,7 @@ export default function DashboardPage() {
       <div className="page-head">
         <div>
           <h1>Welcome{me ? `, ${me.user.name.split(" ")[0]}` : ""}</h1>
-          <p>{d?.agent.businessName ?? "Your agency"}{d?.agent.agentNumber ? <> · Agent no. <b>{d.agent.agentNumber}</b></> : null} · {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</p>
+          <p>{d?.agent.businessName ?? "Your agency"}{d?.agent.agentNumber ? <> · Agent no. <b>{d.agent.agentNumber}</b></> : null}{today ? ` · ${today}` : ""}</p>
         </div>
         <div className="row">
           <a className="btn primary" href="/search">✈️ Book a flight</a>

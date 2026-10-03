@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api, fmtDate, money } from "../../../lib/api";
+import { api, fmtDate, money, openFile } from "../../../lib/api";
 import { useMe } from "../Shell";
 
 interface Doc { id: string; docType: string; fileName: string; uploadedAt: string; verifiedAt: string | null }
@@ -56,7 +56,9 @@ export default function SettingsPage() {
     } catch (err) { setError(err instanceof Error ? err.message : "Upload failed"); }
   }
 
-  const portal = typeof window !== "undefined" ? window.location.origin : "";
+  // Read after mount: the server render has no window (avoids a hydration mismatch).
+  const [portal, setPortal] = useState("");
+  useEffect(() => { setPortal(window.location.origin); }, []);
   const cur = me?.agent.currency ?? "INR";
 
   return (
@@ -112,6 +114,21 @@ export default function SettingsPage() {
         {me?.agent.status !== "APPROVED" && <p className="small muted" style={{ margin: 0 }}>Your page goes live once your agency is approved.</p>}
         {admin ? <button className="btn primary" disabled={busy} style={{ alignSelf: "flex-start" }}>{busy ? "Saving…" : "Save settings"}</button> : <p className="small muted">Only the agency admin can change settings.</p>}
       </form>
+
+      <div className="card">
+        <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ margin: 0 }}>Agency MOU</h2>
+          <span className="row" style={{ gap: 8 }}>
+            <button className="btn sm" onClick={() => openFile("/api/agent/mou/print").catch((e) => setError(e.message))}>🖨 View / download</button>
+            {!me?.onboarding?.mou.accepted && <a className="btn sm primary" href="/onboarding">Review &amp; sign</a>}
+          </span>
+        </div>
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          {me?.onboarding?.mou.accepted
+            ? `Signed by ${me.onboarding.mou.acceptedBy} on ${new Date(me.onboarding.mou.acceptedAt!).toLocaleDateString("en-GB")}.`
+            : "Your Memorandum of Understanding with FlyPoomas is ready to review and sign."}
+        </p>
+      </div>
 
       <div className="card">
         <h2>KYC documents</h2>

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { adminApi } from "../../../lib/files";
 import { money, ui } from "../../../lib/ui";
+import OnboardingSettings from "./OnboardingSettings";
 
 interface Tier { name: string; minMonthlySales: number; commissionPercent: number; suggestedCreditLimit: number }
 interface Config { tiers: Tier[]; creditDays: number; maxBookingsPerHour: number; blockDuplicates: boolean; lowBalanceAlert: number; supportSlaHours: number }
@@ -11,7 +12,7 @@ interface Audit { id: string; action: string; entity: string; entityId: string |
 const monthStart = () => { const d = new Date(); return new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1)).toISOString().slice(0, 10); };
 
 export default function AgentProgramPage() {
-  const [tab, setTab] = useState<"settings" | "analytics" | "audit">("analytics");
+  const [tab, setTab] = useState<"settings" | "analytics" | "audit" | "onboarding">("analytics");
   const [cfg, setCfg] = useState<Config | null>(null);
   const [an, setAn] = useState<Analytics | null>(null);
   const [audit, setAudit] = useState<Audit[] | null>(null);
@@ -23,6 +24,7 @@ export default function AgentProgramPage() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     if (q.get("tab") === "audit") { setTab("audit"); setAuditFilter(q.get("entityId") ?? ""); }
+    if (q.get("tab") === "onboarding") setTab("onboarding");
     adminApi<{ config: Config }>("/api/admin/agent-program/config").then((d) => setCfg(d.config)).catch((e) => setError(e.message));
   }, []);
   useEffect(() => { if (tab === "analytics") { setAn(null); adminApi<Analytics>(`/api/admin/agent-program/analytics?from=${range.from}&to=${range.to}`).then(setAn).catch((e) => setError(e.message)); } }, [tab, range]);
@@ -41,10 +43,12 @@ export default function AgentProgramPage() {
       <h1 style={ui.h1}>Agent programme</h1>
       <p style={ui.sub}>Tiers and commission, credit terms, risk limits, agency performance and the audit trail.</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {(["analytics", "settings", "audit"] as const).map((t) => <button key={t} style={ui.chip(tab === t)} onClick={() => setTab(t)}>{t === "analytics" ? "Performance" : t === "settings" ? "Settings" : "Audit trail"}</button>)}
+        {(["analytics", "settings", "onboarding", "audit"] as const).map((t) => <button key={t} style={ui.chip(tab === t)} onClick={() => setTab(t)}>{t === "analytics" ? "Performance" : t === "settings" ? "Settings" : t === "onboarding" ? "KYC & MOU" : "Audit trail"}</button>)}
       </div>
       {error && <div style={ui.err}>{error}</div>}
       {notice && <div style={ui.ok}>{notice}</div>}
+
+      {tab === "onboarding" && <OnboardingSettings />}
 
       {tab === "settings" && cfg && (
         <>

@@ -42,6 +42,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const reload = () => { loadMe(true).then(setMe).catch((e) => setError(e.message)); };
   useEffect(() => { loadMe().then(setMe).catch((e) => setError(e.message)); }, []);
   useEffect(() => { setMore(false); }, [path]);
+  // Agency admins finish onboarding (KYC documents + MOU) before using the portal.
+  const mustOnboard = !!me?.onboarding && me.onboarding.enforce && !me.onboarding.complete;
+  useEffect(() => {
+    if (mustOnboard && me?.user.role === "AGENT_ADMIN" && path !== "/onboarding") window.location.replace("/onboarding");
+  }, [mustOnboard, me, path]);
 
   const on = (href: string) => path === href || path.startsWith(href + "/");
   const items = NAV.flatMap((g) => g.items);
@@ -84,6 +89,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           </header>
           <div className="content">
             {error && <div className="banner bad">{error}</div>}
+            {mustOnboard && me?.user.role !== "AGENT_ADMIN" && (
+              <div className="banner warn"><b>Agency set-up isn&apos;t finished.</b> Your agency admin needs to upload the KYC documents and sign the MOU.</div>
+            )}
             {me?.agent.status === "PENDING" && (
               <div className="banner warn"><b>Your agency is waiting for approval.</b> You can search fares and set up your profile. Upload your KYC documents in <a href="/settings">Profile & KYC</a> to speed it up.</div>
             )}
