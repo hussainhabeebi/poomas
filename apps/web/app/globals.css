@@ -2574,6 +2574,7 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
   body:has(.home-phase1) .site-nav > .nav-currency + .home-account-link {
     margin-left: 12px;
   }
+}
 
 /* ── Footer ────────────────────────────────────────────────────────────── */
 .site-footer { margin-top: 56px; background: #0b1628; color: #b6c2d4; font-size: 14px; }
