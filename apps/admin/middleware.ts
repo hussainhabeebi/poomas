@@ -4,7 +4,7 @@ export function middleware(request: NextRequest) {
   const path      = new URL(request.url).pathname;
   const loginPath = "/login";
 
-  if (path === loginPath) return NextResponse.next();
+  if (path === loginPath || path === "/forgot-password" || path === "/set-password") return NextResponse.next();
 
   // Allow Cloudflare Access JWT (zero-trust tunnel) — takes precedence
   const cfJwt = request.headers.get("CF-Access-Jwt-Assertion");

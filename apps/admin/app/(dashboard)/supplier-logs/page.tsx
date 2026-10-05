@@ -1,3 +1,4 @@
+import { serverAuthHeaders } from "../../../lib/server";
 import { LogDetail } from "./LogDetail";
 import { RawApiCalls } from "./RawApiCalls";
 
@@ -67,9 +68,10 @@ async function getLogs(sp: Record<string, string>): Promise<{ logs: LogEntry[]; 
     if (sp.to)       q.set("to", sp.to);
     q.set("limit",  String(Math.min(parseInt(sp.limit ?? "100"), 500)));
     q.set("offset", sp.offset ?? "0");
-    if (!SERVER_TOKEN) return { logs: [], fetchError: "ADMIN_SERVICE_TOKEN env var is not set in Cloudflare" };
+    const headers = await serverAuthHeaders();
+    if (headers.Authorization === "Bearer ") return { logs: [], fetchError: "Sign in again — no admin token found" };
     const res = await fetch(`${SERVER_API}/api/admin/supplier-logs?${q}`, {
-      headers: { Authorization: `Bearer ${SERVER_TOKEN}` },
+      headers,
       cache: "no-store",
     });
     if (!res.ok) {

@@ -9,7 +9,7 @@ export const agentsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables 
 
 // GET /api/admin/agents — all agents across all tenants (SUPER_ADMIN)
 agentsAdminRoutes.get("/", async (c) => {
-  requireRole("SUPER_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "STAFF")(c.get("userRole"));
 
   const db     = c.get("db");
   const status = c.req.query("status");
@@ -37,7 +37,7 @@ agentsAdminRoutes.get("/", async (c) => {
 
 // GET /api/admin/agents/:id — one agent with its documents and booking totals (SUPER_ADMIN)
 agentsAdminRoutes.get("/:id", async (c) => {
-  requireRole("SUPER_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "STAFF")(c.get("userRole"));
   const db = c.get("db");
   const id = c.req.param("id");
   const [row] = await db
@@ -55,7 +55,7 @@ agentsAdminRoutes.get("/:id", async (c) => {
 
 // PATCH /api/admin/agents/:id/status — update agent status
 agentsAdminRoutes.patch("/:id/status", async (c) => {
-  requireRole("SUPER_ADMIN", "TENANT_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "TENANT_ADMIN", "STAFF")(c.get("userRole"));
 
   const body    = await c.req.json() as { status: "APPROVED" | "REJECTED" | "SUSPENDED" };
   const db      = c.get("db");
