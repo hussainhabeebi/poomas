@@ -27,6 +27,7 @@ import { handleBookingQueue, handleNotifyQueue } from "./queue-consumer.js";
 import { paymentRoutes }       from "./routes/payments.js";
 import { eticketRoutes }       from "./routes/eticket.js";
 import { refreshAutoRates } from "./lib/fx.js";
+import { staffPasswordRoutes } from "./routes/admin/users.js";
 import { sessionRoutes }       from "./routes/session.js";
 import { checkoutRoutes }      from "./routes/checkout.js";
 import { whatsappRoutes }      from "./routes/whatsapp.js";
@@ -48,6 +49,7 @@ app.use("/api/*", rateLimitMiddleware);
 
 // ── Public routes (no auth) ────────────────────────────────────
 app.route("/api/auth",           authRoutes);
+app.route("/api/auth/staff",     staffPasswordRoutes);   // admin staff: forgot / set password (public)
 app.route("/webhooks",           webhookRoutes);
 app.route("/api/search",         searchRoutes);
 app.route("/api/hotels",         hotelRoutes);

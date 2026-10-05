@@ -101,6 +101,7 @@ export default function LoginPage() {
             `Hmm, that didn't work. ${data.error ?? "Please try again."} 😕`,
             300
           );
+          await botSay("Forgot your password? Use “Forgot password?” in the form below to get a reset link by email.", 400);
           await botSay("What's your email address?", 500);
           setEmailVal("");
         }
@@ -332,6 +333,7 @@ function DesktopLoginForm() {
       <label className="login-field">Password
         <input type="password" name="password" autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} required />
       </label>
+      <a href={`/forgot-password${email ? `?email=${encodeURIComponent(email.trim())}` : ""}`} style={{ alignSelf: "flex-end", marginTop: -6, fontSize: 13, color: "#E31E24", fontWeight: 600 }}>Forgot password?</a>
       <button
         type="submit" disabled={loading} className="login-submit"
       >

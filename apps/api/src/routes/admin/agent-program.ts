@@ -93,7 +93,7 @@ async function notifyAgency(c: { env: Env; get: (k: "db") => any }, agentId: str
   if (!a) return;
   const link = `${portalUrl(c.env)}/requests/${requestId}`;
   await notifyCustomer(c.env, c.get("db"), tenantId, {
-    email: a.email, phone: a.whatsapp ?? a.phone,
+    email: a.email, phone: a.whatsapp ?? a.phone, category: "agency",
     subject: `Update: ${title}`,
     html: emailShell(title, `<p>${escapeHtml(text)}</p>`, { label: "Open in portal", href: link }),
     whatsapp: `📬 *${title}*\n${text}\n${link}`,

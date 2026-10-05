@@ -536,7 +536,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       const payLink = `${WEB_URL}/pay?${new URLSearchParams({ b: pendingBooking!.id, t: checkoutToken })}`;
       const route = `${body.origin.toUpperCase()} → ${body.destination.toUpperCase()}`;
       runInBackground(c, notifyCustomer(c.env, db, tenantId, {
-        email: body.contactEmail, phone: body.contactPhone,
+        email: body.contactEmail, phone: body.contactPhone, category: "booking",
         subject: `Fare on hold: ${route} — pay by ${holdLabel(hold.until)}`,
         html: emailShell("Your fare is on hold", `<p>${escapeHtml(route)} on ${escapeHtml(body.departureDate)} is held${hold.pnr ? ` (airline PNR <b>${escapeHtml(hold.pnr)}</b>)` : ""}.</p>
 <p>Pay <b>${escapeHtml(money(amount, body.currency))}</b> before <b>${escapeHtml(holdLabel(hold.until))} (IST)</b> to get your e-ticket. After that the airline releases the seats.</p>`, { label: "Pay now", href: payLink }),

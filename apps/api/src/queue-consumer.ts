@@ -1,6 +1,7 @@
 // CF Queue consumer — processes BOOKING_QUEUE and NOTIFY_QUEUE messages
 // Handles: INITIATE_PAYMENT, PAYMENT_CAPTURED, NOTIFY_BOOKING_CONFIRMATION
 
+import { emailBookingFailed } from "./lib/transactional-emails.js";
 import type { Env } from "./types.js";
 import { createDb } from "@poomas/db";
 import {
@@ -22,7 +23,9 @@ import { collectExchanges, persistExchanges } from "./lib/api-exchanges.js";
 import { renderETicketHtml, storeETicket } from "./lib/eticket.js";
 import { renderItineraryHtml } from "./lib/itinerary.js";
 import { parseBookingDetails } from "./lib/trips.js";
-import { sendEmail, sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
+import { sendWhatsApp, buildBookingConfirmationMessage } from "./lib/notify.js";
+import { emailLayout, sendMail } from "./lib/email.js";
+import { escapeHtml, WEB_URL } from "./lib/customer-notify.js";
 
 // ── Message type discriminated union ─────────────────────────────
 
@@ -511,6 +514,7 @@ async function bookPaidBooking(
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
     await triggerAutoRefund(db, env, booking.id, data.gatewayPaymentId, Number(booking.totalAmount));
+    await emailBookingFailed(env, db, booking.id, data.gatewayPaymentId).catch((e) => console.error("[email] booking failed", e));
     throw err;
   };
 
@@ -622,6 +626,7 @@ async function bookPaidBooking(
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
     await triggerAutoRefund(db, env, booking.id, data.gatewayPaymentId, Number(booking.totalAmount));
+    await emailBookingFailed(env, db, booking.id, data.gatewayPaymentId).catch((e) => console.error("[email] booking failed", e));
     throw err;
   }
 
@@ -634,6 +639,7 @@ async function bookPaidBooking(
       .set({ status: "PAYMENT_FAILED", updatedAt: new Date() })
       .where(eq(bookings.id, booking.id));
     await triggerAutoRefund(db, env, booking.id, data.gatewayPaymentId, Number(booking.totalAmount));
+    await emailBookingFailed(env, db, booking.id, data.gatewayPaymentId).catch((e) => console.error("[email] booking failed", e));
     throw new Error(`Supplier booking failed: ${JSON.stringify(bookResult)}`);
   }
 
@@ -901,18 +907,27 @@ async function handleNotifyBookingConfirmation(
     eticketHtml = await r2obj.text();
   }
 
-  // Send email confirmation
-  if (booking.contactEmail && env.RESEND_API_KEY) {
-    try {
-      await sendEmail(env.RESEND_API_KEY, {
-        to:      booking.contactEmail,
-        from:    `bookings@${tenantRow?.customDomain ?? "flypoomas.com"}`,
-        subject: `Your booking is confirmed — PNR: ${booking.pnr}`,
-        html:    eticketHtml || `<p>Your booking PNR is <strong>${booking.pnr}</strong>.</p>`,
-      });
-    } catch (err) {
-      console.error("Email send failed (non-fatal):", err);
-    }
+  // Send email confirmation (once per booking — Resend Idempotency-Key)
+  if (booking.contactEmail) {
+    const dep = String(fd.departureTime ?? booking.departureDate?.toISOString?.() ?? "");
+    await sendMail(env, db, data.tenantId, {
+      to: booking.contactEmail, category: "booking", idempotencyKey: `booking-confirmed:${booking.id}`, copyOps: true,
+      subject: `Booking confirmed — PNR ${booking.pnr ?? ""} · ${booking.origin} → ${booking.destination}`,
+      html: emailLayout({
+        title: "Your booking is confirmed ✈️", preheader: `PNR ${booking.pnr ?? ""} · ${booking.origin} → ${booking.destination}`,
+        body: `<p>Thank you for booking with ${escapeHtml(tenantRow?.name ?? "FlyPoomas")}. Your e-ticket is attached — keep it handy at the airport with your passport / ID.</p>`,
+        rows: [
+          ["PNR (airline reference)", booking.pnr ?? "—"],
+          ["Route", `${booking.origin} → ${booking.destination}`],
+          ...(dep ? [["Departure", formatDeparture(dep)] as [string, string]] : []),
+          ["Travellers", passengerNames.join(", ")],
+          ["Total paid", `${booking.currency} ${Number(booking.totalAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`],
+        ],
+        cta: { label: "Manage my booking", href: `${WEB_URL}/trips` },
+        footerNote: "Check in online 48–24 hours before departure. Arrive at the airport 3 hours before international flights.",
+      }),
+      ...(eticketHtml ? { attachments: [{ filename: `e-ticket-${booking.pnr ?? booking.id.slice(0, 8)}.html`, content: base64(eticketHtml) }] } : {}),
+    });
   }
 
   // Send WhatsApp via Leadvyne/Chatwoot
@@ -940,4 +955,19 @@ async function handleNotifyBookingConfirmation(
       console.error("WhatsApp send failed (non-fatal):", err);
     }
   }
+}
+
+function base64(text: string) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function formatDeparture(iso: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(iso);
+  if (!m) return iso;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const day = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return m[4] ? `${day}, ${m[4]}:${m[5]} (local time)` : day;
 }

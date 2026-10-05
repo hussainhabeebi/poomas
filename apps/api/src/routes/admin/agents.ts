@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { emailAgencyStatus } from "../../lib/transactional-emails.js";
 import { HTTPException } from "hono/http-exception";
 import { agents, tenants, agentDocuments, bookings } from "@poomas/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -9,7 +10,7 @@ export const agentsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables 
 
 // GET /api/admin/agents — all agents across all tenants (SUPER_ADMIN)
 agentsAdminRoutes.get("/", async (c) => {
-  requireRole("SUPER_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "STAFF")(c.get("userRole"));
 
   const db     = c.get("db");
   const status = c.req.query("status");
@@ -37,7 +38,7 @@ agentsAdminRoutes.get("/", async (c) => {
 
 // GET /api/admin/agents/:id — one agent with its documents and booking totals (SUPER_ADMIN)
 agentsAdminRoutes.get("/:id", async (c) => {
-  requireRole("SUPER_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "STAFF")(c.get("userRole"));
   const db = c.get("db");
   const id = c.req.param("id");
   const [row] = await db
@@ -55,11 +56,12 @@ agentsAdminRoutes.get("/:id", async (c) => {
 
 // PATCH /api/admin/agents/:id/status — update agent status
 agentsAdminRoutes.patch("/:id/status", async (c) => {
-  requireRole("SUPER_ADMIN", "TENANT_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "TENANT_ADMIN", "STAFF")(c.get("userRole"));
 
   const body    = await c.req.json() as { status: "APPROVED" | "REJECTED" | "SUSPENDED" };
   const db      = c.get("db");
   const userId  = c.get("userId")!;
+  const [before] = await db.select({ status: agents.status }).from(agents).where(eq(agents.id, c.req.param("id"))).limit(1);
 
   await db.update(agents).set({
     status:      body.status,
@@ -68,5 +70,8 @@ agentsAdminRoutes.patch("/:id/status", async (c) => {
     updatedAt:   new Date(),
   }).where(eq(agents.id, c.req.param("id")));
 
+  if (before && before.status !== body.status && ["APPROVED", "REJECTED", "SUSPENDED"].includes(body.status)) {
+    c.executionCtx.waitUntil(emailAgencyStatus(c.env, db, c.req.param("id"), body.status));
+  }
   return c.json({ ok: true });
 });

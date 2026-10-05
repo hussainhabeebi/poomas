@@ -148,7 +148,7 @@ export async function sendFareAlerts(env: Env, db: Db, due: { alert: FareAlert; 
     if (left <= 0) await deleteAlert(env.FARE_CACHE_KV, alert);
     else await env.FARE_CACHE_KV.put(`falert:${alert.tenantId}:${alert.id}`, JSON.stringify(updated), { expirationTtl: ttlUntil(alert.date) });
     await notifyCustomer(env, db, alert.tenantId, {
-      email: alert.email, phone: alert.phone,
+      email: alert.email, phone: alert.phone, category: "alert",
       subject: `Price drop: ${route} on ${when} — now ${money(price, alert.currency)}`,
       html: emailShell("Your fare alert: the price dropped", `<p><b>${escapeHtml(route)}</b> on ${escapeHtml(when)} is now <b>${escapeHtml(money(price, alert.currency))}</b> per adult (your alert: ${escapeHtml(money(alert.targetPrice, alert.currency))}).</p>
 <p>Fares change quickly — book soon to lock it in.</p>

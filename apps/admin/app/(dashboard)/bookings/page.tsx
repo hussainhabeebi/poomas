@@ -1,3 +1,4 @@
+import { serverAuthHeaders } from "../../../lib/server";
 import { CertificationExport } from "./CertificationExport";
 const SERVER_API   = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const SERVER_TOKEN = process.env.ADMIN_SERVICE_TOKEN ?? "";
@@ -33,7 +34,7 @@ async function getBookings(searchParams: Record<string, string>): Promise<{ book
   try {
     const params = new URLSearchParams(searchParams).toString();
     const res = await fetch(`${SERVER_API}/api/admin/bookings?${params}`, {
-      headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
+      headers: await serverAuthHeaders(),
       cache: "no-store",
     });
     if (!res.ok) return { bookings: [], total: 0 };

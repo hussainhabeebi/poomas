@@ -31,6 +31,7 @@ export interface Env {
   GEMINI_MODEL?:          string;   // optional override for plain-language search (default gemini-2.5-flash)
   GEMINI_SCAN_MODEL?:     string;   // optional model for document / ticket reading (default GEMINI_MODEL)
   PORTAL_URL?:            string;   // agency portal address for links in emails (default https://portal.flypoomas.com)
+  ADMIN_URL?:             string;   // admin panel address for staff password links (default https://admin.flypoomas.com)
   DUFFEL_API_KEY:         string;
   POOMAS_INTEGRATION_KEY: string;
   RAZORPAY_KEY_ID:        string;
@@ -40,6 +41,8 @@ export interface Env {
   NOMOD_API_SECRET:       string;
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
+  EMAIL_FROM?:            string;   // default sender address (must be verified in Resend), e.g. bookings@flypoomas.com
+  EMAIL_REPLY_TO?:        string;   // default reply-to address
   GEMINI_API_KEY:         string;
 
   // Static service token for admin app server-to-server calls (any random secret)
