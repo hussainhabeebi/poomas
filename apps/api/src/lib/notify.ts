@@ -1,11 +1,4 @@
-// Notification dispatch — email (SMTP/Resend) and WhatsApp (via Leadvyne/Chatwoot)
-
-export interface EmailPayload {
-  to:      string;
-  subject: string;
-  html:    string;
-  from?:   string;
-}
+// WhatsApp dispatch via Leadvyne/Chatwoot. Email lives in lib/email.ts (Resend).
 
 export interface WhatsAppPayload {
   phone:   string;     // E.164 format e.g. +919876543210
@@ -13,32 +6,6 @@ export interface WhatsAppPayload {
   chatwootBaseUrl: string;
   chatwootInboxId: number;
   chatwootApiToken: string;
-}
-
-// Send transactional email via Resend (RESEND_API_KEY env var)
-export async function sendEmail(
-  apiKey: string,
-  payload: EmailPayload,
-): Promise<void> {
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type":  "application/json",
-    },
-    body: JSON.stringify({
-      from:    payload.from ?? "bookings@flypoomas.com",
-      to:      [payload.to],
-      subject: payload.subject,
-      html:    payload.html,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("Email send failed:", err);
-    throw new Error(`Email dispatch failed: ${res.status}`);
-  }
 }
 
 // Send WhatsApp message via Chatwoot (Leadvyne integration)

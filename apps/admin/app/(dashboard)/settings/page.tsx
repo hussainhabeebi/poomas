@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { API, apiHeaders } from "../../../lib/api";
+import EmailSettings from "./EmailSettings";
 
 /* ── Small shared UI ────────────────────────────────────────────── */
 function Section({ color, title, badge, children }: {
@@ -593,6 +594,10 @@ export default function SettingsPage() {
 
       <Section color="#0EA5E9" title="Exchange Rates" badge="Auto · GCC + USD">
         <ExchangeRateSettings />
+      </Section>
+
+      <Section color="#F59E0B" title="Email" badge="Resend">
+        <EmailSettings />
       </Section>
 
       <Section color="#25D366" title="WhatsApp Messaging" badge="Leadvyne · WABA">

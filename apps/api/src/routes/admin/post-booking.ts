@@ -6,6 +6,7 @@
 // GET  /api/admin/support-requests?status=       list
 // PATCH /api/admin/support-requests/:id          { status?, adminNote? }
 
+import { emailCancellation } from "../../lib/transactional-emails.js";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -69,6 +70,7 @@ cancellationsAdminRoutes.post("/:id/resolve", zValidator("json", z.object({
     const [u] = await db.update(bookingAmendments).set({ status: "REJECTED", adminNote, updatedAt: new Date() })
       .where(and(eq(bookingAmendments.id, a.id), inArray(bookingAmendments.status, ["SUBMITTED", "PROCESSING"]))).returning();
     if (!u) throw new HTTPException(409, { message: `Can't reject a ${a.status} cancellation` });
+    c.executionCtx.waitUntil(emailCancellation(c.env, db, u, "REJECTED"));
     return c.json({ cancellation: u });
   }
 
@@ -91,6 +93,7 @@ cancellationsAdminRoutes.post("/:id/resolve", zValidator("json", z.object({
       .set({ status: amount >= Number(u.amountPaid) ? "REFUNDED" : "PARTIAL_REFUND", refundedAmount: amount.toFixed(2), refundGatewayRef: u.refundReference, refundCompletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(payments.bookingId, a.bookingId), eq(payments.status, "SUCCESS")));
     await db.update(bookings).set({ status: "REFUNDED", updatedAt: new Date() }).where(eq(bookings.id, a.bookingId));
+    if (amount > 0) c.executionCtx.waitUntil(emailCancellation(c.env, db, u, "REFUNDED"));
     return c.json({ cancellation: u });
   }
 
@@ -102,6 +105,7 @@ cancellationsAdminRoutes.post("/:id/resolve", zValidator("json", z.object({
   }).where(and(eq(bookingAmendments.id, a.id), inArray(bookingAmendments.status, ["SUBMITTED", "PROCESSING"]))).returning();
   if (!u) throw new HTTPException(409, { message: `Can't mark a ${a.status} cancellation as successful` });
   await db.update(bookings).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(bookings.id, a.bookingId));
+  await emailCancellation(c.env, db, u, "CONFIRMED");
   const settled = await settleRefund(db, c.env, u);
   return c.json({ cancellation: settled ?? u, refundStatus: settled?.refundStatus ?? u.refundStatus });
 });

@@ -1,4 +1,7 @@
 import { Hono } from "hono";
+import { emailCustomerWelcome } from "../lib/transactional-emails.js";
+import { emailLayout, sendMail } from "../lib/email.js";
+import { escapeHtml, WEB_URL } from "../lib/customer-notify.js";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
@@ -91,8 +94,60 @@ authRoutes.post("/customer/register", zValidator("json", customerRegisterSchema)
     emailVerified: false,
   }).onConflictDoNothing().returning();
   if (!user) throw new HTTPException(409, { message: "An account with this email already exists. Please sign in." });
+  if (user.email) c.executionCtx.waitUntil(emailCustomerWelcome(c.env, db, tenantId, { id: user.id, email: user.email, name: user.name }).catch(() => {}));
 
   return c.json({ ...(await issueCustomerToken(c.env, db, user.id, tenantId)), customer: { name: user.name, email: user.email } }, 201);
+});
+
+// ── Customer password reset (flypoomas.com) ──────────────────────────────────
+// Same reply whether or not the email exists; one-hour, one-use link.
+authRoutes.post("/customer/forgot", zValidator("json", z.object({ email: z.string().trim().toLowerCase().email() })), async (c) => {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const { email } = c.req.valid("json");
+  const limitKey = `cust_rl:${tenantId}:${c.req.header("cf-connecting-ip") ?? "x"}:${new Date().toISOString().slice(0, 13)}`;
+  const used = Number(await c.env.SESSIONS_KV.get(limitKey).catch(() => null) ?? 0);
+  if (used >= 10) throw new HTTPException(429, { message: "Too many requests. Try again in an hour." });
+  await c.env.SESSIONS_KV.put(limitKey, String(used + 1), { expirationTtl: 3600 }).catch(() => {});
+  const [user] = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, isActive: users.isActive }).from(users)
+    .where(and(eq(sql`lower(${users.email})`, email), eq(users.tenantId, tenantId))).limit(1);
+  if (user?.isActive && user.email && user.role === "CUSTOMER") {
+    const token = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    await c.env.SESSIONS_KV.put(`cust_pwreset:${token}`, JSON.stringify({ tenantId, userId: user.id }), { expirationTtl: 3600 });
+    const link = `${WEB_URL}/reset-password?token=${token}`;
+    c.executionCtx.waitUntil(sendMail(c.env, db, tenantId, {
+      to: user.email, category: "auth", subject: "Reset your FlyPoomas password",
+      html: emailLayout({
+        title: "Reset your password",
+        body: `<p>Hi ${escapeHtml(user.name || "there")}, use the button below to choose a new password for your FlyPoomas account. The link works for 1 hour.</p><p>If you didn't ask for this, you can ignore this email — your password stays the same.</p>`,
+        cta: { label: "Choose a new password", href: link },
+      }),
+    }).then(() => undefined));
+  }
+  return c.json({ ok: true, message: "If an account exists for this email, we've sent a reset link. Check your inbox (and spam)." });
+});
+
+authRoutes.get("/customer/reset/:token", async (c) => {
+  const t = await c.env.SESSIONS_KV.get(`cust_pwreset:${c.req.param("token")}`, "json") as { tenantId: string; userId: string } | null;
+  if (!t || t.tenantId !== c.get("tenantId")) throw new HTTPException(404, { message: "This reset link has expired. Ask for a new one." });
+  const [u] = await c.get("db").select({ email: users.email }).from(users).where(eq(users.id, t.userId)).limit(1);
+  return c.json({ email: u?.email ?? "" });
+});
+
+authRoutes.post("/customer/reset/:token", zValidator("json", z.object({ password: z.string().min(8, "Use at least 8 characters").max(200) }), (r, c) => {
+  if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Choose a stronger password" }, 400);
+}), async (c) => {
+  const db = c.get("db");
+  const key = `cust_pwreset:${c.req.param("token")}`;
+  const t = await c.env.SESSIONS_KV.get(key, "json") as { tenantId: string; userId: string } | null;
+  if (!t || t.tenantId !== c.get("tenantId")) throw new HTTPException(404, { message: "This reset link has expired. Ask for a new one." });
+  await c.env.SESSIONS_KV.delete(key);   // one use only
+  const [u] = await db.update(users).set({ passwordHash: await pbkdf2HashPassword(c.req.valid("json").password), emailVerified: true, updatedAt: new Date() })
+    .where(and(eq(users.id, t.userId), eq(users.tenantId, t.tenantId), eq(users.role, "CUSTOMER"), eq(users.isActive, true)))
+    .returning({ id: users.id, email: users.email });
+  if (!u) throw new HTTPException(404, { message: "This account is no longer active." });
+  // Signs out other devices (customer sessions are checked on every request) and signs in here.
+  return c.json({ ...(await issueCustomerToken(c.env, db, u.id, t.tenantId)), email: u.email });
 });
 
 async function issueCustomerToken(env: Env, db: Variables["db"], userId: string, tenantId: string) {

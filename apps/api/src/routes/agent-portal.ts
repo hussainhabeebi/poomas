@@ -8,6 +8,7 @@
 //                              saved travellers, quotes, offline ticket import.
 // Trips   /api/agent/trips/*   the My Trips routes, scoped to the agency tree.
 
+import { emailAgencyRegistered } from "../lib/transactional-emails.js";
 import { assignAgentNumber, resolveAgentNumber } from "../lib/agent-number.js";
 import { getBankAccounts, visibleAccounts } from "../lib/bank-accounts.js";
 import {
@@ -133,6 +134,7 @@ agentPublicRoutes.post("/register", zValidator("json", registerSchema, (r, c) =>
   }).returning();
   await db.insert(walletAccounts).values({ tenantId, agentId: agent.id, currency: b.currency }).onConflictDoNothing();
   await assignAgentNumber(db, tenantId, agent.id).catch((err) => console.error("[agent-number]", err));
+  c.executionCtx.waitUntil(emailAgencyRegistered(c.env, db, { id: agent.id, tenantId, email: agent.email, businessName: agent.businessName, ownerName: agent.ownerName }).catch(() => {}));
   const [user] = await db.insert(users).values({
     tenantId, name: b.ownerName, email: b.email, phone: b.phone, passwordHash: await pbkdf2HashPassword(b.password),
     role: "AGENT_ADMIN", agentId: agent.id, isActive: true, emailVerified: false,
@@ -157,7 +159,7 @@ export async function sendAgentPasswordReset(env: Env, db: Db, tenantId: string,
   await env.SESSIONS_KV.put(`agent_pwreset:${token}`, JSON.stringify({ tenantId, userId }), { expirationTtl: RESET_TTL });
   const link = `${portalUrl(env)}/reset-password?token=${token}`;
   await notifyCustomer(env, db, tenantId, {
-    email, subject: "Reset your FlyPoomas agent portal password",
+    email, category: "auth", subject: "Reset your FlyPoomas agent portal password",
     html: emailShell("Reset your password", `<p>Hi ${escapeHtml(name || "there")}, use the button below to choose a new password for the FlyPoomas agent portal. The link works for 1 hour. If you didn't ask for this, ignore this email.</p>`, { label: "Choose a new password", href: link }),
     whatsapp: "",
   });
@@ -310,7 +312,7 @@ agentPublicRoutes.post("/site/:slug/lead", zValidator("json", z.object({
     tenantId, agentId: a.id, type: "LEAD", status: "OPEN", title, details: { ...b, source: "mini-site" },
   }).returning({ id: agentRequests.id });
   c.executionCtx.waitUntil(notifyCustomer(c.env, db, tenantId, {
-    email: a.email, phone: a.whatsapp ?? a.phone,
+    email: a.email, phone: a.whatsapp ?? a.phone, category: "agency",
     subject: `New customer enquiry — ${b.name}`,
     html: emailShell("New enquiry from your FlyPoomas page", `<p><b>${escapeHtml(b.name)}</b> (${escapeHtml(b.phone)}) — ${escapeHtml(title)}</p>${b.message ? `<p>${escapeHtml(b.message)}</p>` : ""}`, { label: "Open in portal", href: `${portalUrl(c.env)}/requests/${r.id}` }),
     whatsapp: `🛎 *New enquiry* — ${b.name} (${b.phone})\n${title}${b.message ? `\n${b.message}` : ""}\nPortal: ${portalUrl(c.env)}/requests/${r.id}`,
@@ -480,7 +482,7 @@ export async function createInvite(env: Env, db: Db, inv: Invite, businessName: 
   await env.SESSIONS_KV.put(`agent_invite:${token}`, JSON.stringify(inv), { expirationTtl: 7 * 86_400 });
   const link = `${portalUrl(env)}/accept-invite?token=${token}`;
   await notifyCustomer(env, db, inv.tenantId, {
-    email: inv.email, subject: `You're invited to ${businessName} on FlyPoomas`,
+    email: inv.email, category: "auth", subject: `You're invited to ${businessName} on FlyPoomas`,
     html: emailShell(`Join ${businessName} on FlyPoomas`, `<p>Hi ${escapeHtml(inv.name)}, you've been invited as <b>${inv.role.replace("AGENT_", "").toLowerCase()}</b>. Set your password to start booking. The link works for 7 days.</p>`, { label: "Accept invitation", href: link }),
     whatsapp: "",
   });
@@ -931,7 +933,7 @@ agentPortalRoutes.post("/mou/accept", zValidator("json", z.object({
   await updateSettings(db, a.id, { mou: acceptance });
   await audit(db, { tenantId, userId: c.get("userId"), action: "AGENT_MOU_ACCEPTED", entity: "Agent", entityId: a.id, after: { version: cfg.mouVersion, name: b.name, designation: b.designation, hash }, ip: ip(c) });
   c.executionCtx.waitUntil(notifyCustomer(c.env, db, tenantId, {
-    email: a.email, subject: `Your FlyPoomas MOU (${m.ref})`,
+    email: a.email, category: "agency", subject: `Your FlyPoomas MOU (${m.ref})`,
     html: emailShell("MOU signed", `<p>Thank you, ${escapeHtml(b.name)}. ${escapeHtml(a.businessName)}'s Memorandum of Understanding with FlyPoomas was accepted on ${escapeHtml(new Date(acceptedAt).toUTCString())}. A copy is below and in the agent portal under Profile, branding &amp; KYC.</p><hr>${frozen}`),
     whatsapp: "",
   }).catch(() => {}));

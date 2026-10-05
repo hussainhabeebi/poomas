@@ -41,6 +41,8 @@ export interface Env {
   NOMOD_API_SECRET:       string;
   NOMOD_WEBHOOK_SECRET:   string;
   RESEND_API_KEY:         string;
+  EMAIL_FROM?:            string;   // default sender address (must be verified in Resend), e.g. bookings@flypoomas.com
+  EMAIL_REPLY_TO?:        string;   // default reply-to address
   GEMINI_API_KEY:         string;
 
   // Static service token for admin app server-to-server calls (any random secret)

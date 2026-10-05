@@ -1,12 +1,13 @@
-// One-off customer messages (fare alerts, held-fare reminders): email via Resend
-// and WhatsApp via the tenant's Leadvyne/Chatwoot inbox, whichever is available.
+// Customer / agency / staff messages: email via Resend (lib/email.ts) and
+// WhatsApp via the tenant's Leadvyne/Chatwoot inbox, whichever is available.
 // Never throws — a failed message must not fail the request or job that sent it.
 
 import { leadvyneConfigs, tenants } from "@poomas/db/schema";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@poomas/db";
 import type { Env } from "../types.js";
-import { sendEmail, sendWhatsApp } from "./notify.js";
+import { sendWhatsApp } from "./notify.js";
+import { emailLayout, sendMail, type EmailCategory } from "./email.js";
 
 export const WEB_URL = "https://flypoomas.com";
 export const API_URL = "https://api.flypoomas.com";
@@ -17,21 +18,19 @@ export interface CustomerMessage {
   subject: string;
   html: string;
   whatsapp: string;
+  category?: EmailCategory;
+  idempotencyKey?: string;   // Resend sends once per key within 24 h
+  copyOps?: boolean;         // BCC the operations inbox
 }
 
 export async function notifyCustomer(env: Env, db: Db, tenantId: string, msg: CustomerMessage): Promise<{ email: boolean; whatsapp: boolean }> {
   const sent = { email: false, whatsapp: false };
-  if (msg.email && env.RESEND_API_KEY) {
-    try {
-      const [tenant] = await db.select({ customDomain: tenants.customDomain }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
-      await sendEmail(env.RESEND_API_KEY, {
-        to: msg.email, subject: msg.subject, html: msg.html,
-        from: `bookings@${tenant?.customDomain ?? "flypoomas.com"}`,
-      });
-      sent.email = true;
-    } catch (err) {
-      console.error("[customer-notify] email failed", err);
-    }
+  if (msg.email) {
+    const r = await sendMail(env, db, tenantId, {
+      to: msg.email, subject: msg.subject, html: msg.html, category: msg.category ?? "general",
+      ...(msg.idempotencyKey ? { idempotencyKey: msg.idempotencyKey } : {}), ...(msg.copyOps ? { copyOps: true } : {}),
+    });
+    sent.email = r.ok;
   }
   if (msg.phone) {
     try {
@@ -65,11 +64,7 @@ export function money(amount: number, currency: string) {
   }
 }
 
-// Simple branded email shell.
+// Branded email: every message uses the shared Resend layout (lib/email.ts).
 export function emailShell(title: string, bodyHtml: string, cta?: { label: string; href: string }) {
-  return `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#0f172a">
-<h2 style="color:#E31E24;margin:0 0 12px">${escapeHtml(title)}</h2>
-${bodyHtml}
-${cta ? `<p style="margin:20px 0"><a href="${cta.href}" style="background:#E31E24;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">${escapeHtml(cta.label)}</a></p>` : ""}
-<p style="color:#64748b;font-size:12px">FlyPoomas · flypoomas.com</p></div>`;
+  return emailLayout({ title, body: bodyHtml, ...(cta ? { cta } : {}) });
 }

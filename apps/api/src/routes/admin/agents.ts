@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { emailAgencyStatus } from "../../lib/transactional-emails.js";
 import { HTTPException } from "hono/http-exception";
 import { agents, tenants, agentDocuments, bookings } from "@poomas/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -60,6 +61,7 @@ agentsAdminRoutes.patch("/:id/status", async (c) => {
   const body    = await c.req.json() as { status: "APPROVED" | "REJECTED" | "SUSPENDED" };
   const db      = c.get("db");
   const userId  = c.get("userId")!;
+  const [before] = await db.select({ status: agents.status }).from(agents).where(eq(agents.id, c.req.param("id"))).limit(1);
 
   await db.update(agents).set({
     status:      body.status,
@@ -68,5 +70,8 @@ agentsAdminRoutes.patch("/:id/status", async (c) => {
     updatedAt:   new Date(),
   }).where(eq(agents.id, c.req.param("id")));
 
+  if (before && before.status !== body.status && ["APPROVED", "REJECTED", "SUSPENDED"].includes(body.status)) {
+    c.executionCtx.waitUntil(emailAgencyStatus(c.env, db, c.req.param("id"), body.status));
+  }
   return c.json({ ok: true });
 });
