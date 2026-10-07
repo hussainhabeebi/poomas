@@ -12,6 +12,7 @@ import { logSupplierCall } from "../lib/supplier-logger.js";
 import { signToken, verifyToken } from "./checkout.js";
 import { optionalCustomerId } from "../lib/optional-customer.js";
 import { optionalAgent } from "../lib/agent-markup.js";
+import { resolveAgentNumber } from "../lib/agent-number.js";
 import { AgentBlocked, agentPricing, assertAgentCanBook } from "../lib/agent-program.js";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -64,6 +65,8 @@ const directBookSchema = z.object({
   totalFare:     z.number().positive(),
   currency:      z.enum(["INR", "AED", "USD"]).default("INR"),
   searchId:      z.string().uuid().optional(),   // links the booking to its search's TripJack logs
+  // Leadvyne Live Agency hand-off: the agency's FlyPoomas agent number (analytics only).
+  leadAgentNumber: z.string().max(20).optional(),
   // Review-first flow (round trip / multi-city / SSR / GST): the bookingId from
   // POST /api/book/review. The fareId is then only informational.
   reviewBookingId: z.string().min(5).optional(),
@@ -157,7 +160,13 @@ bookDirectRoutes.post("/review", zValidator("json", z.object({
       requestSummary: { priceIds, bookingId: summary.bookingId, tf: summary.totalFare, conditions: summary.conditions,
         fareIdentifiers: summary.fareIdentifiers, fareAlert: summary.fareAlert, ssrSegments: summary.segments.filter((s) => s.ssr.baggage.length || s.ssr.meal.length).length },
       durationMs: Date.now() - started }));
-    return c.json({ ...summary, expiresAt: new Date(Date.now() + ttl * 1000).toISOString(), requestId });
+    // Customer price incl. markup, for booking pages opened without a price in
+    // the link (e.g. WhatsApp / Leadvyne hand-offs).
+    const first = summary.segments[0], last = summary.segments[summary.segments.length - 1];
+    const displayTotal = summary.totalFare
+      ? await customerPrice(db, tenantId, summary.totalFare, { origin: first?.origin ?? "", destination: last?.destination ?? "", supplier: "TRIPJACK", airline: summary.airline ?? first?.airline ?? "" })
+      : undefined;
+    return c.json({ ...summary, displayTotal, expiresAt: new Date(Date.now() + ttl * 1000).toISOString(), requestId });
   } catch (err: any) {
     persistInBackground(c, persistExchanges(c.env, db, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
     runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
@@ -244,6 +253,11 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   const customerId = await optionalCustomerId(c);
   // B2B: an agency login books for its customers (paid from the agency wallet).
   const agent = customerId ? null : await optionalAgent(c);
+  // Customer sent by a Leadvyne Live Agency: tag the booking with the agency (no wallet / pricing effect).
+  const leadAgent = !agent && body.leadAgentNumber
+    ? await resolveAgentNumber(c.env, db, tenantId, body.leadAgentNumber).catch(() => null)
+    : null;
+  const leadAgentTag = leadAgent ? { leadAgent: { id: leadAgent.id, number: leadAgent.number } } : {};
   if (agent) {
     try {
       await assertAgentCanBook(c.env, db, tenantId, agent.agentId, {
@@ -444,6 +458,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         flightData:         {
           id: body.fareId,
           ...(body.searchId ? { searchId: body.searchId } : {}),
+          ...leadAgentTag,
           ...(agent && agentQuote ? { agentPricing: {
             agentUserId: agent.userId, companyPrice: companyFareAmount, net: agentQuote.net,
             selling: Math.round((agentQuote.selling + ssrAmount) * 100) / 100, shares: agentQuote.shares,
@@ -521,7 +536,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       const payLink = `${WEB_URL}/pay?${new URLSearchParams({ b: pendingBooking!.id, t: checkoutToken })}`;
       const route = `${body.origin.toUpperCase()} → ${body.destination.toUpperCase()}`;
       runInBackground(c, notifyCustomer(c.env, db, tenantId, {
-        email: body.contactEmail, phone: body.contactPhone,
+        email: body.contactEmail, phone: body.contactPhone, category: "booking",
         subject: `Fare on hold: ${route} — pay by ${holdLabel(hold.until)}`,
         html: emailShell("Your fare is on hold", `<p>${escapeHtml(route)} on ${escapeHtml(body.departureDate)} is held${hold.pnr ? ` (airline PNR <b>${escapeHtml(hold.pnr)}</b>)` : ""}.</p>
 <p>Pay <b>${escapeHtml(money(amount, body.currency))}</b> before <b>${escapeHtml(holdLabel(hold.until))} (IST)</b> to get your e-ticket. After that the airline releases the seats.</p>`, { label: "Pay now", href: payLink }),
@@ -626,7 +641,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     origin:             body.origin.toUpperCase(),
     destination:        body.destination.toUpperCase(),
     departureDate:      new Date(body.departureDate),
-    flightData:         { id: body.fareId, ...(body.searchId ? { searchId: body.searchId } : {}) },
+    flightData:         { id: body.fareId, ...(body.searchId ? { searchId: body.searchId } : {}), ...leadAgentTag },
     adultCount:         body.passengers.filter((p) => p.type === "ADULT").length,
     childCount:         body.passengers.filter((p) => p.type === "CHILD").length,
     infantCount:        body.passengers.filter((p) => p.type === "INFANT").length,

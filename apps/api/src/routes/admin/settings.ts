@@ -4,12 +4,23 @@
 // PUT  /api/admin/settings/whatsapp   — save Leadvyne config
 // GET  /api/admin/settings/eticket    — get e-ticket delivery config
 // PUT  /api/admin/settings/eticket    — save e-ticket delivery config
+// GET  /api/admin/settings/fx         — exchange rates: automatic, manual, effective
+// PUT  /api/admin/settings/fx         — save mode (auto/manual), margin %, manual rates
+// POST /api/admin/settings/fx/refresh — fetch live rates now
+// GET  /api/admin/settings/email      — Resend email settings (key masked) + status
+// PUT  /api/admin/settings/email      — save sender, reply-to, ops copy, optional API key
+// POST /api/admin/settings/email/test — send a test email
+// GET  /api/admin/settings/email/logs — recent emails (sent / failed / skipped)
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import type { Env, Variables } from "../../types.js";
 import { RAZORPAY_ENABLED } from "../../lib/payment-gateway.js";
+import { DEFAULT_EMAIL_SETTINGS, emailLayout, getEmailSettings, resendKey, saveEmailSettings, sendMail } from "../../lib/email.js";
+import { emailLogs } from "@poomas/db/schema";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { FOREIGN_CURRENCIES, getFx, getFxSettings, readAutoRates, refreshAutoRates, saveFxSettings, type FxSettings } from "../../lib/fx.js";
 
 export const settingsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -224,4 +235,101 @@ settingsAdminRoutes.put("/eticket", zValidator("json", eticketSchema), async (c)
   const tenantId = c.get("tenantId");
   await saveSettings(c.env, tenantId, "eticket", c.req.valid("json"));
   return c.json({ ok: true });
+});
+
+// ── Exchange rates (automatic exchange-rate tool) ─────────────────────────────
+
+async function fxOverview(c: any) {
+  const tenantId = c.get("tenantId");
+  const [settings, auto, fx] = await Promise.all([getFxSettings(c.env, tenantId), readAutoRates(c.env), getFx(c.env, tenantId)]);
+  return { settings, auto, effective: fx.rates, sources: fx.sources, currencies: FOREIGN_CURRENCIES };
+}
+
+settingsAdminRoutes.get("/fx", async (c) => c.json(await fxOverview(c)));
+
+const fxSchema = z.object({
+  mode:      z.enum(["auto", "manual"]),
+  marginPct: z.number().min(0).max(10),
+  manual:    z.record(z.string(), z.number().positive().max(1000).nullable()).default({}),
+});
+
+settingsAdminRoutes.put("/fx", zValidator("json", fxSchema), async (c) => {
+  const body = c.req.valid("json");
+  const manual: FxSettings["manual"] = {};
+  for (const cur of FOREIGN_CURRENCIES) {
+    const v = body.manual[cur];
+    if (v) manual[cur] = v;
+  }
+  await saveFxSettings(c.env, c.get("tenantId"), { mode: body.mode, marginPct: body.marginPct, manual });
+  return c.json({ ok: true, ...(await fxOverview(c)) });
+});
+
+// force: accept a move of more than 10% since the last rates (after checking it is real).
+settingsAdminRoutes.post("/fx/refresh", async (c) => {
+  const force = c.req.query("force") === "1";
+  const r = await refreshAutoRates(c.env, fetch, Date.now(), force);
+  return c.json({ ...r, ...(await fxOverview(c)) }, r.ok ? 200 : 502);
+});
+
+// ── Email (Resend) ────────────────────────────────────────────────────────────
+
+const maskKey = (k: string) => (k ? `${k.slice(0, 5)}${"•".repeat(Math.max(0, Math.min(16, k.length - 9)))}${k.slice(-4)}` : "");
+
+settingsAdminRoutes.get("/email", async (c) => {
+  const tenantId = c.get("tenantId");
+  const s = await getEmailSettings(c.env, tenantId);
+  const since = new Date(Date.now() - 7 * 86_400_000);
+  const [stats] = await c.get("db").select({
+    sent: sql<number>`count(*) filter (where ${emailLogs.status} = 'SENT')::int`,
+    failed: sql<number>`count(*) filter (where ${emailLogs.status} = 'FAILED')::int`,
+    skipped: sql<number>`count(*) filter (where ${emailLogs.status} = 'SKIPPED')::int`,
+  }).from(emailLogs).where(and(eq(emailLogs.tenantId, tenantId), gte(emailLogs.createdAt, since))).catch(() => [{ sent: 0, failed: 0, skipped: 0 }]);
+  return c.json({
+    settings: { ...s, apiKey: "" },
+    apiKeyMasked: maskKey(s.apiKey),
+    keySource: s.apiKey ? "admin" : c.env.RESEND_API_KEY ? "secret" : "none",
+    defaultFrom: c.env.EMAIL_FROM || "bookings@flypoomas.com",
+    last7Days: stats ?? { sent: 0, failed: 0, skipped: 0 },
+  });
+});
+
+settingsAdminRoutes.put("/email", zValidator("json", z.object({
+  enabled: z.boolean(),
+  apiKey: z.string().trim().max(200).optional(),         // empty = keep; "-" = remove
+  fromName: z.string().trim().min(1).max(60),
+  fromEmail: z.union([z.literal(""), z.string().trim().email()]),
+  replyTo: z.union([z.literal(""), z.string().trim().email()]),
+  bccOps: z.union([z.literal(""), z.string().trim().email()]),
+}), (r, c) => { if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the email settings" }, 400); }), async (c) => {
+  const tenantId = c.get("tenantId");
+  const b = c.req.valid("json");
+  const existing = await getEmailSettings(c.env, tenantId);
+  if (b.apiKey && b.apiKey !== "-" && !/^re_[A-Za-z0-9_]{10,}$/.test(b.apiKey)) return c.json({ error: "That doesn't look like a Resend API key (it starts with re_)." }, 400);
+  const apiKey = b.apiKey === "-" ? "" : b.apiKey || existing.apiKey;
+  await saveEmailSettings(c.env, tenantId, { ...DEFAULT_EMAIL_SETTINGS, ...b, apiKey });
+  return c.json({ ok: true });
+});
+
+settingsAdminRoutes.post("/email/test", zValidator("json", z.object({ to: z.string().trim().email() })), async (c) => {
+  const tenantId = c.get("tenantId");
+  const s = await getEmailSettings(c.env, tenantId);
+  if (!resendKey(c.env, s)) return c.json({ ok: false, error: "No Resend API key: add it here or set the RESEND_API_KEY secret on the API worker." }, 400);
+  const r = await sendMail(c.env, c.get("db"), tenantId, {
+    to: c.req.valid("json").to, category: "test", subject: "FlyPoomas test email",
+    html: emailLayout({
+      title: "Email is working ✅",
+      body: "<p>This test was sent from Admin → Settings → Email through Resend. Booking confirmations, password resets and other notifications use the same sender.</p>",
+      rows: [["Sent at", new Date().toUTCString()]],
+      cta: { label: "Open FlyPoomas", href: "https://flypoomas.com" },
+    }),
+  });
+  return c.json(r, r.ok ? 200 : 502);
+});
+
+settingsAdminRoutes.get("/email/logs", async (c) => {
+  const status = c.req.query("status");
+  const rows = await c.get("db").select().from(emailLogs)
+    .where(and(eq(emailLogs.tenantId, c.get("tenantId")), status ? eq(emailLogs.status, status) : undefined))
+    .orderBy(desc(emailLogs.createdAt)).limit(100);
+  return c.json({ logs: rows });
 });

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Pages anyone can open: sign-in, agency sign-up, invitations, shared quotes
 // (/q/…), agency mini-sites (/a/…) and PWA files.
-const PUBLIC_PATHS = ["/login", "/register", "/accept-invite", "/q/", "/a/", "/api", "/manifest.webmanifest", "/sw.js"];
+const PUBLIC_PATHS = ["/login", "/register", "/accept-invite", "/forgot-password", "/reset-password", "/q/", "/a/", "/api", "/manifest.webmanifest", "/sw.js"];
 
 export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";

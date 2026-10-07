@@ -8,6 +8,12 @@
 //                              saved travellers, quotes, offline ticket import.
 // Trips   /api/agent/trips/*   the My Trips routes, scoped to the agency tree.
 
+import { emailAgencyRegistered } from "../lib/transactional-emails.js";
+import { assignAgentNumber, resolveAgentNumber } from "../lib/agent-number.js";
+import { getBankAccounts, visibleAccounts } from "../lib/bank-accounts.js";
+import {
+  DOC_LABEL, DOC_TYPES, getOnboarding, onboardingStatus, printablePage, renderMou, sha256Hex, signatureBlock, type MouAcceptance,
+} from "../lib/agent-onboarding.js";
 import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -15,7 +21,7 @@ import { HTTPException } from "hono/http-exception";
 import { SignJWT } from "jose";
 import {
   agentDocuments, agentQuotes, agentRequestMessages, agentRequests, agentTravellers, agents, bookings, payments,
-  users, walletAccounts, walletTransactions, markupRules,
+  users, walletAccounts, walletTransactions, markupRules, tenants,
 } from "@poomas/db/schema";
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import type { Db } from "@poomas/db";
@@ -127,12 +133,83 @@ agentPublicRoutes.post("/register", zValidator("json", registerSchema, (r, c) =>
     settings: { ...(b.gstNumber ? { gstNumber: b.gstNumber.toUpperCase() } : {}), ...(b.address ? { address: b.address } : {}) },
   }).returning();
   await db.insert(walletAccounts).values({ tenantId, agentId: agent.id, currency: b.currency }).onConflictDoNothing();
+  await assignAgentNumber(db, tenantId, agent.id).catch((err) => console.error("[agent-number]", err));
+  c.executionCtx.waitUntil(emailAgencyRegistered(c.env, db, { id: agent.id, tenantId, email: agent.email, businessName: agent.businessName, ownerName: agent.ownerName }).catch(() => {}));
   const [user] = await db.insert(users).values({
     tenantId, name: b.ownerName, email: b.email, phone: b.phone, passwordHash: await pbkdf2HashPassword(b.password),
     role: "AGENT_ADMIN", agentId: agent.id, isActive: true, emailVerified: false,
   }).returning();
   await audit(db, { tenantId, userId: user.id, action: "AGENT_REGISTERED", entity: "Agent", entityId: agent.id, after: { businessName: agent.businessName }, ip: ip(c) });
   return c.json({ ...(await issueStaffToken(c.env, db, { id: user.id, tenantId, role: user.role, agentId: agent.id })), agentId: agent.id, status: agent.status }, 201);
+});
+
+// Leadvyne Live Agency onboarding form: confirm an agent number and show the agency's currency.
+agentPublicRoutes.get("/agent-number/:number", async (c) => {
+  if (await rateLimited(c, "agentno", 60)) return c.json({ error: "Too many checks. Try again later." }, 429);
+  const agent = await resolveAgentNumber(c.env, c.get("db"), c.get("tenantId"), c.req.param("number"));
+  if (!agent || agent.status !== "APPROVED") return c.json({ valid: false }, 404);
+  return c.json({ valid: true, agentNumber: agent.number, businessName: agent.businessName, currency: agent.currency });
+});
+
+// ── Password reset (agency logins) ────────────────────────────────────────────
+// Always answers the same way so the form can't be used to find which emails exist.
+const RESET_TTL = 60 * 60;
+export async function sendAgentPasswordReset(env: Env, db: Db, tenantId: string, userId: string, email: string, name: string | null) {
+  const token = randomToken();
+  await env.SESSIONS_KV.put(`agent_pwreset:${token}`, JSON.stringify({ tenantId, userId }), { expirationTtl: RESET_TTL });
+  const link = `${portalUrl(env)}/reset-password?token=${token}`;
+  await notifyCustomer(env, db, tenantId, {
+    email, category: "auth", subject: "Reset your FlyPoomas agent portal password",
+    html: emailShell("Reset your password", `<p>Hi ${escapeHtml(name || "there")}, use the button below to choose a new password for the FlyPoomas agent portal. The link works for 1 hour. If you didn't ask for this, ignore this email.</p>`, { label: "Choose a new password", href: link }),
+    whatsapp: "",
+  });
+  return link;
+}
+
+agentPublicRoutes.post("/password/forgot", zValidator("json", z.object({ email: z.string().trim().toLowerCase().email() })), async (c) => {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  if (await rateLimited(c, "pwforgot", 10)) return c.json({ error: "Too many requests. Try again in an hour." }, 429);
+  const { email } = c.req.valid("json");
+  const reply = c.json({ ok: true, message: "If this email has an agency login, we've sent a reset link. Check your inbox (and spam)." });
+  const [u] = await db.select({ id: users.id, name: users.name, role: users.role, isActive: users.isActive }).from(users)
+    .where(and(eq(users.tenantId, tenantId), sql`lower(${users.email}) = ${email}`)).limit(1);
+  if (u) {
+    if (u.isActive && (AGENT_ROLES as readonly string[]).includes(u.role)) {
+      c.executionCtx.waitUntil(sendAgentPasswordReset(c.env, db, tenantId, u.id, email, u.name).catch((err) => console.error("[pw-reset]", err)));
+    }
+    return reply;
+  }
+  // An agency created by FlyPoomas that never set up its login: send a fresh invitation.
+  const [a] = await db.select({ id: agents.id, businessName: agents.businessName, ownerName: agents.ownerName, status: agents.status }).from(agents)
+    .where(and(eq(agents.tenantId, tenantId), eq(agents.email, email))).limit(1);
+  if (a && a.status !== "REJECTED") {
+    c.executionCtx.waitUntil(createInvite(c.env, db, { tenantId, agentId: a.id, email, name: a.ownerName, role: "AGENT_ADMIN", invitedBy: null }, a.businessName).catch((err) => console.error("[pw-invite]", err)));
+  }
+  return reply;
+});
+
+agentPublicRoutes.get("/password/reset/:token", async (c) => {
+  const t = await c.env.SESSIONS_KV.get(`agent_pwreset:${c.req.param("token")}`, "json") as { tenantId: string; userId: string } | null;
+  if (!t || t.tenantId !== c.get("tenantId")) return c.json({ error: "This reset link has expired. Ask for a new one." }, 404);
+  const [u] = await c.get("db").select({ email: users.email }).from(users).where(eq(users.id, t.userId)).limit(1);
+  return c.json({ email: u?.email ?? "" });
+});
+
+agentPublicRoutes.post("/password/reset/:token", zValidator("json", z.object({ password: z.string().min(8, "Use at least 8 characters").max(200) }), (r, c) => {
+  if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Choose a stronger password" }, 400);
+}), async (c) => {
+  const db = c.get("db");
+  const k = `agent_pwreset:${c.req.param("token")}`;
+  const t = await c.env.SESSIONS_KV.get(k, "json") as { tenantId: string; userId: string } | null;
+  if (!t || t.tenantId !== c.get("tenantId")) return c.json({ error: "This reset link has expired. Ask for a new one." }, 404);
+  await c.env.SESSIONS_KV.delete(k);   // one use only
+  const [u] = await db.update(users).set({ passwordHash: await pbkdf2HashPassword(c.req.valid("json").password), emailVerified: true, updatedAt: new Date() })
+    .where(and(eq(users.id, t.userId), eq(users.tenantId, t.tenantId))).returning({ id: users.id, email: users.email, agentId: users.agentId });
+  if (!u) return c.json({ error: "This login no longer exists." }, 404);
+  await c.env.SESSIONS_KV.delete(`session:${u.id}`).catch(() => {});
+  await audit(db, { tenantId: t.tenantId, userId: u.id, action: "AGENT_PASSWORD_RESET", entity: "User", entityId: u.id, after: { via: "email link" }, ip: ip(c) });
+  return c.json({ ok: true, email: u.email });
 });
 
 interface Invite { tenantId: string; agentId: string; email: string; name: string; role: (typeof AGENT_ROLES)[number]; invitedBy: string | null }
@@ -235,7 +312,7 @@ agentPublicRoutes.post("/site/:slug/lead", zValidator("json", z.object({
     tenantId, agentId: a.id, type: "LEAD", status: "OPEN", title, details: { ...b, source: "mini-site" },
   }).returning({ id: agentRequests.id });
   c.executionCtx.waitUntil(notifyCustomer(c.env, db, tenantId, {
-    email: a.email, phone: a.whatsapp ?? a.phone,
+    email: a.email, phone: a.whatsapp ?? a.phone, category: "agency",
     subject: `New customer enquiry — ${b.name}`,
     html: emailShell("New enquiry from your FlyPoomas page", `<p><b>${escapeHtml(b.name)}</b> (${escapeHtml(b.phone)}) — ${escapeHtml(title)}</p>${b.message ? `<p>${escapeHtml(b.message)}</p>` : ""}`, { label: "Open in portal", href: `${portalUrl(c.env)}/requests/${r.id}` }),
     whatsapp: `🛎 *New enquiry* — ${b.name} (${b.phone})\n${title}${b.message ? `\n${b.message}` : ""}\nPortal: ${portalUrl(c.env)}/requests/${r.id}`,
@@ -277,15 +354,17 @@ agentPortalRoutes.get("/me", async (c) => {
     a.parentAgentId ? db.select({ businessName: agents.businessName }).from(agents).where(eq(agents.id, a.parentAgentId)).limit(1).then((r) => r[0] ?? null) : null,
     db.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, c.get("userId")!)).limit(1).then((r) => r[0] ?? null),
   ]);
+  const onboarding = await onboardingStatus(c.env, db, tenantId, a).catch(() => null);
   return c.json({
     agent: {
       id: a.id, businessName: a.businessName, ownerName: a.ownerName, email: a.email, phone: a.phone, whatsapp: a.whatsapp,
       region: a.region, currency: a.currency, status: a.status, iataCode: a.iataCode, parentAgentId: a.parentAgentId,
-      parentName: parent?.businessName ?? null, createdAt: a.createdAt,
+      parentName: parent?.businessName ?? null, createdAt: a.createdAt, agentNumber: a.agentNumber,
     },
     settings: { ...s, logoUrl: logoUrl(a.id, s) },
     user: { id: c.get("userId"), role: c.get("userRole"), name: user?.name ?? "", email: user?.email ?? "" },
     credit: creditStatus(wallet, s, program),
+    onboarding,
     tier,
     program: { creditDays: program.creditDays, tiers: program.tiers },
   });
@@ -378,7 +457,7 @@ agentPortalRoutes.get("/dashboard", async (c) => {
   const commissionRows = await db.select({ total: sql<string>`coalesce(sum(${walletTransactions.amount}),0)` }).from(walletTransactions)
     .where(and(eq(walletTransactions.walletAccountId, wallet?.id ?? "-"), eq(walletTransactions.type, "COMMISSION_CREDIT"), gte(walletTransactions.createdAt, monthStart)));
   return c.json({
-    agent: { businessName: a.businessName, status: a.status, currency: a.currency },
+    agent: { businessName: a.businessName, status: a.status, currency: a.currency, agentNumber: a.agentNumber },
     credit: creditStatus(wallet, settingsOf(a), program),
     tier,
     today: { bookings: todayRows[0]?.n ?? 0, value: Number(todayRows[0]?.total ?? 0) },
@@ -403,7 +482,7 @@ export async function createInvite(env: Env, db: Db, inv: Invite, businessName: 
   await env.SESSIONS_KV.put(`agent_invite:${token}`, JSON.stringify(inv), { expirationTtl: 7 * 86_400 });
   const link = `${portalUrl(env)}/accept-invite?token=${token}`;
   await notifyCustomer(env, db, inv.tenantId, {
-    email: inv.email, subject: `You're invited to ${businessName} on FlyPoomas`,
+    email: inv.email, category: "auth", subject: `You're invited to ${businessName} on FlyPoomas`,
     html: emailShell(`Join ${businessName} on FlyPoomas`, `<p>Hi ${escapeHtml(inv.name)}, you've been invited as <b>${inv.role.replace("AGENT_", "").toLowerCase()}</b>. Set your password to start booking. The link works for 7 days.</p>`, { label: "Accept invitation", href: link }),
     whatsapp: "",
   });
@@ -665,23 +744,54 @@ agentPortalRoutes.post("/requests/upload", async (c) => {
   return c.json({ request: r }, 201);
 });
 
-// Bank transfer / cash deposit with a receipt; credited when staff approve it.
+// Company bank accounts the agency can pay into (Admin → Wallet recharges → Bank accounts).
+agentPortalRoutes.get("/wallet/bank-accounts", async (c) => {
+  const tenantId = c.get("tenantId");
+  const wallet = await agentWallet(c.get("db"), tenantId, c.get("agentId")!);
+  const settings = await c.env.TENANT_CACHE_KV.get(`admin_settings:${tenantId}:payments`, "json").catch(() => null) as { nomod?: { enabled?: boolean } } | null;
+  return c.json({
+    walletCurrency: wallet?.currency ?? null,
+    onlineTopup: Boolean(settings?.nomod?.enabled),
+    accounts: visibleAccounts(await getBankAccounts(c.env, tenantId), wallet?.currency ?? ""),
+  });
+});
+
+// Bank transfer / cash deposit with a payment screenshot; credited once when staff approve it.
 agentPortalRoutes.post("/deposits", async (c) => {
   requireMoney(c);
   const { form, files } = await filesFrom(c, "receipt");
   const amount = Number(form.get("amount"));
   const method = String(form.get("method") ?? "BANK_TRANSFER").slice(0, 30);
   const reference = String(form.get("reference") ?? "").trim().slice(0, 80);
+  const bankAccountId = String(form.get("bankAccountId") ?? "").trim();
   if (!(amount > 0) || amount > 10_000_000) return c.json({ error: "Enter the amount you paid" }, 400);
-  if (!reference && !files.length) return c.json({ error: "Add the transfer reference or a receipt" }, 400);
+  if (!files.length) return c.json({ error: "Upload the payment screenshot or receipt" }, 400);
+  const bad = files.find((f) => !/^(image\/|application\/pdf$)/.test(f.type) || f.size > 8 * 1024 * 1024);
+  if (bad) return c.json({ error: "The receipt must be a photo, screenshot or PDF under 8 MB" }, 400);
+  const tenantId = c.get("tenantId");
+  const accounts = (await getBankAccounts(c.env, tenantId)).filter((x) => x.active);
+  const bank = bankAccountId ? accounts.find((x) => x.id === bankAccountId) : null;
+  if (bankAccountId && !bank) return c.json({ error: "Choose one of the listed bank accounts" }, 400);
+  if (method === "BANK_TRANSFER" && accounts.length && !bank) return c.json({ error: "Choose the bank account you paid into" }, 400);
   const a = await me(c);
+  // The same transfer reference can't be credited twice.
+  if (reference) {
+    const [dup] = await c.get("db").select({ id: agentRequests.id, status: agentRequests.status }).from(agentRequests)
+      .where(and(eq(agentRequests.agentId, a.id), eq(agentRequests.type, "DEPOSIT"), sql`lower(${agentRequests.details}->>'reference') = ${reference.toLowerCase()}`,
+        inArray(agentRequests.status, ["OPEN", "IN_PROGRESS", "APPROVED"]))).limit(1);
+    if (dup) return c.json({ error: `A deposit with reference ${reference} was already submitted (${dup.status.toLowerCase().replace("_", " ")}).` }, 409);
+  }
   const attachments = [];
   for (const f of files) attachments.push(await saveUpload(c.env, `agent-deposits/${a.id}`, f));
   const r = await createRequest(c, {
     type: "DEPOSIT", title: `Deposit ${money(amount, a.currency)} · ${method.replace("_", " ").toLowerCase()}`,
-    details: { method, reference, paidOn: String(form.get("paidOn") ?? "").slice(0, 10) || null }, amount, currency: a.currency, attachments,
+    details: {
+      method, reference, paidOn: String(form.get("paidOn") ?? "").slice(0, 10) || null,
+      ...(bank ? { bankAccountId: bank.id, bankAccount: { label: bank.label, bankName: bank.bankName, accountNumber: bank.accountNumber, currency: bank.currency } } : {}),
+    },
+    amount, currency: a.currency, attachments,
   });
-  return c.json({ request: r, message: "Deposit submitted. It's added to your wallet once our team confirms the payment." }, 201);
+  return c.json({ request: r, message: "Deposit submitted. It's added to your wallet once our team checks the payment." }, 201);
 });
 
 async function ownRequest(c: Ctx, id: string) {
@@ -735,13 +845,12 @@ agentPortalRoutes.get("/requests/:id/file", async (c) => {
 
 // ── KYC documents ────────────────────────────────────────────────────────────
 
-const DOC_TYPES = ["GST_CERTIFICATE", "PAN", "TRADE_LICENSE", "EMIRATES_ID", "AADHAAR", "IATA_CERT", "BANK_PROOF", "OTHER"] as const;
 
 agentPortalRoutes.get("/documents", async (c) => {
   const rows = await c.get("db").select({ id: agentDocuments.id, docType: agentDocuments.docType, fileName: agentDocuments.fileName, mimeType: agentDocuments.mimeType,
     uploadedAt: agentDocuments.uploadedAt, verifiedAt: agentDocuments.verifiedAt })
     .from(agentDocuments).where(eq(agentDocuments.agentId, c.get("agentId")!)).orderBy(desc(agentDocuments.uploadedAt));
-  return c.json({ documents: rows, types: DOC_TYPES });
+  return c.json({ documents: rows, types: DOC_TYPES, labels: DOC_LABEL });
 });
 
 agentPortalRoutes.post("/documents", async (c) => {
@@ -764,6 +873,84 @@ agentPortalRoutes.delete("/documents/:id", async (c) => {
   if (!d) return c.json({ error: "Only unverified documents can be removed" }, 409);
   c.executionCtx.waitUntil(c.env.DOCUMENTS_R2.delete(d.fileUrl).catch(() => {}));
   return c.json({ ok: true });
+});
+
+// ── Onboarding: required KYC + MOU ───────────────────────────────────────────
+
+agentPortalRoutes.get("/onboarding", async (c) => {
+  const a = await me(c);
+  return c.json(await onboardingStatus(c.env, c.get("db"), c.get("tenantId"), a));
+});
+
+async function mouContext(c: Ctx) {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const a = await me(c);
+  const [cfg, program, [t]] = await Promise.all([
+    getOnboarding(c.env, tenantId), getProgram(c.env, tenantId),
+    db.select({ name: tenants.name, companyName: tenants.companyName, supportEmail: tenants.supportEmail, supportPhone: tenants.supportPhone }).from(tenants).where(eq(tenants.id, tenantId)).limit(1),
+  ]);
+  return { a, cfg, program, tenant: t ?? { name: "FlyPoomas" } };
+}
+
+// The MOU to review (generated from the agency's details), or the signed copy.
+agentPortalRoutes.get("/mou", async (c) => {
+  const { a, cfg, program, tenant } = await mouContext(c);
+  const signed = (settingsOf(a) as { mou?: MouAcceptance }).mou;
+  if (signed && signed.version === cfg.mouVersion) {
+    const obj = await c.env.DOCUMENTS_R2.get(signed.r2Key).catch(() => null);
+    if (obj) return c.json({ accepted: true, acceptance: { ...signed, ip: undefined, userAgent: undefined }, html: await new Response(obj.body as unknown as BodyInit).text(), version: signed.version });
+  }
+  const m = renderMou({ cfg, tenant, agent: a, program });
+  return c.json({ accepted: false, html: m.html, ref: m.ref, version: cfg.mouVersion, hash: await sha256Hex(m.html) });
+});
+
+agentPortalRoutes.post("/mou/accept", zValidator("json", z.object({
+  name: z.string().trim().min(3).max(100), designation: z.string().trim().min(2).max(80), agree: z.literal(true), hash: z.string().length(64),
+}), (r, c) => {
+  if (!r.success) return c.json({ error: "Type your full name and designation, and tick the box to accept" }, 400);
+}), async (c) => {
+  requireAdmin(c);
+  const b = c.req.valid("json");
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const { a, cfg, program, tenant } = await mouContext(c);
+  const existing = (settingsOf(a) as { mou?: MouAcceptance }).mou;
+  if (existing && existing.version === cfg.mouVersion) return c.json({ error: "The MOU is already signed." }, 409);
+  const m = renderMou({ cfg, tenant, agent: a, program });
+  const hash = await sha256Hex(m.html);
+  // The agency must accept exactly what it was shown.
+  if (hash !== b.hash) return c.json({ error: "Your details changed while the MOU was open. Please review the updated MOU and accept again.", errorCode: "MOU_CHANGED" }, 409);
+  const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, c.get("userId")!)).limit(1);
+  const acceptedAt = new Date().toISOString();
+  const r2Key = `agent-mou/${a.id}/v${cfg.mouVersion}-${acceptedAt.replace(/[:.]/g, "")}.html`;
+  const acceptance: MouAcceptance = {
+    version: cfg.mouVersion, acceptedAt, name: b.name, designation: b.designation, userId: c.get("userId") ?? null, email: u?.email ?? null,
+    ip: ip(c), userAgent: c.req.header("user-agent")?.slice(0, 200) ?? null, hash, r2Key,
+  };
+  const frozen = m.html + signatureBlock({ company: m.company, cfg, acceptance, agentName: a.businessName });
+  await c.env.DOCUMENTS_R2.put(r2Key, frozen, { httpMetadata: { contentType: "text/html; charset=utf-8" } });
+  await updateSettings(db, a.id, { mou: acceptance });
+  await audit(db, { tenantId, userId: c.get("userId"), action: "AGENT_MOU_ACCEPTED", entity: "Agent", entityId: a.id, after: { version: cfg.mouVersion, name: b.name, designation: b.designation, hash }, ip: ip(c) });
+  c.executionCtx.waitUntil(notifyCustomer(c.env, db, tenantId, {
+    email: a.email, category: "agency", subject: `Your FlyPoomas MOU (${m.ref})`,
+    html: emailShell("MOU signed", `<p>Thank you, ${escapeHtml(b.name)}. ${escapeHtml(a.businessName)}'s Memorandum of Understanding with FlyPoomas was accepted on ${escapeHtml(new Date(acceptedAt).toUTCString())}. A copy is below and in the agent portal under Profile, branding &amp; KYC.</p><hr>${frozen}`),
+    whatsapp: "",
+  }).catch(() => {}));
+  return c.json({ ok: true, acceptedAt });
+});
+
+// Printable signed (or draft) MOU as a full HTML page.
+agentPortalRoutes.get("/mou/print", async (c) => {
+  const { a, cfg, program, tenant } = await mouContext(c);
+  const signed = (settingsOf(a) as { mou?: MouAcceptance }).mou;
+  let body = "";
+  if (signed) {
+    const obj = await c.env.DOCUMENTS_R2.get(signed.r2Key).catch(() => null);
+    if (obj) body = await new Response(obj.body as unknown as BodyInit).text();
+  }
+  if (!body) body = renderMou({ cfg, tenant, agent: a, program }).html + `<p style="font-family:Arial;color:#b42318;text-align:center">Draft — not yet accepted</p>`;
+  return new Response(printablePage(`MOU · ${a.businessName}`, body), { headers: { "Content-Type": "text/html; charset=utf-8" } });
 });
 
 // ── Saved travellers ─────────────────────────────────────────────────────────

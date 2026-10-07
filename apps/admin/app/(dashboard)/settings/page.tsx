@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { API, apiHeaders } from "../../../lib/api";
+import EmailSettings from "./EmailSettings";
 
 /* ── Small shared UI ────────────────────────────────────────────── */
 function Section({ color, title, badge, children }: {
@@ -160,14 +161,14 @@ function PaymentSettings() {
                 </div>
               </div>
               <div style={{ gridColumn: "span 2" }}>
-                <Label>AED payment rate (INR per 1 AED)</Label>
+                <Label>Manual AED rate — fallback (INR per 1 AED)</Label>
                 <input type="number" min="1" step="0.0001" placeholder="e.g. 23.95 — leave empty to accept INR only"
                   value={s.nomod.aedRate ?? ""}
                   onChange={(e) => setS((p) => ({ ...p, nomod: { ...p.nomod, aedRate: e.target.value === "" ? null : Number(e.target.value) } }))}
                   style={inputStyle} />
                 <Hint>
-                  TripJack fares are in INR. Customers who choose AED pay the INR price ÷ this rate (rounded up), charged in AED on Nomod.
-                  Include any FX margin in the rate. Leave empty to disable AED payment.
+                  AED prices now use the automatic exchange rate (see Exchange Rates below). This manual rate is used only when
+                  live rates are unavailable, or in manual mode.
                   {s.nomod.aedRate ? ` Example: ₹10,000 → AED ${(Math.ceil((10000 / s.nomod.aedRate) * 100) / 100).toFixed(2)}.` : ""}
                 </Hint>
               </div>
@@ -197,6 +198,116 @@ function PaymentSettings() {
           {saving ? "Saving…" : "Save Payment Settings"}
         </button>
         {saved && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Saved</span>}
+      </div>
+    </form>
+  );
+}
+
+/* ── Exchange rates (automatic exchange-rate tool) ─────────────── */
+const FX_NAMES: Record<string, string> = { AED: "UAE dirham", SAR: "Saudi riyal", QAR: "Qatari riyal", OMR: "Omani rial", KWD: "Kuwaiti dinar", BHD: "Bahraini dinar", USD: "US dollar" };
+type FxOverview = {
+  settings: { mode: "auto" | "manual"; marginPct: number; manual: Record<string, number> };
+  auto: { inrPer: Record<string, number>; source: string; fetchedAt: string } | null;
+  effective: Record<string, number | null>;
+  sources: Record<string, "auto" | "manual" | null>;
+  currencies: string[];
+};
+
+function ExchangeRateSettings() {
+  const [d, setD] = useState<FxOverview | null>(null);
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
+  const [margin, setMargin] = useState("0");
+  const [manual, setManual] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<"" | "save" | "refresh">("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  function apply(o: FxOverview) {
+    setD(o); setMode(o.settings.mode); setMargin(String(o.settings.marginPct));
+    setManual(Object.fromEntries(o.currencies.map((c) => [c, o.settings.manual[c] ? String(o.settings.manual[c]) : ""])));
+  }
+  useEffect(() => {
+    fetch(`${API}/api/admin/settings/fx`, { headers: apiHeaders() }).then((r) => r.json()).then(apply).catch(() => setError("Could not load exchange rates"));
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy("save"); setError(""); setMsg("");
+    try {
+      const body = { mode, marginPct: Number(margin) || 0, manual: Object.fromEntries(Object.entries(manual).map(([c, v]) => [c, v === "" ? null : Number(v)])) };
+      const res = await fetch(`${API}/api/admin/settings/fx`, { method: "PUT", headers: apiHeaders(), body: JSON.stringify(body) });
+      const out = await res.json();
+      if (!res.ok) throw new Error("Save failed — margin must be 0–10%, rates positive");
+      apply(out); setMsg("Saved. New prices apply to the next search.");
+    } catch (err: any) { setError(err.message); } finally { setBusy(""); }
+  }
+
+  async function refresh(force = false) {
+    setBusy("refresh"); setError(""); setMsg("");
+    try {
+      const res = await fetch(`${API}/api/admin/settings/fx/refresh${force ? "?force=1" : ""}`, { method: "POST", headers: apiHeaders() });
+      const out = await res.json();
+      apply(out);
+      if (!out.ok) throw new Error(`Live rates not updated: ${out.error ?? "feeds unavailable"}`);
+      setMsg(`Live rates updated from ${out.rates.source}.`);
+    } catch (err: any) { setError(err.message); } finally { setBusy(""); }
+  }
+
+  if (!d) return error ? <ErrorBanner>{error}</ErrorBanner> : <div style={{ color: "#64748b", fontSize: 13 }}>Loading…</div>;
+  const age = d.auto ? Math.round((Date.now() - Date.parse(d.auto.fetchedAt)) / 60000) : null;
+  const ageText = age === null ? "never" : age < 60 ? `${age} min ago` : age < 2880 ? `${Math.round(age / 60)} h ago` : `${Math.round(age / 1440)} days ago`;
+  const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", color: "#94a3b8", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", borderBottom: "1px solid #334155" };
+  const td: React.CSSProperties = { padding: "8px 10px", color: "#e2e8f0", fontSize: 13, borderBottom: "1px solid #1e293b" };
+
+  return (
+    <form onSubmit={save}>
+      <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: 8, background: "rgba(14,165,233,.12)", border: "1px solid #0369a1", color: "#bae6fd", fontSize: 13 }}>
+        Live market rates are fetched automatically every few hours and used for prices shown in AED, SAR, QAR, OMR, KWD, BHD and USD, and for AED payments.
+        Last update: <b>{ageText}</b>{d.auto ? ` · ${d.auto.source}` : ""}.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div>
+          <Label>Rate source</Label>
+          <select value={mode} onChange={(e) => setMode(e.target.value as "auto" | "manual")} style={inputStyle}>
+            <option value="auto">Automatic (live rates) — manual rates as fallback</option>
+            <option value="manual">Manual rates — live rates where none is set</option>
+          </select>
+        </div>
+        <div>
+          <Label>FX margin on live rates (%)</Label>
+          <input type="number" min="0" max="10" step="0.1" value={margin} onChange={(e) => setMargin(e.target.value)} style={inputStyle} />
+          <Hint>Customers paying in another currency pay this much more than the market rate (0–10%).</Hint>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr><th style={th}>Currency</th><th style={th}>Live (₹ per 1)</th><th style={th}>Manual (₹ per 1)</th><th style={th}>In use</th></tr></thead>
+          <tbody>
+            {d.currencies.map((c) => (
+              <tr key={c}>
+                <td style={td}><b>{c}</b> <span style={{ color: "#64748b", fontSize: 12 }}>{FX_NAMES[c] ?? ""}</span></td>
+                <td style={td}>{d.auto?.inrPer[c] ? `₹${d.auto.inrPer[c].toFixed(4)}` : "—"}</td>
+                <td style={td}>
+                  <input type="number" min="0" step="0.0001" placeholder="optional" value={manual[c] ?? ""}
+                    onChange={(e) => setManual((m) => ({ ...m, [c]: e.target.value }))} style={{ ...inputStyle, padding: "6px 10px", maxWidth: 140 }} />
+                </td>
+                <td style={td}>
+                  {d.effective[c] ? <>₹{d.effective[c]!.toFixed(4)} <span style={{ fontSize: 11, fontWeight: 700, color: d.sources[c] === "auto" ? "#38bdf8" : "#fbbf24" }}>{d.sources[c] === "auto" ? "LIVE" : "MANUAL"}</span></> : <span style={{ color: "#f87171" }}>Not offered</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {error && <div style={{ marginTop: 12 }}><ErrorBanner>{error}</ErrorBanner></div>}
+      {msg && <div style={{ marginTop: 12, color: "#4ade80", fontSize: 13 }}>{msg}</div>}
+      <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        <button type="submit" disabled={!!busy} style={saveBtn(busy === "save")}>{busy === "save" ? "Saving…" : "Save exchange rates"}</button>
+        <button type="button" disabled={!!busy} onClick={() => refresh()} style={{ ...saveBtn(busy === "refresh"), background: "#0284c7" }}>{busy === "refresh" ? "Updating…" : "Update live rates now"}</button>
+        {error.includes("sanity") && (
+          <button type="button" disabled={!!busy} onClick={() => { if (confirm("Accept live rates even though they moved more than 10% since the last update?")) void refresh(true); }}
+            style={{ ...saveBtn(false), background: "#475569" }}>Accept big move</button>
+        )}
       </div>
     </form>
   );
@@ -479,6 +590,14 @@ export default function SettingsPage() {
 
       <Section color="#E31E24" title="Payment Gateways" badge="NoMod">
         <PaymentSettings />
+      </Section>
+
+      <Section color="#0EA5E9" title="Exchange Rates" badge="Auto · GCC + USD">
+        <ExchangeRateSettings />
+      </Section>
+
+      <Section color="#F59E0B" title="Email" badge="Resend">
+        <EmailSettings />
       </Section>
 
       <Section color="#25D366" title="WhatsApp Messaging" badge="Leadvyne · WABA">

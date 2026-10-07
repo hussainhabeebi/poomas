@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function AdminLoginPage() {
@@ -8,6 +8,11 @@ export default function AdminLoginPage() {
   const [pass, setPass]     = useState("");
   const [error, setError]   = useState("");
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("ready")) setReady(true);
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -23,7 +28,11 @@ export default function AdminLoginPage() {
       });
 
       if (res.ok) {
-        const { token } = await res.json() as { token: string };
+        const { token, role } = await res.json() as { token: string; role?: string };
+        if (!["SUPER_ADMIN", "TENANT_ADMIN", "STAFF"].includes(role ?? "")) {
+          setError("This login doesn't have admin access. Agencies sign in at the agent portal.");
+          return;
+        }
         document.cookie = `poomas_admin_token=${token}; Path=/; SameSite=Lax; Secure`;
         router.push("/dashboard");
       } else {
@@ -50,9 +59,14 @@ export default function AdminLoginPage() {
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="POOMAS Traveldays" height={36} style={{ display: "inline-block" }} />
-          <div style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>Super Admin</div>
+          <div style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>Admin panel</div>
         </div>
 
+        {ready && !error && (
+          <div style={{ background: "rgba(34,197,94,.12)", color: "#86efac", padding: "10px 14px", borderRadius: 6, marginBottom: 20, fontSize: 14 }}>
+            Password saved — sign in with your email and new password.
+          </div>
+        )}
         {error && (
           <div style={{
             background: "#450a0a", color: "#fca5a5", padding: "10px 14px",
@@ -84,6 +98,7 @@ export default function AdminLoginPage() {
           >
             {loading ? "Signing in…" : "Sign In"}
           </button>
+          <a href={`/forgot-password${email ? `?email=${encodeURIComponent(email.trim())}` : ""}`} style={{ color: "#93c5fd", fontSize: 13, textAlign: "center" }}>Forgot password?</a>
         </form>
       </div>
     </div>

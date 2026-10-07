@@ -1,5 +1,5 @@
 import {
-  pgTable, text, boolean, timestamp, uniqueIndex,
+  pgTable, text, boolean, timestamp, uniqueIndex, jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenant.js";
@@ -20,6 +20,9 @@ export const users = pgTable("users", {
 
   // Staff linked to an agent account
   agentId:      text("agent_id"),   // FK to agents.id — set after agents table created
+
+  // Admin panel staff (role STAFF): sections they may open, e.g. ["bookings", "support"].
+  adminPermissions: jsonb("admin_permissions").$type<string[]>().notNull().default([]),
 
   // Auth
   emailVerified:    boolean("email_verified").notNull().default(false),

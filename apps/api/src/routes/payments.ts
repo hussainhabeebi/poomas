@@ -47,7 +47,7 @@ paymentRoutes.get("/config", async (c) => {
   const preferred = settings?.defaultGateway === "NOMOD" && nomodConfigured
     ? "NOMOD"
     : razorpayConfigured ? "RAZORPAY" : nomodConfigured ? "NOMOD" : null;
-  const aedRate = await getAedRate(c.env, tenantId);
+  const aedRate = await getAedRate(c.env, tenantId, c.executionCtx);
   return c.json({
     defaultGateway: preferred, gateways: { RAZORPAY: razorpayConfigured, NOMOD: nomodConfigured },
     // Card payments can be made in INR, or in AED at the admin-set rate (INR per 1 AED).
@@ -99,7 +99,7 @@ paymentRoutes.post("/checkout", zValidator("json", checkoutSchema), async (c) =>
   // Charge in the customer's chosen currency: convert the booking amount (the
   // booking itself stays in its own currency). Never send one currency's amount
   // labelled as another.
-  const aedRate    = cur === booking.currency ? null : await getAedRate(c.env, tenantId);
+  const aedRate    = cur === booking.currency ? null : await getAedRate(c.env, tenantId, c.executionCtx);
   const converted  = convertAmount(parseFloat(booking.totalAmount), booking.currency, cur, aedRate);
   if (converted === null) {
     throw new HTTPException(400, { message: `Payment in ${cur} isn't available for this booking. Please pay in ${booking.currency}.` });

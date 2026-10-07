@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { apiCall, readCustomerToken } from "../lib/customer-api";
+import { CURRENCY_EVENT, isPrefCurrency, readPrefCurrency, savePrefCurrency, syncAccountCurrency, type PrefCurrency } from "../lib/currency-pref";
+import { CURRENCY_LIST } from "../lib/fx";
 
 function flightSearchUrl() {
   // Match the existing popular-route search date rule without a dated link that expires.
@@ -17,7 +19,31 @@ function flightSearchUrl() {
 
 export default function SiteNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const [accountName, setAccountName] = useState("");
+  // One currency for the whole visit; a signed-in customer's saved choice follows their login.
+  const [currency, setCurrency] = useState<PrefCurrency>("INR");
+  useEffect(() => {
+    const c = readPrefCurrency(); if (c) setCurrency(c);
+    const onChange = (e: Event) => { const code = (e as CustomEvent).detail; if (isPrefCurrency(code)) setCurrency(code); };
+    window.addEventListener(CURRENCY_EVENT, onChange);
+    return () => window.removeEventListener(CURRENCY_EVENT, onChange);
+  }, []);
+  useEffect(() => {
+    const before = readPrefCurrency();
+    void syncAccountCurrency().then(() => {
+      const after = readPrefCurrency();
+      if (after && after !== before && (pathname === "/search" || pathname.startsWith("/search/"))) router.refresh();
+    });
+  }, [pathname, accountName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function changeCurrency(code: PrefCurrency) {
+    setCurrency(code);
+    savePrefCurrency(code);
+    // Server-rendered results read the saved currency: show them again in the new one.
+    if (pathname === "/search") router.refresh();
+    else if (pathname.startsWith("/search/")) window.location.reload();
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +106,12 @@ export default function SiteNav() {
   return (
     <nav className="site-nav" aria-label="Main navigation">
       <div className="site-nav-links">{navigationItems()}</div>
+      <label className="nav-currency" title="Prices are shown in this currency on every search">
+        <span className="sr-only">Currency</span>
+        <select value={currency} onChange={(e) => { if (isPrefCurrency(e.target.value)) changeCurrency(e.target.value); }} aria-label="Currency">
+          {CURRENCY_LIST.map((c) => <option key={c.code} value={c.code}>{c.code === "INR" ? "₹ INR" : c.code === "USD" ? "$ USD" : c.code}</option>)}
+        </select>
+      </label>
       <a href="/account" className="nav-link home-account-link"><span className="site-account-icon-wrap">{accountIcon}</span><span className="site-account-label" title={accountLabel}>{accountLabel}</span></a>
       <details className="home-mobile-menu">
         <summary aria-label="Navigation menu">

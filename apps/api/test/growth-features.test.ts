@@ -184,3 +184,16 @@ test("sub-agent markup: flat or percentage on top of the shown price", () => {
   assert.equal(fares[1].displayPrice, 8400);
   assert.equal(withAgentMarkup([{ totalFare: 1 }], null)[0].displayPrice, undefined);
 });
+
+test("TripJack fare rules nested under the route are read with amounts", async () => {
+  const { parseTripjackFareRules } = await import("@poomas/suppliers");
+  const rules = parseTripjackFareRules({ fareRule: { "AUH-CCJ": { tfr: {
+    CANCELLATION: [{ policyInfo: "Cancellation__nls__allowed", amount: 3500, additionalFee: 300, st: 4, et: 8760 }],
+    DATECHANGE: [{ amount: 2500 }],
+  } } } });
+  assert.equal(rules.length, 2);
+  assert.equal(rules[0].category, "CANCELLATION");
+  assert.match(rules[0].description, /Cancellation allowed — ₹3,500 \+ ₹300 fee · 4–8760 hrs/);
+  assert.equal(rules[1].description, "₹2,500");
+  assert.deepEqual(parseTripjackFareRules({}), []);
+});

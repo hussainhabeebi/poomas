@@ -2,12 +2,14 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, fmtTime, money, QUOTE_DRAFT } from "../../../lib/api";
+import { fareLabel, groupFareOptions, optionPerks } from "../../../lib/fare-options";
 
 type Fare = {
   id: string; supplier: string; airline: string; airlineName: string; flightNumber: string; origin: string; destination: string;
   departureTime: string; arrivalTime: string; duration: number; stops: number; totalFare: number; displayPrice?: number;
   netPrice?: number; sellingPrice?: number; currency: string; isRefundable: boolean; baggage?: { cabin?: string; checked?: string };
   tripKey?: string; legIndex?: number; fareIdentifier?: string; sri?: string; msri?: string[]; isBookable?: boolean;
+  mealIncluded?: boolean; refundableType?: number; fareClass?: string; segments?: { flightNumber?: string }[];
 };
 type Leg = { origin: string; destination: string; date: string };
 
@@ -167,7 +169,7 @@ export default function SearchPage() {
           {combos.length > 0 && (
             <div className="card flush">
               <div style={{ padding: "12px 16px 0" }}><h2>Complete journey fares</h2></div>
-              {shown(combos, -1).map((f) => <FareRow key={f.id} f={f} quoted={quoted.includes(f.id)} onQuote={() => toggleQuote(f)} action={<button className="btn primary sm" onClick={() => book([f])}>Book</button>} />)}
+              {groupFareOptions(shown(combos, -1)).map((g) => <FareRow key={g.key} f={g.lead} options={g.options} quoted={quoted} onQuote={toggleQuote} action={(f) => <button className="btn primary sm" onClick={() => book([f])}>Book</button>} />)}
             </div>
           )}
 
@@ -177,9 +179,9 @@ export default function SearchPage() {
                 <h2>{legCount === 1 ? "Flights" : `${i === 0 ? "Onward" : tripType === "ROUNDTRIP" ? "Return" : `Flight ${i + 1}`}: ${list[0]?.origin} → ${list[0]?.destination}`}</h2>
                 {picks[i] && <span className="badge b-green">Selected {picks[i].flightNumber}</span>}
               </div>
-              {shown(list, i).map((f) => (
-                <FareRow key={f.id} f={f} picked={picks[i]?.id === f.id} quoted={quoted.includes(f.id)} onQuote={() => toggleQuote(f)}
-                  action={legCount === 1
+              {groupFareOptions(shown(list, i)).map((g) => (
+                <FareRow key={g.key} f={g.lead} options={g.options} pickedId={picks[i]?.id} quoted={quoted} onQuote={toggleQuote}
+                  action={(f) => legCount === 1
                     ? <button className="btn primary sm" onClick={() => book([f])}>Book</button>
                     : <button className={`btn sm ${picks[i]?.id === f.id ? "dark" : ""}`} onClick={() => setPicks((p) => ({ ...p, [i]: f, ...(i === 0 ? { 1: undefined } : {}) }))}>{picks[i]?.id === f.id ? "Selected" : "Select"}</button>} />
               ))}
@@ -200,26 +202,56 @@ export default function SearchPage() {
 
 const price = (f: Fare) => f.netPrice ?? f.displayPrice ?? f.totalFare;
 
-function FareRow({ f, action, picked, quoted, onQuote }: { f: Fare; action: React.ReactNode; picked?: boolean; quoted: boolean; onQuote: () => void }) {
+function FareRow({ f, options, action, pickedId, quoted, onQuote }: { f: Fare; options: Fare[]; action: (f: Fare) => React.ReactNode; pickedId?: string; quoted: string[]; onQuote: (f: Fare) => void }) {
+  const [open, setOpen] = useState(false);
+  const picked = options.some((o) => o.id === pickedId);
   return (
-    <div className={`fare${picked ? " picked" : ""}`}>
-      <div className="air"><b>{f.airlineName || f.airline}</b><small>{f.flightNumber}{f.fareIdentifier && f.fareIdentifier !== "PUBLISHED" ? ` · ${f.fareIdentifier.replace(/_/g, " ").toLowerCase()}` : ""}</small></div>
-      <div className="times">
-        <div><b>{fmtTime(f.departureTime)}</b><div className="small muted">{f.origin}</div></div>
-        <div className="line">{dur(f.duration)} · {f.stops === 0 ? "Direct" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}</div>
-        <div><b>{fmtTime(f.arrivalTime)}</b><div className="small muted">{f.destination}</div></div>
+    <div style={{ borderBottom: "1px solid #f1f5f9" }}>
+      <div className={`fare${picked ? " picked" : ""}`} style={{ borderBottom: 0 }}>
+        <div className="air"><b>{f.airlineName || f.airline}</b><small>{f.flightNumber}</small></div>
+        <div className="times">
+          <div><b>{fmtTime(f.departureTime)}</b><div className="small muted">{f.origin}</div></div>
+          <div className="line">{dur(f.duration)} · {f.stops === 0 ? "Direct" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}</div>
+          <div><b>{fmtTime(f.arrivalTime)}</b><div className="small muted">{f.destination}</div></div>
+        </div>
+        <div className="chips">
+          <span className="chip">{fareLabel(f.fareIdentifier || f.fareClass)}</span>
+          {f.baggage?.checked && <span className="chip">🧳 {f.baggage.checked}</span>}
+          <span className="chip">{f.isRefundable ? "Refundable" : "Non-refundable"}</span>
+          <button type="button" className="chip" style={{ border: 0, cursor: "pointer", background: quoted.includes(f.id) ? "#dcfce7" : undefined }} onClick={() => onQuote(f)}>{quoted.includes(f.id) ? "✓ In quote" : "+ Quote"}</button>
+        </div>
+        <div className="price">
+          {options.length > 1 && <small>from</small>}
+          <b>{money(price(f), f.currency)}</b>
+          <small>Net</small>
+          {f.sellingPrice && f.sellingPrice !== price(f) && <span className="sell">Sell {money(f.sellingPrice, f.currency)}</span>}
+          <div style={{ marginTop: 6 }}>{options.length > 1 ? <button className="btn sm" onClick={() => setOpen((v) => !v)}>{open ? "Hide" : `${options.length} fare options`}</button> : action(f)}</div>
+        </div>
       </div>
-      <div className="chips">
-        {f.baggage?.checked && <span className="chip">🧳 {f.baggage.checked}</span>}
-        <span className="chip">{f.isRefundable ? "Refundable" : "Non-refundable"}</span>
-        <button type="button" className={`chip`} style={{ border: 0, cursor: "pointer", background: quoted ? "#dcfce7" : undefined }} onClick={onQuote}>{quoted ? "✓ In quote" : "+ Quote"}</button>
-      </div>
-      <div className="price">
-        <b>{money(price(f), f.currency)}</b>
-        <small>Net</small>
-        {f.sellingPrice && f.sellingPrice !== price(f) && <span className="sell">Sell {money(f.sellingPrice, f.currency)}</span>}
-        <div style={{ marginTop: 6 }}>{action}</div>
-      </div>
+      {open && options.length > 1 && (
+        <div className="table-wrap" style={{ padding: "0 16px 12px" }}>
+          <table className="t">
+            <thead><tr><th>Fare</th><th>Check-in</th><th>Cabin</th><th>Meal</th><th>Refund</th><th className="num">Net</th><th className="num">Sell</th><th /></tr></thead>
+            <tbody>{options.map((o) => {
+              const p = optionPerks(o);
+              return (
+                <tr key={o.id} style={o.id === pickedId ? { background: "#fff7f7" } : undefined}>
+                  <td><b>{fareLabel(o.fareIdentifier || o.fareClass)}</b></td>
+                  <td>{p.checked || <span className="muted">None</span>}</td>
+                  <td>{p.cabin || "—"}</td>
+                  <td>{p.meal || "—"}</td>
+                  <td>{p.refund}</td>
+                  <td className="num">{money(price(o), o.currency)}</td>
+                  <td className="num ok-text">{o.sellingPrice ? money(o.sellingPrice, o.currency) : ""}</td>
+                  <td className="num" style={{ whiteSpace: "nowrap" }}>
+                    <button type="button" className="btn ghost sm" onClick={() => onQuote(o)}>{quoted.includes(o.id) ? "✓ Quote" : "+ Quote"}</button> {action(o)}
+                  </td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

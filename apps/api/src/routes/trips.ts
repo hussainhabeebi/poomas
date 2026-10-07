@@ -13,6 +13,7 @@
 //   GET  /eticket              X-Trip-Token → e-ticket HTML
 //   GET  /itinerary            X-Trip-Token → itinerary HTML download
 
+import { emailCancellation } from "../lib/transactional-emails.js";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -226,6 +227,7 @@ customerTripRoutes.post("/:id/cancel", zValidator("json", z.object({ confirm: z.
   await db.update(bookingAmendments).set({
     supplierAmendmentId: String(amendmentId), status: "PROCESSING", lastSupplierResponse: raw, updatedAt: new Date(),
   }).where(eq(bookingAmendments.id, amendment.id));
+  c.executionCtx.waitUntil(emailCancellation(c.env, db, amendment, "REQUESTED"));
   return c.json({ ok: true, amendmentId, refundEstimate: stored.refundAmount });
 });
 

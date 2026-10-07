@@ -67,6 +67,7 @@ export interface AgentSettings {
   slug?: string;               // mini-site: portal /a/<slug>
   miniSite?: boolean;
   ownMarkup?: { type: "FLAT" | "PERCENTAGE"; value: number };   // selling markup shown to its customers
+  mou?: { version: string; acceptedAt: string; name: string; designation: string; hash: string; r2Key: string; userId: string | null; email: string | null; ip: string | null; userAgent: string | null };   // signed MOU
   frozen?: boolean;            // admin credit / booking freeze
   frozenReason?: string;
   creditUsedSince?: string;    // when the balance went below zero
@@ -326,7 +327,7 @@ export async function maybeLowBalanceAlert(env: Env, db: Db, tenantId: string, a
   await updateSettings(db, agentId, { lowBalanceAlertedAt: new Date().toISOString() });
   const amount = money(credit.available, a.currency);
   await notifyCustomer(env, db, tenantId, {
-    email: a.email, phone: a.whatsapp ?? a.phone,
+    email: a.email, phone: a.whatsapp ?? a.phone, category: "wallet",
     subject: `Low wallet balance: ${amount} available`,
     html: emailShell("Your agency wallet is running low", `<p>${escapeHtml(a.businessName)}, you have <b>${escapeHtml(amount)}</b> available to book. Top up to keep booking without interruption.</p>`),
     whatsapp: `⚠️ *Low wallet balance* — ${a.businessName}\nAvailable to book: ${amount}\nTop up in the agent portal to keep booking.`,

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
 
 const CITIES = [
   { code: "DXB", city: "Dubai",         country: "AE" },
@@ -130,7 +131,10 @@ export default function HotelsPage() {
   const [checkOut, setCheckOut] = useState("");
   const [rooms,    setRooms]    = useState(1);
   const [adults,   setAdults]   = useState(1);
-  const [currency, setCurrency] = useState<CurrencyCode>("INR");
+  const [currency, setCurrencyState] = useState<CurrencyCode>("INR");
+  // Same currency as flights: chosen once for the visit.
+  useEffect(() => { const c = readPrefCurrency(); if (c === "INR" || c === "AED" || c === "USD") setCurrencyState(c); }, []);
+  const setCurrency = (code: CurrencyCode) => { setCurrencyState(code); savePrefCurrency(code); };
   // Guests' nationality: TripJack prices hotels by it and asks Indian guests
   // for a PAN at hotels abroad (foreign guests don't need one).
   const [nationality, setNationality] = useState("IN");

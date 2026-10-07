@@ -12,6 +12,8 @@ export default function LoginPage() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     if (q.get("registered")) setNote("Account created — please sign in.");
+    if (q.get("reset")) setNote("Password changed — sign in with your new password.");
+    if (q.get("email")) setEmail(q.get("email") ?? "");
   }, []);
 
   async function handleLogin(e: FormEvent) {
@@ -42,6 +44,7 @@ export default function LoginPage() {
         <form onSubmit={handleLogin} className="stack">
           <label className="f">Email<input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="f">Password<input type="password" required autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
+          <a href={`/forgot-password${email ? `?email=${encodeURIComponent(email.trim())}` : ""}`} className="small" style={{ alignSelf: "flex-end", marginTop: -4 }}>Forgot password?</a>
           <button className="btn primary" disabled={loading}>{loading ? "Signing in…" : "Sign in"}</button>
         </form>
         <p className="muted small" style={{ textAlign: "center", marginTop: 18 }}>New agency? <a href="/register">Register your agency</a></p>

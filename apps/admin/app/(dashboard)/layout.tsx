@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { API, apiHeaders } from "../../lib/api";
 
 const NAV_ITEMS = [
   { href: "/dashboard",    label: "Overview",      icon: "📊" },
@@ -8,7 +10,9 @@ const NAV_ITEMS = [
   { href: "/bookings",     label: "Bookings",      icon: "📋" },
   { href: "/tripsafe",     label: "TripSafe",      icon: "🛡️" },
   { href: "/agents",       label: "Agents",        icon: "👥" },
+  { href: "/leadvyne-agencies", label: "Leadvyne agencies", icon: "💬" },
   { href: "/agent-requests", label: "Agent requests", icon: "📨" },
+  { href: "/wallet-recharges", label: "Wallet recharges", icon: "🏦" },
   { href: "/agent-program", label: "Agent programme", icon: "🏅" },
   { href: "/suppliers",    label: "Suppliers",     icon: "🔌" },
   { href: "/finance",      label: "Finance",       icon: "💰" },
@@ -20,11 +24,43 @@ const NAV_ITEMS = [
   { href: "/api-keys",     label: "API Keys",      icon: "🔑" },
   { href: "/settings",     label: "Settings",      icon: "🔧" },
   { href: "/supplier-logs", label: "API Logs",     icon: "📡" },
+  { href: "/users",        label: "Users & staff", icon: "🧑‍💼" },
 ];
+
+// Staff see only the pages of the sections ticked for them (the API enforces it too).
+const SECTION_OF: Record<string, string> = {
+  "/bookings": "bookings", "/cancellations": "bookings", "/tripsafe": "bookings",
+  "/agents": "agents", "/leadvyne-agencies": "agents",
+  "/agent-requests": "agent_requests", "/wallet-recharges": "wallet_recharges",
+  "/customer-wallets": "customer_wallets", "/support": "support", "/finance": "finance", "/supplier-logs": "logs",
+};
+type AdminMe = { user: { name: string | null; email: string | null }; role: string; roleLabel: string; fullAccess: boolean; sections: string[]; canManageUsers: boolean };
 
 export default function AdminDashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router   = useRouter();
+  const [me, setMe] = useState<AdminMe | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/me`, { headers: apiHeaders() })
+      .then(async (r) => { if (r.status === 401) { signOut(); return null; } return r.ok ? r.json() as Promise<AdminMe> : null; })
+      .then((d) => d && setMe(d)).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const allowed = (href: string) => !me || me.fullAccess
+    ? href !== "/users" || !me || me.canManageUsers
+    : !!SECTION_OF[href] && me.sections.includes(SECTION_OF[href]);
+  const navItems = NAV_ITEMS.filter((i) => allowed(i.href));
+  const current = NAV_ITEMS.find((n) => pathname === n.href || pathname.startsWith(n.href + "/"));
+  const blocked = !!me && !!current && !allowed(current.href);
+
+  // Staff land on their first section instead of the overview.
+  useEffect(() => {
+    if (me && !me.fullAccess && (pathname === "/dashboard" || pathname === "/")) {
+      const first = NAV_ITEMS.find((i) => allowed(i.href));
+      if (first) router.replace(first.href);
+    }
+  }, [me, pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function signOut() {
     document.cookie = "poomas_admin_token=; Path=/; Max-Age=0; SameSite=Lax";
@@ -201,12 +237,13 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
           <div className="admin-sidebar-header">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="POOMAS Admin" />
-            <div className="role-badge">Super Admin</div>
+            <div className="role-badge">{me ? me.roleLabel : "Admin"}</div>
+            {me?.user.name && <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6 }}>{me.user.name}</div>}
           </div>
 
           <div className="admin-nav">
             <div className="admin-nav-section-title">Platform</div>
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
@@ -256,7 +293,12 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
           </header>
 
           <main className="admin-content">
-            {children}
+            {blocked ? (
+              <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 24, color: "#e2e8f0" }}>
+                <h1 style={{ fontSize: 20, margin: "0 0 8px" }}>No access to this section</h1>
+                <p style={{ color: "#94a3b8", fontSize: 14 }}>Your account can open: {navItems.map((i) => i.label).join(", ") || "nothing yet"}. Ask an admin if you need more.</p>
+              </div>
+            ) : children}
           </main>
         </div>
       </div>
@@ -264,7 +306,7 @@ export default function AdminDashboardLayout({ children }: { children: React.Rea
       {/* Mobile bottom nav */}
       <nav className="admin-bottom-nav">
         <div className="admin-bottom-nav-inner">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}

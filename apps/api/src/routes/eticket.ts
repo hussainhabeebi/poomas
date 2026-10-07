@@ -1,6 +1,7 @@
 // GET  /api/eticket/:bookingId      — serves e-ticket HTML for a confirmed booking
 // POST /api/eticket/:bookingId/send — send e-ticket via WhatsApp (Leadvyne) + email (Resend)
 
+import { emailLayout, sendMail } from "../lib/email.js";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -110,34 +111,20 @@ eticketRoutes.post("/:bookingId/send", zValidator("json", sendSchema), async (c)
   }
 
   // ── Email via Resend ───────────────────────────────────────────────────────
-  if (body.channels.includes("EMAIL") && c.env.RESEND_API_KEY) {
+  if (body.channels.includes("EMAIL")) {
     const email = body.email ?? booking.contactEmail;
     if (email) {
-      try {
-        const emailRes = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Content-Type":  "application/json",
-            "Authorization": `Bearer ${c.env.RESEND_API_KEY}`,
-          },
-          body: JSON.stringify({
-            from:    "POOMAS Flights <tickets@flypoomas.com>",
-            to:      [email],
-            subject: `E-Ticket — PNR ${pnr} | ${booking.origin} → ${booking.destination}`,
-            html: `
-              <h2>Your E-Ticket is Ready</h2>
-              <p>PNR: <strong>${pnr}</strong></p>
-              <p>Route: ${booking.origin} → ${booking.destination}</p>
-              <p>Passengers: ${paxNames}</p>
-              <p><a href="${eticketUrl}" style="background:#E31E24;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;">Download E-Ticket</a></p>
-              <p style="font-size:12px;color:#6b7280;">Total paid: ${booking.currency} ${booking.totalAmount}</p>
-            `,
-          }),
-        });
-        results.email = { ok: emailRes.ok, status: emailRes.status };
-      } catch (err: any) {
-        results.email = { ok: false, error: err.message };
-      }
+      const r = await sendMail(c.env, db, booking.tenantId, {
+        to: email, category: "booking",
+        subject: `E-ticket — PNR ${pnr} · ${booking.origin} → ${booking.destination}`,
+        html: emailLayout({
+          title: "Your e-ticket is ready",
+          body: "<p>Here is your e-ticket. Show it with your passport / ID at the airport.</p>",
+          rows: [["PNR", pnr], ["Route", `${booking.origin} → ${booking.destination}`], ["Travellers", paxNames], ["Total paid", `${booking.currency} ${booking.totalAmount}`]],
+          cta: { label: "Download e-ticket", href: eticketUrl },
+        }),
+      });
+      results.email = r.ok ? { ok: true, status: 200 } : { ok: false, error: r.error };
     } else {
       results.email = { ok: false, error: "No contact email on booking" };
     }

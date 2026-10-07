@@ -1,3 +1,4 @@
+import { serverAuthHeaders } from "../../../lib/server";
 const SERVER_API   = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const SERVER_TOKEN = process.env.ADMIN_SERVICE_TOKEN ?? "";
 
@@ -11,6 +12,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
 interface Agent {
   id:           string;
   businessName: string;
+  agentNumber?: string | null;
   contactEmail: string;
   status:       string;
   tenantSlug:   string;
@@ -21,7 +23,7 @@ interface Agent {
 async function getAgents(): Promise<Agent[]> {
   try {
     const res = await fetch(`${SERVER_API}/api/admin/agents`, {
-      headers: { "Authorization": `Bearer ${SERVER_TOKEN}` },
+      headers: await serverAuthHeaders(),
       cache: "no-store",
     });
     if (!res.ok) return [];
@@ -65,7 +67,7 @@ export default async function AgentsPage() {
               const sc = STATUS_COLORS[a.status] ?? { bg: "#1e293b", color: "#94a3b8" };
               return (
                 <tr key={a.id} style={{ borderBottom: "1px solid #0f172a" }}>
-                  <td style={{ padding: "14px 16px", color: "#f1f5f9", fontWeight: 600 }}>{a.businessName}</td>
+                  <td style={{ padding: "14px 16px", color: "#f1f5f9", fontWeight: 600 }}>{a.businessName}{a.agentNumber ? <div style={{ color: "#93c5fd", fontSize: 11, fontWeight: 700 }}>{a.agentNumber}</div> : null}</td>
                   <td style={{ padding: "14px 16px", color: "#94a3b8", fontSize: 13 }}>{a.contactEmail}</td>
                   <td style={{ padding: "14px 16px", color: "#94a3b8", fontSize: 13, fontFamily: "monospace" }}>{a.tenantSlug}</td>
                   <td style={{ padding: "14px 16px" }}>

@@ -17,6 +17,9 @@ export default function AccountPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("password") === "reset") setNotice("Your password has been changed and you're signed in.");
+  }, []);
 
   async function load() {
     try {

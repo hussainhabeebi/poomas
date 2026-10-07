@@ -5,6 +5,7 @@
 // read, the customer is not offered self-service cancellation, and no refund is
 // ever paid until TripJack reports the amendment as successful.
 
+import { emailCancellation } from "./transactional-emails.js";
 import type { Context } from "hono";
 import { TripjackClient, type ExchangeRecorder } from "@poomas/suppliers";
 import { persistExchanges, persistInBackground } from "./api-exchanges.js";
@@ -256,8 +257,10 @@ export async function syncCancellation(c: Ctx, amendment: Amendment): Promise<Am
 
   if (mapped.status === "SUCCESS") {
     await db.update(bookings).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(bookings.id, amendment.bookingId));
+    await emailCancellation(c.env, db, updated, "CONFIRMED");
     return (await settleRefund(db, c.env, updated)) ?? updated;
   }
+  if (mapped.status === "REJECTED") await emailCancellation(c.env, db, updated, "REJECTED");
   return updated;
 }
 
@@ -284,7 +287,7 @@ export const REFUND_METHOD_LABEL: Record<RefundMethod, string> = {
 // automatically because the provider may already have paid it.
 export async function settleRefund(
   db: Variables["db"],
-  env: Pick<Env, "TENANT_CACHE_KV" | "NOMOD_API_KEY">,
+  env: Env,
   amendment: Amendment,
   opts: { retryFailed?: boolean } = {},
 ): Promise<Amendment | null> {
@@ -313,7 +316,10 @@ export async function settleRefund(
       .set({ status: amount >= paidTotal ? "REFUNDED" : "PARTIAL_REFUND", refundedAmount: amount.toFixed(2), refundGatewayRef: reference, refundCompletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(payments.bookingId, claimed.bookingId), eq(payments.status, "SUCCESS")));
     await db.update(bookings).set({ status: "REFUNDED", updatedAt: new Date() }).where(eq(bookings.id, claimed.bookingId));
-    return finish({ refundStatus: "DONE", refundReference: reference, refundedAt: new Date() });
+    const row = await finish({ refundStatus: "DONE", refundReference: reference, refundedAt: new Date() });
+    // Wallet refunds are instant (the "cancelled" email already says so); card refunds get their own email.
+    if (row && amount > 0 && claimed.refundMethod === "NOMOD") await emailCancellation(env, db, row, "REFUNDED");
+    return row;
   };
 
   if (amount <= 0) return done("no-refund-due");

@@ -2,11 +2,14 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import SearchResultControls, { ChangeDatesAction } from "./SearchResultControls";
 import { FareTools } from "./FareTools";
+import FareRulesButton from "./FareRulesButton";
+import { altOptions, fareLabel, flightKey, groupFareOptions, optionPerks, optionPrice } from "../lib/fare-options";
+import { convertInr, currencyMeta, fetchFxRates, formatIn, isDisplayCurrency, type FxRates } from "../lib/fx";
 
 type SearchParams = {
   origin?: string; destination?: string; departureDate?: string;
   returnDate?: string; adults?: string; children?: string; infants?: string;
-  cabinClass?: string; tripType?: string; currency?: "INR" | "AED" | "USD"; all?: string;
+  cabinClass?: string; tripType?: string; currency?: string; all?: string;
   sort?: "price" | "duration" | "departure" | "best"; stops?: string;
   refundable?: string; baggage?: string; airlines?: string; depBand?: string;
   fareType?: string; legs?: string;
@@ -43,21 +46,17 @@ function displaySearchDate(value?: string) {
 
 interface SearchPageProps { searchParams: Promise<SearchParams>; }
 
-// Admin-set INR→AED rate (INR per 1 AED); null when AED payment isn't offered.
-async function fetchAedRate(): Promise<number | null> {
-  try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
-    // No caching: a rate saved in Admin must apply to the very next search.
-    const res = await fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" }, cache: "no-store" });
-    const data = await res.json() as { rates?: { AED?: number | null } };
-    const rate = Number(data.rates?.AED);
-    return Number.isFinite(rate) && rate > 0 ? rate : null;
-  } catch { return null; }
+// Rates from the automatic exchange-rate tool (INR per 1 unit). No caching: a new rate applies to the very next search.
+async function fetchRates(): Promise<FxRates> {
+  return fetchFxRates(process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com");
 }
 
 // Price in the currency the customer chose (rounded up like the payment API).
-function inChosenCurrency(price: number, fareCurrency: string, chosen: string | null, aedRate: number | null) {
-  if (chosen === "AED" && fareCurrency === "INR" && aedRate) return { amount: Math.ceil((price / aedRate) * 100 - 1e-9) / 100, currency: "AED", converted: true };
+function inChosenCurrency(price: number, fareCurrency: string, chosen: string | null, rates: FxRates) {
+  if (chosen && chosen !== fareCurrency && fareCurrency === "INR") {
+    const amount = convertInr(price, chosen, rates);
+    if (amount !== null) return { amount, currency: chosen, converted: true };
+  }
   return { amount: price, currency: fareCurrency, converted: false };
 }
 
@@ -116,18 +115,30 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
     redirect(`/search/journey?${new URLSearchParams(Object.entries(params).filter(([, v]) => typeof v === "string") as [string, string][])}`);
   }
   let sessionId: string | null = null;
-  try { const s = await cookies(); sessionId = s.get("sid")?.value ?? null; } catch {}
+  let prefCurrency: string | null = null;
+  try {
+    const s = await cookies();
+    sessionId = s.get("sid")?.value ?? null;
+    const cur = s.get("fp_cur")?.value;
+    if (isDisplayCurrency(cur)) prefCurrency = cur;
+  } catch {}
+  // The visitor's chosen currency stays fixed across searches, whatever the link says.
+  if (prefCurrency) params.currency = prefCurrency as SearchParams["currency"];
 
-  const [result, aedRate] = await Promise.all([searchFlights(params, sessionId), fetchAedRate()]);
+  const [result, aedRate] = await Promise.all([searchFlights(params, sessionId), fetchRates()]);
   const requestedCurrency = params.currency ?? null;
   const failingSuppliers = Object.keys(result.supplierErrors ?? {});
   const missingCredentialSuppliers = Object.entries(result.credentialAvailability ?? {})
     .filter(([, ok]) => !ok).map(([name]) => name);
   const allFares = result.fares as any[];
   const filteredFares = filterAndSortFares(allFares, params);
+  // One card per flight; the airline's fare options (Saver / Standard / Flexi…) inside it.
+  const groups = groupFareOptions(filteredFares as any[]);
+  const optionsByKey = new Map(groups.map((g) => [g.key, g.options]));
+  const leadFares = groups.map((g) => g.lead);
   const displayFares = params.all === "1" || params.sort
-    ? filteredFares
-    : recommendedFares(filteredFares);
+    ? leadFares
+    : recommendedFares(leadFares);
   const allQuery = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
   allQuery.set("all", "1");
 
@@ -171,9 +182,9 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
 
         {/* Results column */}
         <div className="search-results-column">
-          {requestedCurrency === "AED" && !aedRate && filteredFares.length > 0 && (
+          {requestedCurrency && requestedCurrency !== "INR" && !aedRate[requestedCurrency as keyof FxRates] && filteredFares.some((f) => String(f.currency ?? "INR") === "INR") && (
             <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
-              AED prices aren't available right now, so fares are shown in Indian rupees (INR).
+              {requestedCurrency} prices aren't available right now, so fares are shown in Indian rupees (INR).
             </div>
           )}
 
@@ -214,7 +225,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                   </a>
                 );
               })}
-              <span className="results-count-badge">{filteredFares.length} flight{filteredFares.length === 1 ? "" : "s"}</span>
+              <span className="results-count-badge">{groups.length} flight{groups.length === 1 ? "" : "s"}</span>
           </div>
 
           {filteredFares.length === 0 ? (
@@ -248,6 +259,7 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                 <FareCard
                   key={`${fare.id ?? i}-${i}`}
                   fare={fare}
+                  options={optionsByKey.get(flightKey(fare)) ?? [fare]}
                   requestedCurrency={requestedCurrency}
                   aedRate={aedRate}
                   searchId={result.searchId}
@@ -256,12 +268,12 @@ export default async function SearchResultsPage({ searchParams }: SearchPageProp
                   infants={infants}
                 />
               ))}
-              {params.all !== "1" && filteredFares.length > displayFares.length && (
+              {params.all !== "1" && groups.length > displayFares.length && (
                 <a
                   href={`/search?${allQuery.toString()}`}
                   style={{ textAlign: "center", padding: 14, border: "1.5px solid #e2e8f0", borderRadius: 14, color: "#0f172a", textDecoration: "none", fontWeight: 800, background: "#fff", fontSize: 14 }}
                 >
-                  View all {filteredFares.length} flights →
+                  View all {groups.length} flights →
                 </a>
               )}
             </div>
@@ -326,12 +338,13 @@ function recommendedFares(fares: any[]): any[] {
 
 function formatMoney(amount: number, currency: string): string {
   const code = (currency || "").toUpperCase();
+  if (currencyMeta(code)) return formatIn(amount, code);
   const locale = CURRENCY_LOCALES[code] ?? "en-US";
   try { return new Intl.NumberFormat(locale, { style: "currency", currency: code || "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount); }
   catch { return `${code || ""} ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`.trim(); }
 }
 
-function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number, children = 0, infants = 0, payCurrency?: string, searchId?: string): string {
+function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: number, children = 0, infants = 0, payCurrency?: string, searchId?: string, extra: Record<string, string> = {}): string {
   const p = new URLSearchParams({
     fareId:   fare.id ?? "",
     adults:   String(adults),
@@ -353,10 +366,21 @@ function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: nu
   });
   if (payCurrency) p.set("pc", payCurrency);
   if (searchId) p.set("sid", searchId);   // links the booking to this search's TripJack logs
+  for (const [k, v] of Object.entries(extra)) p.set(k, v);
   return `/book?${p.toString()}`;
 }
 
-function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children = 0, infants = 0 }: { fare: any; requestedCurrency: string | null; aedRate: number | null; searchId?: string; adults: number; children?: number; infants?: number }) {
+// This option's own perks + the flight's other fare options, so the booking page
+// can show what's included and offer a switch / upgrade.
+function optionLinkParams(fare: any, options: any[]): Record<string, string> {
+  const extra: Record<string, string> = { cab: fare.baggage?.cabin ?? "", fl: fareLabel(fare.fareIdentifier || fare.fareClass) };
+  if (typeof fare.mealIncluded === "boolean") extra.meal = fare.mealIncluded ? "1" : "0";
+  const alts = altOptions(options, fare.id);
+  if (alts.length) extra.alts = JSON.stringify(alts);
+  return extra;
+}
+
+function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults, children = 0, infants = 0 }: { fare: any; options: any[]; requestedCurrency: string | null; aedRate: FxRates; searchId?: string; adults: number; children?: number; infants?: number }) {
   const dep = new Date(fare.departureTime);
   const arr = new Date(fare.arrivalTime);
   const fmt = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -420,7 +444,7 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
         <div className="fare-card-v2-tags">
           {fare.isRefundable && <span className="fare-card-v2-tag tag-refundable">✓ Refundable</span>}
           {fare.fareIdentifier && fare.fareIdentifier !== "PUBLISHED" && (
-            <span className="fare-card-v2-tag">{({ STUDENT: "Student fare", SENIOR_CITIZEN: "Senior citizen fare", TJ_FLEX: "Flex fare", SPECIAL_RETURN: "Special Return" } as Record<string, string>)[fare.fareIdentifier] ?? fare.fareIdentifier.replaceAll("_", " ")}</span>
+            <span className="fare-card-v2-tag">{({ STUDENT: "Student fare", SENIOR_CITIZEN: "Senior citizen fare", TJ_FLEX: "Flex fare", SPECIAL_RETURN: "Special Return" } as Record<string, string>)[fare.fareIdentifier] ?? fareLabel(fare.fareIdentifier)}</span>
           )}
           {fare.baggage?.checked && <span className="fare-card-v2-tag tag-baggage">🧳 {fare.baggage.checked}</span>}
           {fare.seatsLeft > 0 && fare.seatsLeft <= 5 && (
@@ -430,14 +454,14 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
 
         {/* Price + book */}
         <div className="fare-card-v2-price-col">
-          <div className="fare-card-v2-price">{formatMoney(shown.amount, shown.currency)}</div>
+          <div className="fare-card-v2-price">{options.length > 1 && <small style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginRight: 4 }}>from</small>}{formatMoney(shown.amount, shown.currency)}</div>
           <div className="fare-card-v2-price-note">
             {shown.converted ? `≈ ${formatMoney(price, fareCurrency)}` : fareCurrency}
             {!fare.isBookable && " · indicative"}
             {adults + children + infants > 1 && ` · total for ${adults + children + infants} travellers`}
           </div>
           {isBookable ? (
-            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined, searchId)} className="fare-card-v2-book">
+            <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined, searchId, optionLinkParams(fare, options))} className="fare-card-v2-book">
               Book Now
             </a>
           ) : (
@@ -445,6 +469,40 @@ function FareCard({ fare, requestedCurrency, aedRate, searchId, adults, children
           )}
         </div>
       </div>
+
+      {isBookable && options.length > 1 && (
+        <details className="fare-options">
+          <summary>
+            <span>✨ {options.length} fare options · baggage, meals &amp; flexibility</span>
+            <span className="fare-options-toggle" aria-hidden="true">⌄</span>
+          </summary>
+          <div className="fare-options-grid">
+            {options.map((o: any) => {
+              const perks = optionPerks(o);
+              const op = optionPrice(o);
+              const oShown = inChosenCurrency(op, fareCurrency, requestedCurrency, aedRate);
+              const diff = op - price;
+              return (
+                <div key={o.id} className="fare-option">
+                  <div className="fare-option-head">
+                    <b>{fareLabel(o.fareIdentifier || o.fareClass)}</b>
+                    {diff > 0 ? <span className="fare-option-diff">+{formatMoney(inChosenCurrency(diff, fareCurrency, requestedCurrency, aedRate).amount, oShown.currency)}</span> : <span className="fare-option-best">Lowest</span>}
+                  </div>
+                  <ul>
+                    <li className={perks.checked ? "" : "no"}>🧳 {perks.checked ? `${perks.checked} check-in` : "No check-in bag"}</li>
+                    <li>👜 {perks.cabin ? `${perks.cabin} cabin` : "Cabin bag"}</li>
+                    {perks.meal && <li className={o.mealIncluded ? "" : "no"}>🍽 {perks.meal}</li>}
+                    <li className={o.isRefundable ? "" : "no"}>{o.isRefundable ? "↩︎" : "✕"} {perks.refund}</li>
+                  </ul>
+                  <div className="fare-option-price">{formatMoney(oShown.amount, oShown.currency)}</div>
+                  <a className="fare-option-book" href={buildBookUrl(o, fareCurrency, op, adults, children, infants, oShown.converted ? oShown.currency : undefined, searchId, optionLinkParams(o, options))}>Select</a>
+                  <FareRulesButton fareId={o.id} />
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
 
       <details className="fare-card-v2-details">
         <summary className="fare-card-v2-expand-row">

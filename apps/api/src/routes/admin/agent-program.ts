@@ -18,7 +18,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { agentDocuments, agentRequestMessages, agentRequests, agents, auditLogs, bookings, users, walletAccounts } from "@poomas/db/schema";
+import { agentDocuments, agentRequestMessages, agentRequests, agents, auditLogs, bookings, tenants, users, walletAccounts } from "@poomas/db/schema";
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import {
@@ -26,6 +26,10 @@ import {
 } from "../../lib/agent-program.js";
 import { emailShell, escapeHtml, money, notifyCustomer } from "../../lib/customer-notify.js";
 import { portalUrl, REQUEST_STATUSES } from "../agent-portal.js";
+import { bankAccountSchema, getBankAccounts, saveBankAccounts } from "../../lib/bank-accounts.js";
+import { DOC_LABEL, DOC_TYPES, getOnboarding, onboardingStatus, printablePage, renderMou, saveOnboarding } from "../../lib/agent-onboarding.js";
+import { sendAgentPasswordReset } from "../agent-portal.js";
+import { pbkdf2HashPassword } from "../auth.js";
 
 export const agentProgramAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -89,7 +93,7 @@ async function notifyAgency(c: { env: Env; get: (k: "db") => any }, agentId: str
   if (!a) return;
   const link = `${portalUrl(c.env)}/requests/${requestId}`;
   await notifyCustomer(c.env, c.get("db"), tenantId, {
-    email: a.email, phone: a.whatsapp ?? a.phone,
+    email: a.email, phone: a.whatsapp ?? a.phone, category: "agency",
     subject: `Update: ${title}`,
     html: emailShell(title, `<p>${escapeHtml(text)}</p>`, { label: "Open in portal", href: link }),
     whatsapp: `📬 *${title}*\n${text}\n${link}`,
@@ -130,12 +134,12 @@ agentProgramAdminRoutes.post("/requests/:id/approve-deposit", zValidator("json",
   const r = await loadRequest(c, c.req.param("id"));
   if (!r || r.type !== "DEPOSIT") return c.json({ error: "Deposit request not found" }, 404);
   const db = c.get("db");
+  const wallet = await agentWallet(db, r.tenantId, r.agentId);
+  if (!wallet) return c.json({ error: "Agency wallet not found" }, 404);
   // Claim the request first so a double click can't credit twice.
   const [claimed] = await db.update(agentRequests).set({ status: "APPROVED", amount: c.req.valid("json").amount.toFixed(2), updatedAt: new Date() })
     .where(and(eq(agentRequests.id, r.id), inArray(agentRequests.status, ["OPEN", "IN_PROGRESS"]))).returning();
   if (!claimed) return c.json({ error: `This deposit is already ${r.status.toLowerCase()}.` }, 409);
-  const wallet = await agentWallet(db, r.tenantId, r.agentId);
-  if (!wallet) return c.json({ error: "Agency wallet not found" }, 404);
   const { amount, note } = c.req.valid("json");
   const balance = await creditAgentWallet(db, wallet.id, amount, "TOPUP", {
     paymentId: `deposit_${r.id}`, performedById: c.get("userId") ?? undefined,
@@ -144,6 +148,86 @@ agentProgramAdminRoutes.post("/requests/:id/approve-deposit", zValidator("json",
   await audit(db, { tenantId: r.tenantId, userId: c.get("userId"), action: "AGENT_DEPOSIT_APPROVED", entity: "WalletAccount", entityId: wallet.id, after: { amount, requestId: r.id } });
   c.executionCtx.waitUntil(notifyAgency(c, r.agentId, r.tenantId, r.id, "Deposit credited", `${money(amount, wallet.currency)} added to your wallet. New balance ${money(balance, wallet.currency)}.`).catch(() => {}));
   return c.json({ ok: true, balance });
+});
+
+// Reject a deposit (wrong amount, payment not received …): the agency sees the reason.
+agentProgramAdminRoutes.post("/requests/:id/reject-deposit", zValidator("json", z.object({ reason: z.string().trim().min(3).max(500) })), async (c) => {
+  const r = await loadRequest(c, c.req.param("id"));
+  if (!r || r.type !== "DEPOSIT") return c.json({ error: "Deposit request not found" }, 404);
+  const { reason } = c.req.valid("json");
+  const db = c.get("db");
+  const [done] = await db.update(agentRequests).set({ status: "REJECTED", adminNote: reason, updatedAt: new Date() })
+    .where(and(eq(agentRequests.id, r.id), inArray(agentRequests.status, ["OPEN", "IN_PROGRESS"]))).returning();
+  if (!done) return c.json({ error: `This deposit is already ${r.status.toLowerCase()}.` }, 409);
+  await audit(db, { tenantId: r.tenantId, userId: c.get("userId"), action: "AGENT_DEPOSIT_REJECTED", entity: "AgentRequest", entityId: r.id, after: { reason } });
+  c.executionCtx.waitUntil(notifyAgency(c, r.agentId, r.tenantId, r.id, "Deposit not approved", `${r.title}: ${reason}`).catch(() => {}));
+  return c.json({ ok: true });
+});
+
+// ── Wallet recharges: queue of bank-transfer deposits with their screenshots ──
+agentProgramAdminRoutes.get("/recharges", async (c) => {
+  const status = c.req.query("status") ?? "PENDING";
+  const statuses = status === "PENDING" ? ["OPEN", "IN_PROGRESS"] : status === "ALL" ? null : [status];
+  const db = c.get("db");
+  const rows = await db.select({ r: agentRequests, agentName: agents.businessName, agentNumber: agents.agentNumber, agentEmail: agents.email })
+    .from(agentRequests).innerJoin(agents, eq(agents.id, agentRequests.agentId))
+    .where(and(eq(agentRequests.tenantId, c.get("tenantId")), eq(agentRequests.type, "DEPOSIT"), ...(statuses ? [inArray(agentRequests.status, statuses)] : [])))
+    .orderBy(status === "PENDING" ? asc(agentRequests.createdAt) : desc(agentRequests.updatedAt)).limit(200);
+  const [counts] = await db.select({ pending: sql<number>`count(*) filter (where ${agentRequests.status} in ('OPEN','IN_PROGRESS'))::int` })
+    .from(agentRequests).where(and(eq(agentRequests.tenantId, c.get("tenantId")), eq(agentRequests.type, "DEPOSIT")));
+  const wallets = new Map<string, { balance: number; currency: string }>();
+  for (const id of [...new Set(rows.map((x: { r: { agentId: string } }) => x.r.agentId))]) {
+    const w = await agentWallet(db, c.get("tenantId"), id);
+    if (w) wallets.set(id, { balance: Number(w.balance), currency: w.currency });
+  }
+  return c.json({
+    pending: counts?.pending ?? 0,
+    recharges: rows.map(({ r, agentName, agentNumber, agentEmail }: any) => ({
+      id: r.id, status: r.status, title: r.title, amount: r.amount === null ? null : Number(r.amount), currency: r.currency,
+      details: r.details, attachments: r.attachments, adminNote: r.adminNote, createdAt: r.createdAt, updatedAt: r.updatedAt,
+      agent: { id: r.agentId, name: agentName, number: agentNumber, email: agentEmail, wallet: wallets.get(r.agentId) ?? null },
+    })),
+  });
+});
+
+agentProgramAdminRoutes.get("/bank-accounts", async (c) => c.json({ accounts: await getBankAccounts(c.env, c.get("tenantId")) }));
+
+agentProgramAdminRoutes.post("/bank-accounts", zValidator("json", bankAccountSchema, (r, c) => {
+  if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the bank details" }, 400);
+}), async (c) => {
+  const tenantId = c.get("tenantId");
+  const list = await getBankAccounts(c.env, tenantId);
+  if (list.length >= 20) return c.json({ error: "Up to 20 bank accounts" }, 400);
+  const now = new Date().toISOString();
+  const account = { ...c.req.valid("json"), id: crypto.randomUUID(), createdAt: now, updatedAt: now };
+  await saveBankAccounts(c.env, tenantId, [...list, account]);
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "BANK_ACCOUNT_ADDED", entity: "BankAccount", entityId: account.id, after: { label: account.label, accountNumber: account.accountNumber } });
+  return c.json({ account }, 201);
+});
+
+agentProgramAdminRoutes.patch("/bank-accounts/:id", zValidator("json", bankAccountSchema.partial(), (r, c) => {
+  if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the bank details" }, 400);
+}), async (c) => {
+  const tenantId = c.get("tenantId");
+  const list = await getBankAccounts(c.env, tenantId);
+  const i = list.findIndex((a) => a.id === c.req.param("id"));
+  if (i < 0) return c.json({ error: "Bank account not found" }, 404);
+  const before = list[i];
+  const patch = Object.fromEntries(Object.entries(c.req.valid("json")).filter(([, v]) => v !== undefined));
+  list[i] = { ...before, ...patch, updatedAt: new Date().toISOString() };
+  await saveBankAccounts(c.env, tenantId, list);
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "BANK_ACCOUNT_UPDATED", entity: "BankAccount", entityId: before.id, before, after: list[i] });
+  return c.json({ account: list[i] });
+});
+
+agentProgramAdminRoutes.delete("/bank-accounts/:id", async (c) => {
+  const tenantId = c.get("tenantId");
+  const list = await getBankAccounts(c.env, tenantId);
+  const gone = list.find((a) => a.id === c.req.param("id"));
+  if (!gone) return c.json({ error: "Bank account not found" }, 404);
+  await saveBankAccounts(c.env, tenantId, list.filter((a) => a.id !== gone.id));
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "BANK_ACCOUNT_REMOVED", entity: "BankAccount", entityId: gone.id, before: gone });
+  return c.json({ ok: true });
 });
 
 agentProgramAdminRoutes.get("/requests/:id/file", async (c) => {
@@ -174,7 +258,111 @@ agentProgramAdminRoutes.get("/agents/:id", async (c) => {
     db.select({ id: agents.id, businessName: agents.businessName, status: agents.status }).from(agents).where(eq(agents.parentAgentId, a.id)),
   ]);
   const s = settingsOf(a);
-  return c.json({ tier, credit: creditStatus(wallet, s, program), settings: s, team, documents: docs, subAgents: subs, walletCurrency: wallet?.currency ?? a.currency });
+  const onboarding = await onboardingStatus(c.env, db, tenantId, a).catch(() => null);
+  const hasPassword = new Set((await db.select({ id: users.id }).from(users).where(and(eq(users.agentId, a.id), sql`${users.passwordHash} IS NOT NULL`))).map((u: { id: string }) => u.id));
+  return c.json({ tier, credit: creditStatus(wallet, s, program), settings: s, team: team.map((u: { id: string }) => ({ ...u, hasPassword: hasPassword.has(u.id) })),
+    documents: docs, subAgents: subs, walletCurrency: wallet?.currency ?? a.currency, onboarding, email: a.email });
+});
+
+// ── Agency logins: password reset ────────────────────────────────────────────
+// mode "link": email a reset link (also returned so staff can send it on WhatsApp);
+// mode "temporary": set a one-off password and show it once. An agency without
+// any login gets one created for its registered email.
+agentProgramAdminRoutes.post("/agents/:id/password-reset", zValidator("json", z.object({
+  userId: z.string().optional(), mode: z.enum(["link", "temporary"]),
+})), async (c) => {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const [a] = await db.select().from(agents).where(and(eq(agents.id, c.req.param("id")), eq(agents.tenantId, tenantId))).limit(1);
+  if (!a) return c.json({ error: "Agency not found" }, 404);
+  const { userId, mode } = c.req.valid("json");
+  let [u] = await db.select({ id: users.id, email: users.email, name: users.name, isActive: users.isActive }).from(users)
+    .where(and(eq(users.agentId, a.id), eq(users.tenantId, tenantId), userId ? eq(users.id, userId) : eq(users.role, "AGENT_ADMIN"))).limit(1);
+  if (!u && userId) return c.json({ error: "Login not found for this agency" }, 404);
+  let created = false;
+  if (!u) {
+    const [taken] = await db.select({ id: users.id }).from(users).where(and(eq(users.tenantId, tenantId), sql`lower(${users.email}) = ${a.email.toLowerCase()}`)).limit(1);
+    if (taken) return c.json({ error: `${a.email} is already used by another login. Change the agency email first.` }, 409);
+    [u] = await db.insert(users).values({ tenantId, name: a.ownerName, email: a.email, phone: a.phone, role: "AGENT_ADMIN", agentId: a.id, isActive: true, emailVerified: false })
+      .returning({ id: users.id, email: users.email, name: users.name, isActive: users.isActive });
+    created = true;
+  }
+  if (!u.email) return c.json({ error: "This login has no email address" }, 400);
+  if (!u.isActive) await db.update(users).set({ isActive: true }).where(eq(users.id, u.id));
+  if (mode === "link") {
+    const link = await sendAgentPasswordReset(c.env, db, tenantId, u.id, u.email, u.name);
+    await audit(db, { tenantId, userId: c.get("userId"), action: "AGENT_PASSWORD_RESET_SENT", entity: "User", entityId: u.id, after: { email: u.email, created } });
+    return c.json({ ok: true, email: u.email, link, created });
+  }
+  const temporary = tempPassword();
+  await db.update(users).set({ passwordHash: await pbkdf2HashPassword(temporary), updatedAt: new Date() }).where(eq(users.id, u.id));
+  await c.env.SESSIONS_KV.delete(`session:${u.id}`).catch(() => {});
+  await audit(db, { tenantId, userId: c.get("userId"), action: "AGENT_PASSWORD_SET_BY_ADMIN", entity: "User", entityId: u.id, after: { email: u.email, created } });
+  return c.json({ ok: true, email: u.email, temporaryPassword: temporary, created });
+});
+
+// Readable one-off password: 3 words of letters + digits, no look-alike characters.
+function tempPassword() {
+  const A = "abcdefghjkmnpqrstuvwxyz", D = "23456789";
+  const r = crypto.getRandomValues(new Uint32Array(14));
+  const pick = (set: string, i: number) => set[r[i] % set.length];
+  const part = (o: number) => Array.from({ length: 4 }, (_, i) => pick(A, o + i)).join("");
+  return `${part(0)}-${part(4)}-${pick(D, 8)}${pick(D, 9)}${pick(D, 10)}${pick(A, 11).toUpperCase()}`;
+}
+
+// ── Onboarding settings (KYC required per region, MOU company details) ───────
+agentProgramAdminRoutes.get("/onboarding", async (c) => c.json({ config: await getOnboarding(c.env, c.get("tenantId")), docTypes: DOC_TYPES, labels: DOC_LABEL }));
+
+agentProgramAdminRoutes.put("/onboarding", zValidator("json", z.object({
+  enforce: z.boolean(),
+  kycRequired: z.object({ INDIA: z.array(z.enum(DOC_TYPES)).max(8), GCC: z.array(z.enum(DOC_TYPES)).max(8) }),
+  requireMou: z.boolean(),
+  mouVersion: z.string().trim().min(1).max(20),
+  company: z.object({
+    legalName: z.string().trim().max(150), address: z.string().trim().max(300), registration: z.string().trim().max(150),
+    email: z.string().trim().max(120), phone: z.string().trim().max(40), signatory: z.string().trim().max(100), signatoryTitle: z.string().trim().max(80),
+  }),
+  extraClauses: z.string().max(4000),
+  governingLaw: z.object({ INDIA: z.string().trim().min(3).max(200), GCC: z.string().trim().min(3).max(200) }),
+})), async (c) => {
+  const tenantId = c.get("tenantId");
+  const before = await getOnboarding(c.env, tenantId);
+  const next = c.req.valid("json");
+  await saveOnboarding(c.env, tenantId, next);
+  await audit(c.get("db"), { tenantId, userId: c.get("userId"), action: "AGENT_ONBOARDING_UPDATED", entity: "Tenant", entityId: tenantId, before, after: next });
+  return c.json({ config: await getOnboarding(c.env, tenantId) });
+});
+
+// Signed MOU (frozen copy) or the current draft, as a printable page.
+agentProgramAdminRoutes.get("/agents/:id/mou", async (c) => {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const [a] = await db.select().from(agents).where(and(eq(agents.id, c.req.param("id")), eq(agents.tenantId, tenantId))).limit(1);
+  if (!a) return c.json({ error: "Agency not found" }, 404);
+  const signed = settingsOf(a).mou;
+  let body = "";
+  if (signed) {
+    const obj = await c.env.DOCUMENTS_R2.get(signed.r2Key).catch(() => null);
+    if (obj) body = await new Response(obj.body as unknown as BodyInit).text();
+  }
+  if (!body) {
+    const [cfg, program, [t]] = await Promise.all([getOnboarding(c.env, tenantId), getProgram(c.env, tenantId),
+      db.select({ name: tenants.name, companyName: tenants.companyName, supportEmail: tenants.supportEmail, supportPhone: tenants.supportPhone }).from(tenants).where(eq(tenants.id, tenantId)).limit(1)]);
+    body = renderMou({ cfg, tenant: t ?? { name: "FlyPoomas" }, agent: a, program }).html + `<p style="font-family:Arial;color:#b42318;text-align:center">Draft — not yet accepted by the agency</p>`;
+  }
+  return new Response(printablePage(`MOU · ${a.businessName}`, body), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+});
+
+// Ask the agency to review and sign the MOU again (e.g. after its terms changed).
+agentProgramAdminRoutes.post("/agents/:id/mou/reset", async (c) => {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const [a] = await db.select().from(agents).where(and(eq(agents.id, c.req.param("id")), eq(agents.tenantId, tenantId))).limit(1);
+  if (!a) return c.json({ error: "Agency not found" }, 404);
+  const before = settingsOf(a).mou ?? null;
+  await updateSettings(db, a.id, { mou: undefined });
+  await audit(db, { tenantId, userId: c.get("userId"), action: "AGENT_MOU_RESET", entity: "Agent", entityId: a.id, before });
+  return c.json({ ok: true });
 });
 
 agentProgramAdminRoutes.patch("/agents/:id/credit", zValidator("json", z.object({ creditLimit: z.number().min(0).max(100_000_000) })), async (c) => {

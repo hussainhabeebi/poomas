@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { AiTripSearch, type AiTripFields } from "./AiTripSearch";
 import { useRouter } from "next/navigation";
+import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
+import { CURRENCY_LIST, type DisplayCurrency } from "../lib/fx";
 
 const AIRPORTS = [
   { code: "BOM", city: "Mumbai",        country: "IN" },
@@ -53,12 +55,11 @@ const CABIN_MAP: Record<string, string> = {
   "Business": "BUSINESS", "First": "FIRST",
 };
 
-const CURRENCIES = [
-  { code: "INR", symbol: "₹" },
-  { code: "AED", symbol: "د.إ" },
-  { code: "USD", symbol: "$" },
-] as const;
-type CurrencyCode = "INR" | "AED" | "USD";
+// INR and AED as quick picks; the other GCC currencies and USD under "More".
+const CURRENCIES = CURRENCY_LIST;
+const QUICK_CURRENCIES = CURRENCY_LIST.filter((c) => c.code === "INR" || c.code === "AED");
+const MORE_CURRENCIES = CURRENCY_LIST.filter((c) => c.code !== "INR" && c.code !== "AED");
+type CurrencyCode = DisplayCurrency;
 
 type Airport = typeof AIRPORTS[number];
 type TripType = "One Way" | "Round Trip" | "Multi-city";
@@ -212,17 +213,21 @@ export default function SearchWidget() {
     return () => window.clearInterval(timer);
   }, [searching]);
 
-  // Restore currency preference from localStorage on first render
+  // One currency for the whole visit (and the signed-in account): restore it and follow changes made elsewhere.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("pref_currency") as CurrencyCode | null;
-      if (saved && CURRENCIES.some((c) => c.code === saved)) setCurrencyState(saved);
-    } catch {}
+    const saved = readPrefCurrency();
+    if (saved && CURRENCIES.some((c) => c.code === saved)) setCurrencyState(saved);
+    const onChange = (e: Event) => {
+      const code = (e as CustomEvent).detail;
+      if (CURRENCIES.some((c) => c.code === code)) setCurrencyState(code);
+    };
+    window.addEventListener(CURRENCY_EVENT, onChange);
+    return () => window.removeEventListener(CURRENCY_EVENT, onChange);
   }, []);
 
   function setCurrency(code: CurrencyCode) {
     setCurrencyState(code);
-    try { localStorage.setItem("pref_currency", code); } catch {}
+    savePrefCurrency(code);
   }
 
   function swap() {
@@ -313,7 +318,7 @@ export default function SearchWidget() {
 
         {/* Currency selector */}
         <div className="currency-pills" role="group" aria-label="Currency">
-          {CURRENCIES.map((cur) => (
+          {QUICK_CURRENCIES.map((cur) => (
             <button
               key={cur.code}
               type="button"
@@ -321,9 +326,23 @@ export default function SearchWidget() {
               onClick={() => setCurrency(cur.code)}
               aria-pressed={currency === cur.code}
             >
-              {cur.symbol} {cur.code}
+              {cur.code === "INR" ? "₹ INR" : cur.code}
             </button>
           ))}
+          {(() => {
+            const inMore = MORE_CURRENCIES.some((c) => c.code === currency);
+            return (
+              <select
+                className={inMore ? "currency-pill currency-more currency-pill-active" : "currency-pill currency-more"}
+                value={inMore ? currency : ""}
+                onChange={(e) => { const c = MORE_CURRENCIES.find((m) => m.code === e.target.value); if (c) setCurrency(c.code); }}
+                aria-label="More currencies"
+              >
+                <option value="" disabled>More</option>
+                {MORE_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
+              </select>
+            );
+          })()}
         </div>
       </div>
 

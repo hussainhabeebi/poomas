@@ -6,6 +6,8 @@ import { ScanDocument, type ScannedTraveller } from "../components/ScanDocument"
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
+import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
+import { convertInr, fetchFxRates, formatIn, GCC, isDisplayCurrency, type DisplayCurrency, type FxRates } from "../lib/fx";
 
 type Passenger = {
   type: "ADULT" | "CHILD" | "INFANT";
@@ -19,9 +21,9 @@ type Passenger = {
 };
 
 type SsrOption = { code: string; amount: number; desc: string };
-type ReviewSegment = { key: string; airline: string; flightNumber: string; origin: string; destination: string; departureTime: string; ssr: { baggage: SsrOption[]; meal: SsrOption[]; extra: SsrOption[] } };
+type ReviewSegment = { key: string; airline: string; airlineName?: string; flightNumber: string; origin: string; destination: string; departureTime: string; arrivalTime?: string; duration?: number; isReturn?: boolean; ssr: { baggage: SsrOption[]; meal: SsrOption[]; extra: SsrOption[] } };
 type Review = {
-  bookingId: string; totalFare?: number; expiresAt?: string;
+  bookingId: string; totalFare?: number; displayTotal?: number; currency?: string; expiresAt?: string;
   fareIdentifiers: string[];
   fareAlert?: { oldFare?: number; newFare?: number; message?: string };
   segments: ReviewSegment[];
@@ -94,6 +96,97 @@ function withRebookTravellers(list: Passenger[], from: string, to: string): Pass
   }
 }
 
+type HandoffSession = {
+  fareId: string; supplier: string; email?: string; mobile?: string;
+  agentNumber?: string; agentCurrency?: string;   // Leadvyne Live Agency that sent the customer
+  passengers: { type: Passenger["type"]; firstName: string; lastName: string; dob?: string; gender?: string; nationality?: string; passportNumber?: string; passportExpiry?: string }[];
+};
+
+// Fills flight details missing from the link (WhatsApp / Leadvyne hand-offs)
+// from the airline's fare review.
+function fillFromReview(f: FareInfo, r: Review): FareInfo {
+  const segs = r.segments ?? [];
+  const onward = segs.filter((s) => !s.isReturn);
+  const legs = onward.length ? onward : segs;
+  if (!legs.length) return f;
+  const first = legs[0], last = legs[legs.length - 1];
+  const price = r.displayTotal ?? r.totalFare;
+  return {
+    ...f,
+    airlineName:   f.airlineName || first.airlineName || first.airline,
+    flightNumber:  f.flightNumber || legs.map((s) => s.flightNumber).join(" / "),
+    origin:        f.origin || first.origin,
+    destination:   f.destination || last.destination,
+    departureTime: f.departureTime || first.departureTime,
+    arrivalTime:   f.arrivalTime || last.arrivalTime || "",
+    // Airline segment durations (local clock times differ across time zones).
+    duration:      f.duration || legs.reduce((n, s) => n + (s.duration ?? 0), 0),
+    stops:         f.departureTime ? f.stops : Math.max(0, legs.length - 1),
+    ...(!(f.totalFare > 0) && price ? { totalFare: price, currency: "INR" } : {}),
+  };
+}
+
+// The flight's other fare options (Saver / Standard / Flexi…) passed from search:
+// shows what this option includes and lets the customer switch or upgrade.
+type AltOption = { id: string; label: string; price: number; checked: string; cabin: string; meal: string; ref: string };
+function FareOptionSwitcher({ money, currentPrice, disabled }: { money: (n: number) => string; currentPrice: number; disabled: boolean }) {
+  const [state, setState] = useState<{ current: AltOption; alts: AltOption[] } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    let alts: AltOption[] = [];
+    try { alts = JSON.parse(q.get("alts") ?? "[]"); } catch {}
+    const meal = q.get("meal");
+    const current: AltOption = {
+      id: q.get("fareId") ?? "", label: q.get("fl") ?? "Standard", price: Number(q.get("price")) || 0,
+      checked: q.get("bag") ?? "", cabin: q.get("cab") ?? "", meal: meal === "1" ? "Free meal" : meal === "0" ? "Meal at cost" : "",
+      ref: q.get("ref") === "1" ? "Refundable" : "Non-refundable",
+    };
+    if (alts.length) setState({ current, alts: alts.filter((a) => a && typeof a.id === "string" && a.price > 0) });
+  }, []);
+  if (!state || !state.alts.length) return null;
+
+  function choose(o: AltOption) {
+    const q = new URLSearchParams(window.location.search);
+    const rest = [state!.current, ...state!.alts].filter((a) => a.id !== o.id);
+    q.set("fareId", o.id); q.set("price", String(o.price)); q.set("bag", o.checked); q.set("cab", o.cabin); q.set("fl", o.label);
+    q.set("ref", o.ref === "Non-refundable" ? "0" : "1");
+    if (o.meal) q.set("meal", o.meal === "Free meal" ? "1" : "0"); else q.delete("meal");
+    q.delete("priceIds");
+    q.set("alts", JSON.stringify(rest));
+    window.location.assign(`/book?${q.toString()}`);
+  }
+
+  // The chosen option first, then the others cheapest first.
+  const all = [state.current, ...[...state.alts].sort((a, b) => a.price - b.price)];
+  const base = currentPrice || state.current.price;
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+        <b style={{ fontSize: 15 }}>Fare options for this flight</b>
+        <span style={{ fontSize: 12, color: "#667085" }}>{all.length} options</span>
+      </div>
+      <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(150px, 1fr)", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+        {all.map((o) => {
+          const on = o.id === state.current.id;
+          const diff = o.price - state.current.price;
+          return (
+            <button key={o.id} type="button" disabled={disabled || on} onClick={() => choose(o)}
+              style={{ textAlign: "left", border: on ? "2px solid #ed1c24" : "1px solid #eaecf0", background: on ? "#fff1f2" : "#fff", borderRadius: 12, padding: 10, cursor: on ? "default" : "pointer", display: "flex", flexDirection: "column", gap: 4, font: "inherit", color: "#101828" }}>
+              <b style={{ fontSize: 13 }}>{o.label}{on ? " ✓" : ""}</b>
+              <span style={{ fontSize: 12, color: o.checked ? "#344054" : "#98a2b3" }}>🧳 {o.checked || "No check-in bag"}</span>
+              {o.cabin && <span style={{ fontSize: 12, color: "#344054" }}>👜 {o.cabin} cabin</span>}
+              {o.meal && <span style={{ fontSize: 12, color: o.meal === "Free meal" ? "#344054" : "#98a2b3" }}>🍽 {o.meal}</span>}
+              <span style={{ fontSize: 12, color: o.ref === "Non-refundable" ? "#98a2b3" : "#067647" }}>{o.ref}</span>
+              <b style={{ fontSize: 14, marginTop: 2 }}>{on ? money(base) : diff > 0 ? `+ ${money(diff)}` : `− ${money(-diff)}`}</b>
+              {!on && <span style={{ fontSize: 12, fontWeight: 800, color: "#ed1c24" }}>{diff > 0 ? "Upgrade" : "Switch"} →</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function getToken(): string {
   try {
     const match = document.cookie.match(/(?:^|;\s*)poomas_token=([^;]+)/);
@@ -113,9 +206,19 @@ export default function BookPage() {
   const [pendingPayment, setPendingPayment] = useState<{ bookingId: string; checkoutToken: string } | null>(null);
   // Offered when a signed-in customer's wallet covers the whole (INR) fare.
   const [walletOffer, setWalletOffer] = useState<{ amount: number; balance: number } | null>(null);
-  // Card payment currency: INR, or AED at the admin-set rate (INR per 1 AED).
-  const [payCurrency, setPayCurrency] = useState<"INR" | "AED">("INR");
-  const [aedRate, setAedRate] = useState<number | null>(null);
+  // Prices are shown in the visitor's currency (automatic exchange rates, INR per 1 unit).
+  // Cards are charged in INR, or in AED for the GCC currencies.
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("INR");
+  const [rates, setRates] = useState<FxRates>({});
+  // Leadvyne Live Agency that sent this customer (from the checkout link): tags the booking.
+  const [leadAgentNumber, setLeadAgentNumber] = useState("");
+  // Currency changed in the site menu: follow it here.
+  useEffect(() => {
+    const onChange = (e: Event) => { const c = (e as CustomEvent).detail; if (isDisplayCurrency(c)) setDisplayCurrency(c); };
+    window.addEventListener(CURRENCY_EVENT, onChange);
+    return () => window.removeEventListener(CURRENCY_EVENT, onChange);
+  }, []);
+  const aedRate = rates.AED ?? null;
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState("");
   const [fareExpired, setFareExpired] = useState(false);
@@ -148,18 +251,55 @@ export default function BookPage() {
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
+    // WhatsApp / Leadvyne hand-off: /book?session=<token> carries the fare and
+    // travellers server-side (no flight details in the link).
+    const session = q.get("session");
+    if (session && !q.get("fareId")) {
+      fetch(`${apiUrl}/api/integrations/checkout-sessions/${encodeURIComponent(session)}`, { headers: { "x-tenant-slug": "poomas" } })
+        .then(async (r) => { if (!r.ok) throw new Error(); return r.json() as Promise<HandoffSession>; })
+        .then((h) => {
+          q.set("fareId", h.fareId); q.set("supplier", h.supplier);
+          if (h.agentNumber) setLeadAgentNumber(h.agentNumber);
+          if (h.agentCurrency && !q.get("pc")) q.set("pc", h.agentCurrency);
+          start(q, h);
+        })
+        .catch(() => setReviewError("This booking link has expired. Please ask us on WhatsApp for a new one."));
+      return;
+    }
+    start(q);
+  }, []);
+
+  function start(q: URLSearchParams, handoff?: HandoffSession) {
     const fareId   = q.get("fareId") ?? "";
     const supplier = q.get("supplier") ?? "";
     if (!fareId || !supplier) return;
-    const adults   = Math.min(9, Math.max(1, Number(q.get("adults"))   || 1));
-    const children = Math.min(6, Math.max(0, Number(q.get("children")) || 0));
-    const infants  = Math.min(4, Math.max(0, Number(q.get("infants"))  || 0));
+    const count = (t: Passenger["type"]) => handoff?.passengers.filter((p) => p.type === t).length ?? 0;
+    const adults   = Math.min(9, Math.max(1, handoff ? count("ADULT") : Number(q.get("adults")) || 1));
+    const children = Math.min(6, Math.max(0, handoff ? count("CHILD") : Number(q.get("children")) || 0));
+    const infants  = Math.min(4, Math.max(0, handoff ? count("INFANT") : Number(q.get("infants")) || 0));
     const blank = [
       ...Array.from({ length: adults },   () => emptyPassenger("ADULT")),
       ...Array.from({ length: children }, () => emptyPassenger("CHILD")),
       ...Array.from({ length: infants },  () => emptyPassenger("INFANT")),
     ];
-    setPassengers(withRebookTravellers(blank, q.get("from") ?? "", q.get("to") ?? ""));
+    if (handoff) {
+      const pool = [...handoff.passengers];
+      setPassengers(blank.map((p) => {
+        const i = pool.findIndex((x) => x.type === p.type);
+        if (i < 0) return p;
+        const h = pool.splice(i, 1)[0];
+        return { ...p, firstName: h.firstName, lastName: h.lastName, dob: h.dob || "", gender: h.gender === "F" ? "F" : "M",
+          nationality: h.nationality || p.nationality, passportNumber: h.passportNumber || "", passportExpiry: h.passportExpiry || "" };
+      }));
+      if (handoff.email) setEmail(handoff.email);
+      if (handoff.mobile) setPhone(handoff.mobile);
+    } else {
+      setPassengers(withRebookTravellers(blank, q.get("from") ?? "", q.get("to") ?? ""));
+    }
+    // Without a price in the link the fare is shown in INR from the airline's
+    // review; a requested AED display becomes the card currency instead.
+    const priceKnown = Number(q.get("price")) > 0;
+    const fareCurrency = priceKnown ? (q.get("cur") ?? "INR") : "INR";
     setFare({
       fareId, supplier,
       airlineName:   q.get("airline") ?? "",
@@ -170,8 +310,8 @@ export default function BookPage() {
       arrivalTime:   q.get("arr") ?? "",
       duration:      parseInt(q.get("dur") ?? "0"),
       stops:         parseInt(q.get("stops") ?? "0"),
-      totalFare:     parseFloat(q.get("price") ?? "0"),
-      currency:      q.get("cur") ?? "INR",
+      totalFare:     priceKnown ? parseFloat(q.get("price")!) : 0,
+      currency:      fareCurrency,
       isRefundable:  q.get("ref") === "1",
       cabinChecked:  q.get("bag") ?? "",
     });
@@ -186,27 +326,21 @@ export default function BookPage() {
         body: JSON.stringify({ priceIds, ...(q.get("sid") ? { searchId: q.get("sid") } : {}) }),
       })
         .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error ?? "We couldn't confirm availability."), { code: d.errorCode }); return d as Review; })
-        .then((d) => { setReview(d); if (d.conditions.gstMandatory) setUseGst(true); })
+        .then((d) => { setReview(d); setFare((f) => f && fillFromReview(f, d)); if (d.conditions.gstMandatory) setUseGst(true); })
         .catch((e) => { if (e.code === "FARE_EXPIRED") setFareExpired(true); else setReviewError(e.message); })
         .finally(() => setReviewLoading(false));
     }
 
     // Offer AED when the admin has set a rate; start with the customer's chosen currency.
-    let wanted = q.get("pc");
-    if (!wanted) { try { wanted = localStorage.getItem("pref_currency"); } catch {} }
-    if ((q.get("cur") ?? "INR") === "INR") {
-      fetch(`${apiUrl}/api/search/fx`, { headers: { "x-tenant-slug": "poomas" } })
-        .then((r) => r.json())
-        .then((d: { rates?: { AED?: number | null } }) => {
-          const rate = Number(d.rates?.AED);
-          if (Number.isFinite(rate) && rate > 0) {
-            setAedRate(rate);
-            if (wanted === "AED") setPayCurrency("AED");
-          }
-        })
-        .catch(() => {});
+    // The visitor's fixed currency wins; links only decide when none was chosen yet.
+    const wanted = readPrefCurrency() ?? q.get("pc") ?? (!priceKnown && q.get("cur") === "AED" ? "AED" : null);
+    if (fareCurrency === "INR") {
+      fetchFxRates(apiUrl).then((r) => {
+        setRates(r);
+        if (isDisplayCurrency(wanted) && (wanted === "INR" || r[wanted])) setDisplayCurrency(wanted);
+      });
     }
-  }, []);
+  }
 
   useEffect(() => {
     const t = getToken();
@@ -285,14 +419,37 @@ export default function BookPage() {
     } catch { return new Intl.NumberFormat("en"); }
   }, [fare?.currency]);
 
-  // Amount shown in the chosen card currency (rounded up like the payment API).
-  const shownTotal = (inr: number) => {
-    if (payCurrency === "AED" && aedRate && fare?.currency === "INR") {
-      const aed = Math.ceil((inr / aedRate) * 100 - 1e-9) / 100;
-      return `AED ${aed.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
-    return money.format(inr);
+  // Any amount (fare, extra bag, meal, seat) in the chosen card currency,
+  // rounded up like the payment API.
+  const fareInInr = fare?.currency === "INR";
+  const shownCur: DisplayCurrency = fareInInr && displayCurrency !== "INR" && rates[displayCurrency] ? displayCurrency : "INR";
+  const payCurrency: "INR" | "AED" = shownCur !== "INR" && (GCC as readonly string[]).includes(shownCur) && aedRate ? "AED" : "INR";
+  const inForeign = shownCur !== "INR";
+  const amt = (inr: number) => {
+    const v = inForeign ? convertInr(inr, shownCur, rates) : null;
+    return v === null ? money.format(inr) : formatIn(v, shownCur);
   };
+  const shownTotal = (inr: number) => (inr > 0 ? amt(inr) : "—");   // "—" while the airline price is checked
+  // What the card is charged when it differs from the shown currency.
+  const chargedNote = (inr: number) => {
+    if (!inForeign || inr <= 0 || payCurrency === shownCur) return "";
+    const v = payCurrency === "AED" ? convertInr(inr, "AED", rates) : inr;
+    return v === null ? "" : `Charged ${payCurrency === "AED" ? formatIn(v, "AED") : money.format(v)}`;
+  };
+  function chooseCurrency(cur: DisplayCurrency) {
+    setDisplayCurrency(cur);
+    savePrefCurrency(cur);
+  }
+  const switchOptions = (["INR", "AED", ...(shownCur !== "INR" && shownCur !== "AED" ? [shownCur] : [])] as DisplayCurrency[])
+    .filter((c) => c === "INR" || rates[c]);
+  const currencySwitch = fareInInr && switchOptions.length > 1 ? (
+    <div className="curSwitch" role="radiogroup" aria-label="Price currency">
+      {switchOptions.map((cur) => (
+        <button key={cur} type="button" role="radio" aria-checked={shownCur === cur} className={shownCur === cur ? "on" : ""}
+          disabled={submitting} onClick={() => chooseCurrency(cur)}>{cur === "INR" ? "₹ INR" : cur}</button>
+      ))}
+    </div>
+  ) : null;
 
   // Passport / ID scan → this traveller's fields (only fields the document gave).
   const [scanWarn, setScanWarn] = useState<Record<number, string>>({});
@@ -468,6 +625,7 @@ export default function BookPage() {
         name: emergency.name.trim(), phone: emergency.phone.trim(), ...(emergency.email.trim() ? { email: emergency.email.trim() } : {}),
       } } : {}),
       ...(new URLSearchParams(window.location.search).get("sid") ? { searchId: new URLSearchParams(window.location.search).get("sid") } : {}),
+      ...(leadAgentNumber ? { leadAgentNumber } : {}),
       passengers:    passengers.map((p) => ({
         type:           p.type,
         gender:         p.gender,
@@ -739,16 +897,11 @@ export default function BookPage() {
             <div><b>{fare.airlineName}</b><span>{fare.flightNumber}</span></div>
             <strong>{shownTotal(grandTotal)}</strong>
           </div>
-          {aedRate && fare.currency === "INR" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
-              <span style={{ color: "#64748b" }}>Pay by card in</span>
-              {(["INR", "AED"] as const).map((cur) => (
-                <button key={cur} type="button" onClick={() => setPayCurrency(cur)} disabled={submitting}
-                  style={{ border: `1.5px solid ${payCurrency === cur ? "#E31E24" : "#e2e8f0"}`, background: payCurrency === cur ? "#fff1f2" : "#fff", color: "#0f172a", borderRadius: 20, padding: "4px 12px", fontWeight: 700, cursor: "pointer" }}>
-                  {cur === "INR" ? "₹ INR" : "AED"}
-                </button>
-              ))}
-              {payCurrency === "AED" && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 AED = ₹{aedRate}</span>}
+          {currencySwitch && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 8px", fontSize: 13, flexWrap: "wrap" }}>
+              <span style={{ color: "#64748b" }}>Show prices in</span>
+              {currencySwitch}
+              {inForeign && grandTotal > 0 && <span style={{ color: "#64748b" }}>≈ {money.format(grandTotal)} · 1 {shownCur} = ₹{rates[shownCur]}{chargedNote(grandTotal) ? ` · ${chargedNote(grandTotal)}` : ""}</span>}
             </div>
           )}
           <div className="route">
@@ -772,6 +925,8 @@ export default function BookPage() {
           <span>{review.fareAlert.message ?? `Fare changed${review.fareAlert.oldFare ? ` from ₹${review.fareAlert.oldFare}` : ""}${review.fareAlert.newFare ? ` to ₹${review.fareAlert.newFare}` : ""}.`} Please check the total before paying.</span>
         </div>
       )}
+      <FareOptionSwitcher money={(n) => shownTotal(n)} currentPrice={fare?.totalFare ?? 0} disabled={submitting || !!pendingPayment} />
+
       {review && review.fareIdentifiers.length > 0 && !review.fareIdentifiers.every((f) => f === "PUBLISHED") && (
         <p className="checkoutProgress" style={{ marginTop: 0 }}>Fare type: <b>{review.fareIdentifiers.map((f) => ({ SPECIAL_RETURN: "Special Return", TJ_FLEX: "Flex", STUDENT: "Student", SENIOR_CITIZEN: "Senior Citizen" } as Record<string, string>)[f] ?? f).join(" + ")}</b></p>
       )}
@@ -871,18 +1026,18 @@ export default function BookPage() {
                               <label>Extra baggage
                                 <select value={p.bag[seg.key] ?? ""} onChange={(e) => updSsr(i, "bag", seg.key, e.target.value)}>
                                   <option value="">None</option>
-                                  {seg.ssr.baggage.map((o) => <option key={o.code} value={o.code}>{o.desc} · {o.amount ? money.format(o.amount) : "included"}</option>)}
+                                  {seg.ssr.baggage.map((o) => <option key={o.code} value={o.code}>{o.desc} · {o.amount ? amt(o.amount) : "included"}</option>)}
                                 </select>
-                                {bag && <small className="ssrPick">{bag.amount ? `+ ${money.format(bag.amount)}` : "Covers the whole connecting journey"}</small>}
+                                {bag && <small className="ssrPick">{bag.amount ? `+ ${amt(bag.amount)}` : "Covers the whole connecting journey"}</small>}
                               </label>
                             )}
                             {seg.ssr.meal.length > 0 && (
                               <label>Meal
                                 <select value={p.meal[seg.key] ?? ""} onChange={(e) => updSsr(i, "meal", seg.key, e.target.value)}>
                                   <option value="">None</option>
-                                  {seg.ssr.meal.map((o) => <option key={o.code} value={o.code}>{o.desc}{o.amount ? ` · ${money.format(o.amount)}` : ""}</option>)}
+                                  {seg.ssr.meal.map((o) => <option key={o.code} value={o.code}>{o.desc}{o.amount ? ` · ${amt(o.amount)}` : ""}</option>)}
                                 </select>
-                                {meal && <small className="ssrPick" title={meal.desc}>{meal.amount ? `+ ${money.format(meal.amount)}` : "Included"}</small>}
+                                {meal && <small className="ssrPick" title={meal.desc}>{meal.amount ? `+ ${amt(meal.amount)}` : "Included"}</small>}
                               </label>
                             )}
                           </div>
@@ -911,7 +1066,7 @@ export default function BookPage() {
               <div><h2>Seats</h2><p>Optional · pick a seat for each traveller. Paid seats are added to your total.</p></div>
             </div>
             {seatMaps?.length ? (
-              <SeatPicker maps={seatMaps} segments={review?.segments ?? []} travellers={passengers} onPick={pickSeat} format={(n) => money.format(n)} />
+              <SeatPicker maps={seatMaps} segments={review?.segments ?? []} travellers={passengers} onPick={pickSeat} format={(n) => amt(n)} />
             ) : (
               <button type="button" className="seatLoad" disabled={seatLoading} onClick={() => void loadSeatMap()}>
                 {seatLoading ? "Loading seat map…" : "Choose seats"}
@@ -968,10 +1123,10 @@ export default function BookPage() {
           </section>
         )}
         {ssrSum > 0 && (
-          <p className="checkoutProgress">Meals &amp; baggage: <b>{money.format(ssrSum)}</b> added to the fare.</p>
+          <p className="checkoutProgress">Meals &amp; baggage: <b>{amt(ssrSum)}</b> added to the fare.</p>
         )}
         {seatSum > 0 && (
-          <p className="checkoutProgress">Seats: <b>{money.format(seatSum)}</b> added to the fare.</p>
+          <p className="checkoutProgress">Seats: <b>{amt(seatSum)}</b> added to the fare.</p>
         )}
 
         </>)}
@@ -987,8 +1142,9 @@ export default function BookPage() {
         <div className="spacer" />
         <div className="pay">
           <div>
-            <span>Total</span>
+            <span>Total{inForeign && grandTotal > 0 ? ` ≈ ${money.format(grandTotal)}` : ""}{chargedNote(grandTotal) ? ` · ${chargedNote(grandTotal)}` : ""}</span>
             <b>{fare ? shownTotal(grandTotal) : "—"}</b>
+            {currencySwitch && <div className="paySwitch">{currencySwitch}</div>}
           </div>
           <button disabled={!fare || submitting || fareExpired || bookingUncertain}>
             {submitting ? (walletOffer ? "Paying from wallet…" : pendingPayment ? "Opening payment…" : "Checking availability…") : bookingUncertain ? "Contact support to check status" : walletOffer ? `Pay ₹${walletOffer.amount.toLocaleString("en-IN")} from wallet` : pendingPayment ? "Try payment again" : reviewing ? "Continue to payment" : "Review booking"}
@@ -1014,6 +1170,6 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div className="row"><span>{l}</span><b>{v}</b></div>;
 }
 
-const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}.holdOffer{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:12px 14px;margin:14px 0}.holdOffer div{display:flex;flex-direction:column;gap:3px;flex:1 1 240px;font-size:13px;color:#78350f}.holdOffer b{font-size:14px;color:#451a03}.holdOffer button{height:44px;padding:0 16px;border:1px solid #d97706;border-radius:12px;background:#fff;color:#92400e;font-weight:800;font-size:14px;cursor:pointer}.holdOffer button:disabled{opacity:.6}${seatCss}`;
+const checkoutCss = `.ssrBox{margin-top:14px;padding:14px;border:1px solid #eaecf0;border-radius:14px;background:#f9fafb;max-width:100%;overflow:hidden}.ssrHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}.ssrHead b{font-size:14px;color:#101828}.ssrHead span{font-size:12px;color:#667085}.ssrSeg{margin-top:12px}.ssrSeg+.ssrSeg{padding-top:12px;border-top:1px solid #eaecf0}.ssrFlight{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#344054;margin-bottom:8px}.ssrFlight small{font-weight:600;color:#98a2b3}.ssrGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ssrGrid label{min-width:0}.ssrGrid select{width:100%;min-width:0;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:15px}.ssrPick{font-size:12px;font-weight:600;color:#067647;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media(max-width:560px){.ssrGrid{grid-template-columns:minmax(0,1fr)}}.ck header{position:static;z-index:auto}.checkoutProgress{font-size:13px;color:#667085;margin:16px 0}.socialButtons{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}.appleButton{background:#000;color:#fff;border:1px solid #000;min-height:44px;border-radius:6px;padding:10px 20px;font:600 15px system-ui;cursor:pointer}.signinNote{font-size:13px;color:#667085;line-height:1.5}.passportSection{margin-top:16px}.intlBadge{font-size:12px;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 11px;margin-bottom:12px}.ck .card h2{font-size:18px}.loginBanner{background:#fff;border-color:#eaecf0;color:#344054}.seatLoad{height:44px;padding:0 18px;border:1px solid #ed1c24;border-radius:12px;background:#fff1f2;color:#be123c;font-weight:800;font-size:14px;cursor:pointer}.seatLoad:disabled{opacity:.6}.seatError{font-size:13px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 11px;margin:10px 0 0}.curSwitch{display:inline-flex;background:#f2f4f7;border-radius:999px;padding:3px;gap:2px}.curSwitch button{border:0;background:transparent;color:#475467;font-weight:800;font-size:12px;border-radius:999px;padding:5px 12px;cursor:pointer;min-height:28px}.curSwitch button.on{background:#fff;color:#ed1c24;box-shadow:0 1px 3px rgba(16,24,40,.15)}.paySwitch{margin-top:4px}.paySwitch .curSwitch button{padding:3px 9px;font-size:11px;min-height:24px}.holdOffer{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:12px 14px;margin:14px 0}.holdOffer div{display:flex;flex-direction:column;gap:3px;flex:1 1 240px;font-size:13px;color:#78350f}.holdOffer b{font-size:14px;color:#451a03}.holdOffer button{height:44px;padding:0 16px;border:1px solid #d97706;border-radius:12px;background:#fff;color:#92400e;font-weight:800;font-size:14px;cursor:pointer}.holdOffer button:disabled{opacity:.6}${seatCss}`;
 
 const css = `.checkBanner{display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:11px 14px;border-radius:12px;font-size:13px;font-weight:700;margin-bottom:14px}.checkError{justify-content:space-between;background:#fff7ed;border-color:#fed7aa;color:#9a3412}.checkError button{border:0;background:#ea580c;color:#fff;border-radius:8px;padding:7px 12px;font-weight:800;cursor:pointer}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #bae6fd;border-top-color:#0369a1;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}@keyframes spin{to{transform:rotate(360deg)}}body{background:#f5f7fb}.ck{max-width:760px;margin:auto;min-height:100vh;padding:0 14px 32px;color:#101828}.ck header{position:sticky;top:0;z-index:30;margin:0 -14px;padding:12px 14px;background:#fff;display:flex;gap:12px;align-items:center;border-bottom:1px solid #eaecf0}.ck header button{width:44px;height:44px;border:0;border-radius:14px;background:#f2f4f7;font-size:31px}.ck header div{display:flex;flex-direction:column}.ck header div span{font-size:11px;color:#667085}.ck header i{margin-left:auto;font-style:normal}.steps{display:flex;align-items:center;padding:18px 24px 4px}.steps b{width:28px;height:28px;border-radius:50%;background:#ed1c24;color:#fff;display:grid;place-items:center;font-size:12px}.steps b.off{background:#e4e7ec;color:#667085}.steps em{height:3px;flex:1;background:#ed1c24}.steps em.off{background:#e4e7ec}.stepLabels{display:flex;justify-content:space-between;padding:0 10px 16px;color:#667085;font-size:11px;font-weight:700}.err{display:flex;flex-direction:column;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;padding:13px;border-radius:14px;margin-bottom:14px}.loginBanner{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:12px 14px;border-radius:14px;margin-bottom:14px;font-size:13px}.linkBtn{background:none;border:none;color:#1d4ed8;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit}.loginCard{border-color:#bfdbfe}.loginBtn{flex:1;height:44px;border:0;border-radius:12px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:700;cursor:pointer}.loginBtn:disabled{opacity:.55}.cancelBtn{height:44px;padding:0 18px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;font-size:14px;cursor:pointer}.profileSelect{height:36px;border:1px solid #d0d5dd;border-radius:10px;padding:0 10px;background:#fff;font-size:13px;color:#344054;cursor:pointer}.saveCheck{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:#344054;cursor:pointer}.saveCheck input{width:16px;height:16px;accent-color:#ed1c24}.card{background:white;border:1px solid #eaecf0;border-radius:18px;padding:16px;margin-bottom:14px}.fh{display:flex;justify-content:space-between}.fh>div{display:flex;flex-direction:column}.fh span,.route span,.meta,.flight small{font-size:12px;color:#667085}.fh strong{font-size:20px;color:#ed1c24}.route{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;margin:20px 0 12px}.route>div{display:flex;flex-direction:column}.route .end{text-align:right;align-items:flex-end}.plane{text-align:center;border-bottom:1px solid #d0d5dd;height:10px;color:#ed1c24}.meta{display:flex;justify-content:space-between;border-top:1px dashed #eaecf0;padding-top:10px;gap:8px}.title{display:flex;gap:10px}.title h2{font-size:17px;margin:0}.title p{font-size:12px;color:#667085;margin:3px 0 14px}.pax+.pax{border-top:1px solid #f2f4f7;margin-top:16px;padding-top:16px}.chip{display:inline-block;background:#fff1f2;color:#be123c;padding:6px 10px;border-radius:99px;font-size:11px;font-weight:800}.typeSelect{height:32px;border:1px solid #fecdd3;border-radius:99px;padding:0 10px;background:#fff1f2;color:#be123c;font-size:11px;font-weight:800;cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23be123c'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}.typeSelect:focus{outline:none;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.grid{display:grid;grid-template-columns:1fr;gap:12px}.grid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#344054}.grid input,.grid select{height:50px;border:1px solid #d0d5dd;border-radius:12px;padding:0 13px;background:#fff;font-size:16px}.grid input:focus,.grid select:focus{outline:none;border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.08)}.spacer{height:96px}.pay{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid #eaecf0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}.pay>div{display:flex;flex-direction:column;min-width:110px}.pay span{font-size:11px;color:#667085}.pay button{flex:1;height:52px;border:0;border-radius:14px;background:#ed1c24;color:#fff;font-size:16px;font-weight:800}.pay button:disabled{opacity:.55}.success{text-align:center;padding-top:48px}.ok{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#15803d;display:grid;place-items:center;margin:auto;font-size:36px}.success h1{font-size:24px;margin:16px 0 8px}.success p{color:#667085}.receipt{background:#fff;border:1px solid #eaecf0;border-radius:16px;margin:22px 0;text-align:left}.row{display:flex;justify-content:space-between;padding:14px;border-bottom:1px solid #f2f4f7}.row:last-child{border-bottom:0}.home{display:block;background:#111827;color:#fff;text-decoration:none;padding:14px;border-radius:14px;font-weight:800;margin-top:8px}.ck button,.home{touch-action:manipulation;-webkit-tap-highlight-color:transparent}@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}.pay{left:50%;transform:translateX(-50%);max-width:760px;border-radius:18px 18px 0 0}}`;

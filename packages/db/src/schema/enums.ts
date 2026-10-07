@@ -25,6 +25,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "AGENT_STAFF",
   "AGENT_ACCOUNTANT",
   "CUSTOMER",
+  "STAFF",          // admin-panel staff: only the sections in users.admin_permissions
 ]);
 
 export const agentStatusEnum = pgEnum("agent_status", [

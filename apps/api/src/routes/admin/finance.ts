@@ -9,7 +9,7 @@ export const financeAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables
 
 // GET /api/admin/finance/summary — platform revenue summary
 financeAdminRoutes.get("/summary", async (c) => {
-  requireRole("SUPER_ADMIN")(c.get("userRole"));
+  requireRole("SUPER_ADMIN", "STAFF")(c.get("userRole"));
 
   const db = c.get("db");
 

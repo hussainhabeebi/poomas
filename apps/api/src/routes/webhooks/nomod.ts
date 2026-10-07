@@ -1,4 +1,5 @@
 import type { Handler } from "hono";
+import { emailAgentTopup } from "../../lib/transactional-emails.js";
 import { payments, bookings, walletTransactions } from "@poomas/db/schema";
 import { creditAgentWallet } from "../../lib/agent-program.js";
 import { and, eq, inArray } from "drizzle-orm";
@@ -58,7 +59,8 @@ export const nomodWebhook: Handler<{ Bindings: Env; Variables: Variables }> = as
       const ref = `nomod:${id}`;
       const [already] = await db.select({ id: walletTransactions.id }).from(walletTransactions).where(eq(walletTransactions.paymentId, ref)).limit(1);
       if (already) return c.json({ ok: true, duplicate: true });
-      await creditAgentWallet(db, topup.walletId, topup.amount, "TOPUP", { paymentId: ref, note: `Online top-up${chargeId ? ` · ${chargeId}` : ""}`, performedById: topup.userId ?? undefined });
+      const balance = await creditAgentWallet(db, topup.walletId, topup.amount, "TOPUP", { paymentId: ref, note: `Online top-up${chargeId ? ` · ${chargeId}` : ""}`, performedById: topup.userId ?? undefined });
+      c.executionCtx.waitUntil(emailAgentTopup(c.env, db, topup.agentId, topup.amount, topup.currency, typeof balance === "number" ? balance : null, chargeId ?? id).catch(() => {}));
       await c.env.SESSIONS_KV.delete(`agent_topup:${id}`);
       console.info(`[nomod-webhook] agency top-up ${topup.amount} ${topup.currency} → agent ${topup.agentId}`);
       return c.json({ ok: true, topup: "credited" });

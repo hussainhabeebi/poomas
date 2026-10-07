@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { and, eq } from "drizzle-orm";
 import { bookings, bookingPassengers } from "@poomas/db/schema";
 import type { Env, Variables } from "../types.js";
+import { agentNumberFrom, resolveAgentNumber, trackAgentActivity } from "../lib/agent-number.js";
+import { agentStats } from "../lib/agent-analytics.js";
 
 export const integrationRoutes=new Hono<{Bindings:Env;Variables:Variables}>();
 async function duffelOrder(apiKey:string,orderId:string){try{const r=await fetch(`https://api.duffel.com/air/orders/${encodeURIComponent(orderId)}`,{headers:{Authorization:`Bearer ${apiKey}`,"Duffel-Version":"v2",Accept:"application/json"}});if(!r.ok)return null;const b=await r.json() as {data?:Record<string,unknown>};return b.data??null;}catch{return null;}}
@@ -43,13 +45,23 @@ integrationRoutes.post("/checkout-sessions",async(c)=>{
  if(!fareId||!supplier)return c.json({error:"fareId and supplier are required"},400);
  if(!passengers.length||passengers.some((p:any)=>!p.firstName||!p.lastName))return c.json({error:"Valid passenger names are required"},400);
  if(!email||!mobile)return c.json({error:"Contact email and mobile are required"},400);
+ // Leadvyne Live Agency: the agency's FlyPoomas agent number tags the link (currency + analytics).
+ const agentNumber=agentNumberFrom(c,body);
+ // An unknown / inactive number never blocks the customer's checkout: the link is just not tagged.
+ const found=agentNumber?await resolveAgentNumber(c.env,c.get("db"),tenantId,agentNumber).catch(()=>null):null;
+ const agent=found&&found.status==="APPROVED"?found:null;
+ const warning=agentNumber&&!agent?(found?`Agency ${found.number} is ${found.status.toLowerCase()} on FlyPoomas; link not tagged`:`Unknown FlyPoomas agent number ${agentNumber}; link not tagged`):undefined;
  const token=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"");
  const expiresAt=new Date(Date.now()+PREFILL_TTL_SECONDS*1000).toISOString();
  await c.env.SESSIONS_KV.put(`booking_prefill:${tenantId}:${token}`,JSON.stringify({
   fareId,supplier,passengers,email,mobile,source:cleanText(body.source||"leadvyne",30),
-  clientId:cleanText(body.clientId??body.client_id,50),expiresAt
+  clientId:cleanText(body.clientId??body.client_id,50),expiresAt,
+  ...(agent?{agentNumber:agent.number,agentCurrency:agent.currency}:{})
  }),{expirationTtl:PREFILL_TTL_SECONDS});
- return c.json({sessionId:token,checkoutUrl:`https://flypoomas.com/book?session=${encodeURIComponent(token)}`,expiresAt},201);
+ if(agent)c.executionCtx.waitUntil(trackAgentActivity(c.get("db"),tenantId,agent.id,"checkouts").catch((err)=>console.error("[agent-activity]",err)));
+ const cur=agent?`&pc=${encodeURIComponent(agent.currency)}`:"";
+ return c.json({sessionId:token,checkoutUrl:`https://flypoomas.com/book?session=${encodeURIComponent(token)}${cur}`,expiresAt,
+  ...(agent?{agent:{number:agent.number,businessName:agent.businessName,currency:agent.currency}}:{}),...(warning?{warning}:{})},201);
 });
 
 integrationRoutes.get("/checkout-sessions/:token",async(c)=>{
@@ -74,4 +86,23 @@ integrationRoutes.get("/pnr/:pnr",async(c)=>{
  const passengers=await db.select({passengerType:bookingPassengers.passengerType,firstName:bookingPassengers.firstName,lastName:bookingPassengers.lastName,ticketNumber:bookingPassengers.ticketNumber,seatNumber:bookingPassengers.seatNumber}).from(bookingPassengers).where(eq(bookingPassengers.bookingId,booking.id));
  const supplierStatus=booking.supplier==="DUFFEL"&&booking.supplierBookingRef&&c.env.DUFFEL_API_KEY?await duffelOrder(c.env.DUFFEL_API_KEY,booking.supplierBookingRef):null;
  return c.json({pnr:booking.pnr,bookingId:booking.id,status:booking.status,supplier:booking.supplier,supplierBookingRef:booking.supplierBookingRef,ticketNumbers:booking.ticketNumbers,origin:booking.origin,destination:booking.destination,departureDate:booking.departureDate,returnDate:booking.returnDate,totalAmount:booking.totalAmount,currency:booking.currency,passengers,supplierStatus,updatedAt:booking.updatedAt});
+});
+
+// Leadvyne Live Agency: check an agent number and read the agency's currency.
+integrationRoutes.get("/agents/:number",async(c)=>{
+ if(!validIntegrationKey(c))return c.json({error:"Unauthorized integration"},401);
+ const agent=await resolveAgentNumber(c.env,c.get("db"),c.get("tenantId"),c.req.param("number"));
+ if(!agent)return c.json({error:"Agent number not found"},404);
+ return c.json({agentNumber:agent.number,businessName:agent.businessName,currency:agent.currency,status:agent.status});
+});
+
+// Leadvyne Live Agency: the agency's searches, checkout links and bookings (last N days + all time).
+integrationRoutes.get("/agents/:number/stats",async(c)=>{
+ if(!validIntegrationKey(c))return c.json({error:"Unauthorized integration"},401);
+ const tenantId=c.get("tenantId");
+ const agent=await resolveAgentNumber(c.env,c.get("db"),tenantId,c.req.param("number"));
+ if(!agent)return c.json({error:"Agent number not found"},404);
+ const days=Math.min(365,Math.max(1,Number(c.req.query("days"))||30));
+ const stats=(await agentStats(c.get("db"),tenantId,[agent.id],days)).get(agent.id);
+ return c.json({agentNumber:agent.number,businessName:agent.businessName,currency:agent.currency,days,stats});
 });

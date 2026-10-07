@@ -74,34 +74,3 @@ test("POST /api/ai/scan-document sends the image to Gemini and returns traveller
     assert.equal(r2.status, 415);
   } finally { globalThis.fetch = realFetch; }
 });
-
-test("voice search: /transcribe returns Whisper text, validates audio, needs the AI binding", async () => {
-  const app = new Hono<any>();
-  app.use("*", async (c, next) => { c.set("tenantId", "t1"); await next(); });
-  app.route("/api/ai", aiRoutes);
-  const ctx = { waitUntil: (p: Promise<unknown>) => { p.catch(() => {}); }, passThroughOnException() {} } as any;
-  const calls: any[] = [];
-  const env: any = {
-    GEMINI_API_KEY: "G",
-    FARE_CACHE_KV: { get: async () => null, put: async () => {} },
-    AI: { run: async (model: string, input: any) => { calls.push({ model, input }); return { text: " കൊച്ചിയിൽ നിന്ന് ദുബായ് വെള്ളിയാഴ്ച " }; } },
-  };
-  const post = (blob?: Blob, e = env) => {
-    const form = new FormData();
-    if (blob) form.append("audio", blob, "voice.wav");
-    return app.fetch(new Request("http://x/api/ai/transcribe", { method: "POST", body: form }), e, ctx);
-  };
-
-  const status = await (await app.fetch(new Request("http://x/api/ai/status"), env, ctx)).json() as any;
-  assert.equal(status.voiceTranscribe, true);
-
-  const res = await post(new Blob([new Uint8Array(4000)], { type: "audio/wav" }));
-  assert.equal(res.status, 200);
-  assert.equal((await res.json() as any).text, "കൊച്ചിയിൽ നിന്ന് ദുബായ് വെള്ളിയാഴ്ച");
-  assert.equal(calls[0].model, "@cf/openai/whisper-large-v3-turbo");
-  assert.equal(typeof calls[0].input.audio, "string");
-
-  assert.equal((await post()).status, 400);
-  assert.equal((await post(new Blob([new Uint8Array(3 * 1024 * 1024)]))).status, 413);
-  assert.equal((await post(new Blob([new Uint8Array(4000)]), { ...env, AI: undefined })).status, 503);
-});

@@ -23,6 +23,7 @@ export {
   type ReviewSummary, type ReviewSegment, type ReviewConditions, type SsrOption,
 } from "./tripjack/review.js";
 export { searchLegs } from "./tripjack/client.js";
+export { parseTripjackFareRules } from "./tripjack/adapter.js";
 export {
   TripjackInsuranceClient, TripsafeError, tripsafeProblems, tripsafeSearchBody, normalizeTripsafeProduct,
   parseTripsafeBooking, ageOn, addDays, daysBetween,

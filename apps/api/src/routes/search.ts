@@ -4,7 +4,8 @@ import { z } from "zod";
 import { searchFares, type SupplierConfig, type PlatformCredentials, type SupplierDiagnostic } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
-import { getAedRate } from "../lib/fx.js";
+import { DISPLAY_CURRENCIES, getFx, type ForeignCurrency } from "../lib/fx.js";
+import { agentNumberFrom, resolveAgentNumber, trackAgentActivity, type ResolvedAgent } from "../lib/agent-number.js";
 import { collectExchanges, persistExchanges, persistInBackground } from "../lib/api-exchanges.js";
 import { recordFareObservation, sendFareAlerts } from "../lib/fare-insights.js";
 import { optionalAgentId } from "../lib/agent-markup.js";
@@ -20,7 +21,9 @@ const searchSchema = z.object({
   infants:       z.number().int().min(0).max(4).default(0),
   cabinClass:    z.enum(["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"]).default("ECONOMY"),
   tripType:      z.enum(["ONEWAY", "ROUNDTRIP", "MULTICITY"]).default("ONEWAY"),
-  currency:      z.enum(["INR", "AED", "USD"]).optional(),
+  currency:      z.enum(DISPLAY_CURRENCIES).optional(),
+  // Leadvyne Live Agency: the agency's FlyPoomas agent number (or header X-FP-Agent).
+  agentNumber:   z.string().max(20).optional(),
   // Multi-city legs (2–6); round trips can use returnDate instead.
   legs: z.array(z.object({
     origin:        z.string().length(3).toUpperCase(),
@@ -228,11 +231,13 @@ function logSearchOutcome(
 export const searchRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
-  const params = c.req.valid("json");
+  const { agentNumber, ...params } = c.req.valid("json");
   const tenantId = c.get("tenantId");
   const searchId = crypto.randomUUID();
   try {
-    return await runSearch(c, params, searchId);
+    const leadAgent = await resolveLeadAgent(c, agentNumber);
+    const res = await runSearch(c, params, searchId);
+    return leadAgent ? await withAgentCurrency(c, res, leadAgent) : res;
   } catch (err) {
     // Unexpected crash (config/KV/DB/code bug) — surface it in Admin logs, not just Worker logs.
     const message = err instanceof Error ? err.message : String(err);
@@ -247,6 +252,42 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
   }
 });
 
+// Leadvyne Live Agency traffic: count the search for the agency and add prices in its currency.
+async function resolveLeadAgent(c: Context<{ Bindings: Env; Variables: Variables }>, bodyNumber?: string) {
+  const n = agentNumberFrom(c, { agentNumber: bodyNumber });
+  if (!n) return null;
+  try {
+    const agent = await resolveAgentNumber(c.env, c.get("db"), c.get("tenantId"), n);
+    if (agent && agent.status === "APPROVED") {
+      c.executionCtx.waitUntil(trackAgentActivity(c.get("db"), c.get("tenantId"), agent.id, "searches").catch((err) => console.error("[agent-activity]", err)));
+    }
+    return agent;
+  } catch (err) {
+    console.error("[search] agent number lookup failed", err);   // never blocks the search
+    return null;
+  }
+}
+
+export async function withAgentCurrency(c: Context<{ Bindings: Env; Variables: Variables }>, res: Response, agent: ResolvedAgent) {
+  if (!res.ok) return res;
+  const data = await res.json() as { fares?: { totalFare?: number; displayPrice?: number; currency?: string }[] };
+  const fx = await getFx(c.env, c.get("tenantId"), c.executionCtx);
+  const cur = agent.currency;
+  const rate = cur === "INR" ? 1 : fx.rates[cur as ForeignCurrency] ?? null;
+  const decimals = ["OMR", "KWD", "BHD"].includes(cur) ? 3 : 2;
+  const conv = (inr: number) => rate ? Math.ceil((inr / rate) * 10 ** decimals - 1e-9) / 10 ** decimals : null;
+  return c.json({
+    ...data,
+    agent: { number: agent.number, businessName: agent.businessName, currency: cur, status: agent.status },
+    agentCurrency: { code: cur, inrPerUnit: rate, available: Boolean(rate) },
+    fares: (data.fares ?? []).map((f) => {
+      const inr = Number(f.displayPrice ?? f.totalFare ?? 0);
+      const amount = (f.currency ?? "INR") === "INR" ? conv(inr) : null;
+      return amount === null ? f : { ...f, agentPrice: { amount, currency: cur } };
+    }),
+  }, res.status as 200);
+}
+
 async function runSearch(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   params: z.infer<typeof searchSchema>,
@@ -257,18 +298,21 @@ async function runSearch(
   const tenantId = c.get("tenantId");
   const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, tenant, tenantId);
   const sessionId = c.get("userId") ?? c.req.header("X-Session-ID") ?? null;
-  let currency = params.currency as "INR" | "AED" | "USD" | undefined;
+  let currency = params.currency as string | undefined;
 
   // Session preferences are optional. KV trouble must never block live supplier search.
   if (!currency && sessionId) {
     try {
       const prefs = await c.env.SESSIONS_KV.get(`session_prefs:${tenantId}:${sessionId}`, "json") as { currency?: string } | null;
-      currency = prefs?.currency as "INR" | "AED" | "USD" | undefined;
+      currency = prefs?.currency;
     } catch (err) {
       console.error("[search] session preference KV unavailable", err);
     }
   }
-  currency = currency ?? (tenant.defaultCurrency as "INR" | "AED" | "USD");
+  currency = currency ?? (tenant.defaultCurrency as string);
+  // GCC display currencies (SAR, QAR…) are converted on the website from the INR fares: search in INR.
+  if (!["INR", "AED", "USD"].includes(currency)) currency = "INR";
+  const searchCurrency = currency as "INR" | "AED" | "USD";
 
   const availableSuppliers = supplierConfigs.filter((s) => s.isEnabled).map((s) => s.name);
   const credentialAvailability = {
@@ -315,7 +359,7 @@ async function runSearch(
   const collector = collectExchanges();
   const result = await searchFares(
     {
-      ...params, currency,
+      ...params, currency: searchCurrency,
       legs: params.legs?.map((l) => ({ origin: l.origin, destination: l.destination, date: l.departureDate })),
     },
     supplierConfigs.map((s) => s.name === "TRIPJACK" && s.credentials ? { ...s, credentials: { ...s.credentials, recorder: collector.recorder } } : s),
@@ -341,7 +385,7 @@ async function runSearch(
     console.error("[search] markup unavailable; returning raw supplier prices", err);
   }
 
-  logSearchOutcome(c, tenantId, searchId, { ...params, currency }, availableSuppliers, result.diagnostics ?? {});
+  logSearchOutcome(c, tenantId, searchId, { ...params, currency: searchCurrency }, availableSuppliers, result.diagnostics ?? {});
 
   const hasErrors = Object.keys(result.errors).length > 0;
   const response = {
@@ -410,9 +454,10 @@ async function agentFares(c: Context<{ Bindings: Env; Variables: Variables }>, t
 }
 
 // Display/payment conversion rate (INR per 1 AED) set by admin; null = AED payment off.
+// Display / payment rates (INR per 1 unit) from the automatic exchange-rate tool.
 searchRoutes.get("/fx", async (c) => {
-  const aedRate = await getAedRate(c.env, c.get("tenantId"));
-  return c.json({ base: "INR", rates: { AED: aedRate } }, 200, { "Cache-Control": "no-store" });
+  const fx = await getFx(c.env, c.get("tenantId"), c.executionCtx);
+  return c.json({ base: "INR", unit: "INR per 1 unit", rates: fx.rates, updatedAt: fx.autoUpdatedAt }, 200, { "Cache-Control": "no-store" });
 });
 
 // Safe operational status: exposes only booleans/names, never secret values.
@@ -500,14 +545,24 @@ searchRoutes.get("/debug-tripjack", async (c) => {
 
 searchRoutes.get("/fare-rules/:fareId", async (c) => {
   const { fareId } = c.req.param();
-  const supplier = c.req.query("supplier") as "RIYA" | "TRIPJACK" | "DUFFEL" | undefined;
-  const tenant = c.get("tenant");
-  if (!supplier) return c.json({ error: "supplier query param required" }, 400);
-
-  const platformCredentials = platformCredentialsFromEnv(c.env);
-  const supplierConfigs = supplierConfigsForTenant(tenant, platformCredentials);
-  const { getBookableAdapter } = await import("@poomas/suppliers");
-  const adapter = getBookableAdapter(supplier, supplierConfigs, platformCredentials);
-  const rules = await adapter.getFareRules?.(fareId) ?? [];
-  return c.json({ fareRules: rules });
+  const supplier = (c.req.query("supplier") ?? "TRIPJACK").toUpperCase();
+  if (supplier !== "TRIPJACK") return c.json({ fareRules: [] });
+  const tenantId = c.get("tenantId");
+  // Cancellation / date-change rules for one fare option (cached 30 min).
+  const cacheKey = `fare_rules:${tenantId}:${fareId}`;
+  const cached = await c.env.FARE_CACHE_KV.get(cacheKey, "json").catch(() => null);
+  if (cached) return c.json({ fareRules: cached, cached: true });
+  const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), tenantId);
+  const config = supplierConfigs.find((s) => s.name === "TRIPJACK");
+  if (!config?.isEnabled) return c.json({ fareRules: [], error: "Fare rules aren't available right now." });
+  const { TripjackClient, parseTripjackFareRules } = await import("@poomas/suppliers");
+  try {
+    const client = new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(config.credentials ?? {}) });
+    const rules = parseTripjackFareRules(await client.fareRules(fareId));
+    if (rules.length) c.executionCtx.waitUntil(c.env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(rules), { expirationTtl: 1800 }).catch(() => {}));
+    return c.json({ fareRules: rules });
+  } catch (err) {
+    console.error("[fare-rules]", err);
+    return c.json({ fareRules: [], error: "The airline's fare rules couldn't be loaded. Check them before booking." });
+  }
 });
