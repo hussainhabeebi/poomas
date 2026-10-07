@@ -418,7 +418,10 @@ async function runSearch(
   if (pricedFares.length > 0) {
     c.executionCtx.waitUntil((async () => {
       try {
-        const due = await recordFareObservation(c.env.FARE_CACHE_KV, tenantId, { ...params, currency }, pricedFares);
+        // Keyed by the fares' own currency (TripJack prices in INR even for an AED search):
+        // the website converts calendar prices to the visitor's currency.
+        const fareCurrency = String(pricedFares[0]?.currency ?? currency);
+        const due = await recordFareObservation(c.env.FARE_CACHE_KV, tenantId, { ...params, currency: fareCurrency }, pricedFares);
         if (due.length) await sendFareAlerts(c.env, db, due);
       } catch (err) {
         console.error("[search] price calendar / fare alert update failed", err);
