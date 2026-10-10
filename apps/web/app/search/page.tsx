@@ -508,7 +508,7 @@ function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults,
 
       <details className="fare-card-v2-details">
         <summary className="fare-card-v2-expand-row">
-          <span className="fare-card-v2-supplier">{fmtDate(dep)} · {fare.supplier ?? ""}</span>
+          <span className="fare-card-v2-supplier">{fmtDate(dep)}</span>
           <span className="fare-card-v2-expand-btn">Details <span className="fare-card-v2-expand-indicator" aria-hidden="true">⌄</span></span>
         </summary>
         <div className="fare-card-v2-detail">
