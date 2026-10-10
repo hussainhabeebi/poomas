@@ -36,6 +36,7 @@ const CURRENCY_LOCALES: Record<string, string> = {
 const AIRPORT_CITIES: Record<string, string> = {
   COK: "Kochi", CCJ: "Kozhikode", CNN: "Kannur", TRV: "Thiruvananthapuram",
   DXB: "Dubai", DWC: "Dubai Al Maktoum", SHJ: "Sharjah", AUH: "Abu Dhabi",
+  RKT: "Ras Al Khaimah", FJR: "Fujairah", AAN: "Al Ain",
 };
 
 function displaySearchDate(value?: string) {

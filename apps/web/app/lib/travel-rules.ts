@@ -138,7 +138,7 @@ export const STATUS_LABEL: Record<VisaStatus, { label: string; color: string; bg
 export const AIRPORT_COUNTRY: Record<string, string> = {
   BOM: "IN", DEL: "IN", CCJ: "IN", COK: "IN", TRV: "IN", CNN: "IN", MAA: "IN", BLR: "IN", HYD: "IN", AMD: "IN",
   PNQ: "IN", GOI: "IN", GOX: "IN", CCU: "IN", LKO: "IN", IXE: "IN", ATQ: "IN", JAI: "IN", IXC: "IN", TRZ: "IN",
-  DXB: "AE", DWC: "AE", AUH: "AE", SHJ: "AE", RKT: "AE",
+  DXB: "AE", DWC: "AE", AUH: "AE", SHJ: "AE", RKT: "AE", FJR: "AE", AAN: "AE",
   DOH: "QA", MCT: "OM", SLL: "OM", BAH: "BH", KWI: "KW",
   RUH: "SA", JED: "SA", DMM: "SA", MED: "SA",
   KUL: "MY", BKK: "TH", HKT: "TH", SIN: "SG", CMB: "LK", MLE: "MV", KTM: "NP", PBH: "BT", DPS: "ID", CGK: "ID",
