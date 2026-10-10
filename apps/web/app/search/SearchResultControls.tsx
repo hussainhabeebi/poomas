@@ -22,6 +22,9 @@ const AIRPORT_GROUPS = [
     { code: "DWC", city: "Dubai Al Maktoum" },
     { code: "SHJ", city: "Sharjah" },
     { code: "AUH", city: "Abu Dhabi" },
+    { code: "RKT", city: "Ras Al Khaimah" },
+    { code: "FJR", city: "Fujairah" },
+    { code: "AAN", city: "Al Ain" },
   ],
 ];
 

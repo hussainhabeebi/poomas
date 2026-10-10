@@ -13,7 +13,7 @@ type Fare = {
 };
 type Leg = { origin: string; destination: string; date: string };
 
-const AIRPORTS = ["COK", "CCJ", "TRV", "CNN", "IXE", "BOM", "DEL", "BLR", "MAA", "HYD", "CCU", "GOI", "AMD", "DXB", "AUH", "SHJ", "RKT", "DOH", "MCT", "BAH", "KWI", "RUH", "JED", "DMM", "MED", "SIN", "KUL", "BKK", "LHR", "CMB", "MLE", "KTM"];
+const AIRPORTS = ["COK", "CCJ", "TRV", "CNN", "IXE", "BOM", "DEL", "BLR", "MAA", "HYD", "CCU", "GOI", "AMD", "DXB", "AUH", "SHJ", "RKT", "FJR", "AAN", "DOH", "MCT", "BAH", "KWI", "RUH", "JED", "DMM", "MED", "SIN", "KUL", "BKK", "LHR", "CMB", "MLE", "KTM"];
 const addDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const dur = (m: number) => `${Math.floor(m / 60)}h ${m % 60}m`;
 

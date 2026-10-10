@@ -62,11 +62,11 @@ const emptyPassenger = (type: Passenger["type"] = "ADULT"): Passenger => ({
 });
 
 const AIRPORT_COUNTRY: Record<string, string> = {
-  BOM:"IN", DEL:"IN", CCJ:"IN", COK:"IN", TRV:"IN", MAA:"IN", BLR:"IN",
+  BOM:"IN", DEL:"IN", CCJ:"IN", COK:"IN", TRV:"IN", CNN:"IN", IXE:"IN", MAA:"IN", BLR:"IN",
   HYD:"IN", AMD:"IN", PNQ:"IN", GOI:"IN", CCU:"IN", LKO:"IN", IXJ:"IN",
   SXR:"IN", ATQ:"IN", IXC:"IN", VTZ:"IN", IXB:"IN", GAU:"IN", IXA:"IN",
-  DXB:"AE", AUH:"AE", SHJ:"AE",
-  DOH:"QA", MCT:"OM", BAH:"BH", KWI:"KW", RUH:"SA", JED:"SA", DMM:"SA",
+  DXB:"AE", AUH:"AE", SHJ:"AE", RKT:"AE", FJR:"AE", AAN:"AE", DWC:"AE",
+  DOH:"QA", MCT:"OM", SLL:"OM", MED:"SA", BAH:"BH", KWI:"KW", RUH:"SA", JED:"SA", DMM:"SA",
   LHR:"GB", CDG:"FR", FRA:"DE", SIN:"SG", KUL:"MY", BKK:"TH",
   HKG:"HK", NRT:"JP", JFK:"US", LAX:"US", ORD:"US", YYZ:"CA", SYD:"AU", MEL:"AU",
   CMB:"LK", KTM:"NP", DAC:"BD", MLE:"MV",

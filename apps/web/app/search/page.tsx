@@ -36,6 +36,7 @@ const CURRENCY_LOCALES: Record<string, string> = {
 const AIRPORT_CITIES: Record<string, string> = {
   COK: "Kochi", CCJ: "Kozhikode", CNN: "Kannur", TRV: "Thiruvananthapuram",
   DXB: "Dubai", DWC: "Dubai Al Maktoum", SHJ: "Sharjah", AUH: "Abu Dhabi",
+  RKT: "Ras Al Khaimah", FJR: "Fujairah", AAN: "Al Ain",
 };
 
 function displaySearchDate(value?: string) {
@@ -508,7 +509,7 @@ function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults,
 
       <details className="fare-card-v2-details">
         <summary className="fare-card-v2-expand-row">
-          <span className="fare-card-v2-supplier">{fmtDate(dep)} · {fare.supplier ?? ""}</span>
+          <span className="fare-card-v2-supplier">{fmtDate(dep)}</span>
           <span className="fare-card-v2-expand-btn">Details <span className="fare-card-v2-expand-indicator" aria-hidden="true">⌄</span></span>
         </summary>
         <div className="fare-card-v2-detail">
