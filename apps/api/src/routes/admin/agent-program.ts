@@ -190,13 +190,13 @@ agentProgramAdminRoutes.get("/recharges", async (c) => {
   });
 });
 
-agentProgramAdminRoutes.get("/bank-accounts", async (c) => c.json({ accounts: await getBankAccounts(c.env, c.get("tenantId")) }));
+agentProgramAdminRoutes.get("/bank-accounts", async (c) => c.json({ accounts: await getBankAccounts(c.env, c.get("tenantId"), c.get("tenant")?.slug) }));
 
 agentProgramAdminRoutes.post("/bank-accounts", zValidator("json", bankAccountSchema, (r, c) => {
   if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the bank details" }, 400);
 }), async (c) => {
   const tenantId = c.get("tenantId");
-  const list = await getBankAccounts(c.env, tenantId);
+  const list = await getBankAccounts(c.env, tenantId, c.get("tenant")?.slug);
   if (list.length >= 20) return c.json({ error: "Up to 20 bank accounts" }, 400);
   const now = new Date().toISOString();
   const account = { ...c.req.valid("json"), id: crypto.randomUUID(), createdAt: now, updatedAt: now };
@@ -209,7 +209,7 @@ agentProgramAdminRoutes.patch("/bank-accounts/:id", zValidator("json", bankAccou
   if (!r.success) return c.json({ error: r.error.issues[0]?.message ?? "Check the bank details" }, 400);
 }), async (c) => {
   const tenantId = c.get("tenantId");
-  const list = await getBankAccounts(c.env, tenantId);
+  const list = await getBankAccounts(c.env, tenantId, c.get("tenant")?.slug);
   const i = list.findIndex((a) => a.id === c.req.param("id"));
   if (i < 0) return c.json({ error: "Bank account not found" }, 404);
   const before = list[i];
@@ -222,7 +222,7 @@ agentProgramAdminRoutes.patch("/bank-accounts/:id", zValidator("json", bankAccou
 
 agentProgramAdminRoutes.delete("/bank-accounts/:id", async (c) => {
   const tenantId = c.get("tenantId");
-  const list = await getBankAccounts(c.env, tenantId);
+  const list = await getBankAccounts(c.env, tenantId, c.get("tenant")?.slug);
   const gone = list.find((a) => a.id === c.req.param("id"));
   if (!gone) return c.json({ error: "Bank account not found" }, 404);
   await saveBankAccounts(c.env, tenantId, list.filter((a) => a.id !== gone.id));

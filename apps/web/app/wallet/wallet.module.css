@@ -108,3 +108,23 @@
 @media (prefers-reduced-motion: reduce) {
   .primaryButton { transition: none; }
 }
+
+/* Recharge by bank transfer */
+.bankGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 0 26px; }
+.bankCard { display: flex; flex-direction: column; gap: 6px; padding: 16px; border: 1px solid #dce4ee; border-radius: 12px; background: #fbfcfe; text-align: left; font: inherit; color: #13243b; cursor: pointer; }
+.bankCard[aria-checked="true"] { border-color: #cf1741; box-shadow: 0 0 0 2px rgba(207,23,65,.15); background: #fff; }
+.bankRow { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: #61718a; }
+.bankRow b { color: #13243b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; overflow-wrap: anywhere; text-align: right; }
+.copyButton { border: 0; background: none; color: #be1940; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; padding: 0 0 0 6px; }
+.rechargeForm { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; padding: 18px 26px 24px; }
+.rechargeForm label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: #203650; }
+.rechargeForm input { height: 44px; padding: 0 12px; border: 1px solid #cbd6e3; border-radius: 10px; background: #fff; color: #13243b; font: inherit; font-size: 14px; }
+.rechargeForm input[type="file"] { padding: 9px 10px; height: auto; }
+.rechargeForm .full { grid-column: 1 / -1; }
+.statusPill { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #fef3c7; color: #92400e; }
+.statusPill[data-status="APPROVED"] { background: #dcfce7; color: #166534; }
+.statusPill[data-status="REJECTED"] { background: #fee2e2; color: #991b1b; }
+@media (max-width: 430px) {
+  .bankGrid { padding: 0 18px; }
+  .rechargeForm { padding: 16px 18px 20px; }
+}

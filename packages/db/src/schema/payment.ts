@@ -106,3 +106,29 @@ export const commissions = pgTable("commissions", {
 }, (t) => ({
   bookingIdx: uniqueIndex("commissions_booking_id_idx").on(t.bookingId),
 }));
+
+// Customer wallet recharge by bank transfer: the customer uploads the payment
+// screenshot, staff check it and credit the wallet once (status PENDING →
+// APPROVED, claimed atomically) or reject it with a reason.
+export const customerWalletDeposits = pgTable("customer_wallet_deposits", {
+  id:              text("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId:        text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId:          text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  walletAccountId: text("wallet_account_id").notNull().references(() => walletAccounts.id),
+
+  amount:        decimal("amount", { precision: 14, scale: 2 }).notNull(),   // what the customer says they paid
+  currency:      text("currency").notNull(),                                   // currency they paid in (bank account currency)
+  creditAmount:  decimal("credit_amount", { precision: 14, scale: 2 }),       // credited to the wallet (wallet currency)
+  method:        text("method").notNull().default("BANK_TRANSFER"),
+  reference:     text("reference"),
+  paidOn:        text("paid_on"),
+  bankAccount:   jsonb("bank_account").$type<{ id: string; label: string; bankName: string; accountNumber: string; currency: string } | null>(),
+  attachments:   jsonb("attachments").$type<{ key: string; name: string; type: string; size: number }[]>().notNull().default([]),
+
+  status:        text("status").notNull().default("PENDING"),                  // PENDING | APPROVED | REJECTED
+  adminNote:     text("admin_note"),
+  reviewedById:  text("reviewed_by_id"),
+  reviewedAt:    timestamp("reviewed_at", { withTimezone: true }),
+  createdAt:     timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:     timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
