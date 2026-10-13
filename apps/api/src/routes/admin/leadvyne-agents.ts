@@ -4,6 +4,7 @@
 // PATCH /api/admin/leadvyne-agents/:id             — change currency / Leadvyne client id
 // POST  /api/admin/leadvyne-agents/:id/invite      — send a new portal login invitation
 // POST  /api/admin/leadvyne-agents/:id/number      — give an agent number to an agency that has none
+// DELETE /api/admin/leadvyne-agents/:id            — delete an agency with no booking or money history
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
@@ -18,6 +19,8 @@ import {
 import { agentDaily, agentStats } from "../../lib/agent-analytics.js";
 import { audit } from "../../lib/agent-program.js";
 import { createInvite } from "../agent-portal.js";
+import { deleteAgent } from "../../lib/agent-delete.js";
+import { requireRole } from "../../middleware/auth.js";
 
 export const leadvyneAgentsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -141,4 +144,11 @@ leadvyneAgentsAdminRoutes.post("/:id/number", async (c) => {
   const [a] = await db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, c.req.param("id")), eq(agents.tenantId, tenantId))).limit(1);
   if (!a) return c.json({ error: "Agency not found" }, 404);
   return c.json({ agentNumber: await assignAgentNumber(db, tenantId, a.id) });
+});
+
+leadvyneAgentsAdminRoutes.delete("/:id", async (c) => {
+  requireRole("SUPER_ADMIN", "TENANT_ADMIN")(c.get("userRole"));
+  const r = await deleteAgent(c.env, c.get("db"), { agentId: c.req.param("id"), tenantId: c.get("tenantId"), performedBy: c.get("userId") ?? null });
+  if (!r.ok) return c.json({ error: r.error }, r.status);
+  return c.json({ ok: true, businessName: r.businessName });
 });

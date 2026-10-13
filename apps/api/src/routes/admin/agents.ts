@@ -5,6 +5,7 @@ import { agents, tenants, agentDocuments, bookings } from "@poomas/db/schema";
 import { eq, sql } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { requireRole } from "../../middleware/auth.js";
+import { deleteAgent } from "../../lib/agent-delete.js";
 
 export const agentsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -74,4 +75,15 @@ agentsAdminRoutes.patch("/:id/status", async (c) => {
     c.executionCtx.waitUntil(emailAgencyStatus(c.env, db, c.req.param("id"), body.status));
   }
   return c.json({ ok: true });
+});
+
+// DELETE /api/admin/agents/:id — permanently delete an agency with no booking or money history
+agentsAdminRoutes.delete("/:id", async (c) => {
+  const role = c.get("userRole");
+  requireRole("SUPER_ADMIN", "TENANT_ADMIN")(role);
+  const r = await deleteAgent(c.env, c.get("db"), {
+    agentId: c.req.param("id"), tenantId: role === "SUPER_ADMIN" ? null : c.get("tenantId"), performedBy: c.get("userId") ?? null,
+  });
+  if (!r.ok) return c.json({ error: r.error }, r.status);
+  return c.json({ ok: true, businessName: r.businessName });
 });
