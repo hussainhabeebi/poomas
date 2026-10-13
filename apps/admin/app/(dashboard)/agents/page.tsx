@@ -1,4 +1,5 @@
 import { serverAuthHeaders } from "../../../lib/server";
+import DeleteAgentButton from "./DeleteAgentButton";
 const SERVER_API   = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 const SERVER_TOKEN = process.env.ADMIN_SERVICE_TOKEN ?? "";
 
@@ -84,8 +85,9 @@ export default async function AgentsPage() {
                     {new Date(a.createdAt).toLocaleDateString("en-IN")}
                   </td>
                   <td style={{ padding: "14px 16px" }}>
-                    <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <a href={`/agents/${a.id}`} style={{ color: "#6366f1", fontSize: 13, textDecoration: "none" }}>View →</a>
+                      <DeleteAgentButton agentId={a.id} businessName={a.businessName} />
                     </div>
                   </td>
                 </tr>

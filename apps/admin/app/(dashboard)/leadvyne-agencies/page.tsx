@@ -2,6 +2,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { adminApi } from "../../../lib/files";
 import { money, ui } from "../../../lib/ui";
+import DeleteAgentButton from "../agents/DeleteAgentButton";
 
 // Leadvyne Live Agency clients: create their FlyPoomas agency account (agent
 // number + currency from the country) and follow their searches and bookings.
@@ -202,7 +203,9 @@ export default function LeadvyneAgenciesPage() {
                     <td style={ui.td}>{money(s?.bookingValuePeriod ?? 0)}<div style={ui.muted}>all: {money(s?.bookingValue ?? 0)}</div></td>
                     <td style={{ ...ui.td, whiteSpace: "nowrap" }}>
                       <button style={{ ...ui.ghost, padding: "4px 8px" }} onClick={() => toggleDaily(a.id)}>{open === a.id ? "Hide" : "Daily"}</button>{" "}
-                      <button style={{ ...ui.ghost, padding: "4px 8px" }} onClick={() => act(async () => { const r = await adminApi<{ inviteLink: string }>(`/api/admin/leadvyne-agents/${a.id}/invite`, { method: "POST" }); copy(r.inviteLink); }, "Invitation emailed; link copied.")}>Invite</button>
+                      <button style={{ ...ui.ghost, padding: "4px 8px" }} onClick={() => act(async () => { const r = await adminApi<{ inviteLink: string }>(`/api/admin/leadvyne-agents/${a.id}/invite`, { method: "POST" }); copy(r.inviteLink); }, "Invitation emailed; link copied.")}>Invite</button>{" "}
+                      <DeleteAgentButton agentId={a.id} businessName={a.businessName} apiPath="/api/admin/leadvyne-agents"
+                        onDeleted={() => { setMsg(`${a.businessName} deleted.`); if (open === a.id) setOpen(null); load(); }} />
                     </td>
                   </tr>
                   {open === a.id && (

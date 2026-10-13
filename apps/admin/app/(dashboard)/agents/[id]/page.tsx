@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API, apiHeaders } from "../../../../lib/api";
 import AgentControls from "./AgentControls";
+import DeleteAgentButton from "../DeleteAgentButton";
 
 interface Agent {
   id: string; businessName: string; ownerName: string; email: string; phone: string; whatsapp: string | null;
@@ -101,6 +102,15 @@ export default function AgentDetailPage() {
           {a.status === "PENDING" && <button disabled={busy} onClick={() => setStatus("REJECTED")} style={btnGhost}>Reject</button>}
           {a.status === "APPROVED" && <button disabled={busy} onClick={() => setStatus("SUSPENDED")} style={btnGhost}>Suspend</button>}
         </div>
+      </div>
+
+      <div style={{ ...card, borderColor: "#7f1d1d" }}>
+        <h2 style={h2}>Delete agency</h2>
+        <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px" }}>
+          Removes the agency with its logins, wallet, documents, requests and agent number. Agencies with bookings, commissions or wallet
+          transactions can&apos;t be deleted — suspend them instead.
+        </p>
+        <DeleteAgentButton agentId={a.id} businessName={a.businessName} redirectTo="/agents" style={{ padding: "8px 14px" }} />
       </div>
     </div>
   );
