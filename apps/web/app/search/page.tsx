@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import SearchResultControls, { ChangeDatesAction } from "./SearchResultControls";
 import { FareTools } from "./FareTools";
-import FareRulesButton from "./FareRulesButton";
+import FareOptionsList from "./FareOptionsList";
 import { altOptions, fareLabel, flightKey, groupFareOptions, optionPerks, optionPrice } from "../lib/fare-options";
 import { convertInr, currencyMeta, fetchFxRates, formatIn, isDisplayCurrency, type FxRates } from "../lib/fx";
 
@@ -398,6 +398,7 @@ function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults,
   const airlineCode = (fare.flightNumber ?? "").slice(0, 2).toUpperCase();
   const arrNextDay = dep.getUTCDate() !== arr.getUTCDate();
 
+  const cabinLabel = String(fare.cabinClass ?? "ECONOMY").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
   const badgeColor = fare.__badge === "Best overall" ? "#E31E24" : fare.__badge === "Lowest fare" ? "#0f172a" : "#0369a1";
 
   return (
@@ -463,7 +464,7 @@ function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults,
             {!fare.isBookable && " · indicative"}
             {adults + children + infants > 1 && ` · total for ${adults + children + infants} travellers`}
           </div>
-          {isBookable ? (
+          {isBookable && options.length > 1 ? null : isBookable ? (
             <a href={buildBookUrl(fare, fareCurrency, price, adults, children, infants, shown.converted ? shown.currency : undefined, searchId, optionLinkParams(fare, options))} className="fare-card-v2-book">
               Book Now
             </a>
@@ -474,37 +475,23 @@ function FareCard({ fare, options, requestedCurrency, aedRate, searchId, adults,
       </div>
 
       {isBookable && options.length > 1 && (
-        <details className="fare-options">
-          <summary>
-            <span>✨ {options.length} fare options · baggage, meals &amp; flexibility</span>
-            <span className="fare-options-toggle" aria-hidden="true">⌄</span>
-          </summary>
-          <div className="fare-options-grid">
-            {options.map((o: any) => {
-              const perks = optionPerks(o);
-              const op = optionPrice(o);
-              const oShown = inChosenCurrency(op, fareCurrency, requestedCurrency, aedRate);
-              const diff = op - price;
-              return (
-                <div key={o.id} className="fare-option">
-                  <div className="fare-option-head">
-                    <b>{fareLabel(o.fareIdentifier || o.fareClass)}</b>
-                    {diff > 0 ? <span className="fare-option-diff">+{formatMoney(inChosenCurrency(diff, fareCurrency, requestedCurrency, aedRate).amount, oShown.currency)}</span> : <span className="fare-option-best">Lowest</span>}
-                  </div>
-                  <ul>
-                    <li className={perks.checked ? "" : "no"}>🧳 {perks.checked ? `${perks.checked} check-in` : "No check-in bag"}</li>
-                    <li>👜 {perks.cabin ? `${perks.cabin} cabin` : "Cabin bag"}</li>
-                    {perks.meal && <li className={o.mealIncluded ? "" : "no"}>🍽 {perks.meal}</li>}
-                    <li className={o.isRefundable ? "" : "no"}>{o.isRefundable ? "↩︎" : "✕"} {perks.refund}</li>
-                  </ul>
-                  <div className="fare-option-price">{formatMoney(oShown.amount, oShown.currency)}</div>
-                  <a className="fare-option-book" href={buildBookUrl(o, fareCurrency, op, adults, children, infants, oShown.converted ? oShown.currency : undefined, searchId, optionLinkParams(o, options))}>Select</a>
-                  <FareRulesButton fareId={o.id} />
-                </div>
-              );
-            })}
-          </div>
-        </details>
+        <FareOptionsList
+          seatsLeft={fare.seatsLeft}
+          options={options.map((o: any) => {
+            const perks = optionPerks(o);
+            const op = optionPrice(o);
+            const oShown = inChosenCurrency(op, fareCurrency, requestedCurrency, aedRate);
+            const diff = op - price;
+            return {
+              id: o.id,
+              label: fareLabel(o.fareIdentifier || o.fareClass),
+              price: formatMoney(oShown.amount, oShown.currency),
+              diff: diff > 0 ? formatMoney(inChosenCurrency(diff, fareCurrency, requestedCurrency, aedRate).amount, oShown.currency) : undefined,
+              perks: [perks.refund, cabinLabel, perks.meal, perks.checked && `${perks.checked} check-in`, perks.cabin && `${perks.cabin} cabin`].filter(Boolean).join(" · "),
+              bookUrl: buildBookUrl(o, fareCurrency, op, adults, children, infants, oShown.converted ? oShown.currency : undefined, searchId, optionLinkParams(o, options)),
+            };
+          })}
+        />
       )}
 
       <details className="fare-card-v2-details">

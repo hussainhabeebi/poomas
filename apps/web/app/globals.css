@@ -2539,6 +2539,23 @@ body .site-nav :is(a, summary):focus-visible { outline: 2px solid #b91c1c; outli
 .fare-option li.no { color: #94a3b8; }
 .fare-option-price { font-size: 17px; font-weight: 800; color: #0f172a; margin-top: auto; }
 .fare-option-book { display: block; text-align: center; background: #E31E24; color: #fff; font-weight: 800; font-size: 14px; border-radius: 10px; padding: 9px; text-decoration: none; }
+/* Same flight, several fares: radio list, cheapest selected, "+N more fares". */
+.fare-variants { padding: 4px 16px 14px; }
+.fare-variants-box { border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; position: relative; padding-bottom: 18px; }
+.fare-variant { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; cursor: pointer; border-bottom: 1px solid #eef2f7; }
+.fare-variant:last-of-type { border-bottom: 0; }
+.fare-variant.selected { background: #fff7f7; }
+.fare-variant input[type=radio] { accent-color: #E31E24; width: 20px; height: 20px; margin: 3px 0 0; flex-shrink: 0; }
+.fare-variant-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.fare-variant-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fare-variant-price { font-size: 18px; font-weight: 800; color: #0f172a; }
+.fare-variant-label { font-size: 11px; font-weight: 800; color: #854d0e; background: #fef9c3; border-radius: 6px; padding: 2px 8px; }
+.fare-variant-diff { font-size: 11px; font-weight: 700; color: #b45309; }
+.fare-variant-perks { font-size: 12px; color: #64748b; }
+.fare-variant .fare-rules { margin-top: 2px; }
+.fare-variant-book { align-self: center; background: #E31E24; color: #fff; font-weight: 800; font-size: 14px; border-radius: 10px; padding: 10px 20px; text-decoration: none; text-transform: uppercase; flex-shrink: 0; }
+.fare-variants-toggle { position: absolute; left: 50%; bottom: 0; transform: translate(-50%, 50%); border: 0; border-radius: 999px; background: #475569; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 14px; cursor: pointer; white-space: nowrap; }
+.fare-variants-seats { margin-top: 16px; font-size: 12px; font-weight: 700; color: #d97706; }
 .fare-rules button { background: none; border: 0; padding: 0; color: #1d4ed8; font-size: 12px; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .fare-rules-box { margin-top: 6px; font-size: 11px; color: #334155; display: flex; flex-direction: column; gap: 4px; line-height: 1.4; }
 
