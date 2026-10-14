@@ -6,6 +6,8 @@ import { ScanDocument, type ScannedTraveller } from "../components/ScanDocument"
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
+import { PassportDateInput } from "./PassportDateInput";
+import { normalizedPassportDates, passportDateProblems, passportToday } from "../../../../packages/types/src/passport-dates";
 import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
 import { convertInr, fetchFxRates, formatIn, GCC, isDisplayCurrency, type DisplayCurrency, type FxRates } from "../lib/fx";
 
@@ -593,7 +595,7 @@ export default function BookPage() {
             gender:         p.gender,
             nationality:    p.nationality.toUpperCase().slice(0, 2) || undefined,
             passportNumber: p.passportNumber.trim() || undefined,
-            passportExpiry: p.passportExpiry || undefined,
+            passportExpiry: normalizedPassportDates(p).passportExpiry,
             isDefault:      savedPassengers.length === 0,
           }),
         }).catch(() => {});
@@ -604,6 +606,10 @@ export default function BookPage() {
   // Request body for /api/book (also used to hold the fare).
   function bookingPayload(extra: Record<string, unknown> = {}) {
     if (!fare) throw new Error("No fare selected");
+    for (const [i, p] of passengers.entries()) {
+      const problem = Object.values(passportDateProblems(normalizedPassportDates(p)))[0];
+      if (problem) throw new Error(`Traveller ${i + 1}: ${problem}`);
+    }
     return {
       fareId:        fare.fareId,
       supplier:      fare.supplier,
@@ -634,8 +640,8 @@ export default function BookPage() {
         lastName:       p.lastName.trim(),
         nationality:    p.nationality.trim().toUpperCase().slice(0, 2) || "IN",
         passportNumber: p.passportNumber.trim() || undefined,
-        passportExpiry: p.passportExpiry || undefined,
-        passportIssueDate: p.passportNumber.trim() && p.passportIssueDate ? p.passportIssueDate : undefined,
+        passportExpiry: normalizedPassportDates(p).passportExpiry,
+        passportIssueDate: p.passportNumber.trim() ? normalizedPassportDates(p).passportIssueDate : undefined,
         panNumber:      p.panNumber.trim() ? p.panNumber.trim().toUpperCase() : undefined,
         documentId:     p.documentId.trim() || undefined,
         ...(p.type !== "INFANT" && (picks(p.bag).length || picks(p.meal).length || picks(p.seat).length)
@@ -681,7 +687,8 @@ export default function BookPage() {
     if (!fare || submitting || fareExpired || bookingUncertain) return;
     // Names must be real (no TBA / Test) — the airline and TripJack reject placeholders.
     for (const [i, p] of passengers.entries()) {
-      const problem = passengerNameProblem(p.firstName, "First name") ?? passengerNameProblem(p.lastName, "Last name");
+      const problem = passengerNameProblem(p.firstName, "First name") ?? passengerNameProblem(p.lastName, "Last name")
+        ?? Object.values(passportDateProblems(normalizedPassportDates(p)))[0];
       if (problem) { setError(`Traveller ${i + 1}: ${problem}`); setReviewing(false); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     }
     if (cond) {
@@ -997,9 +1004,12 @@ export default function BookPage() {
                 <div className="grid">
                   <Input l="Nationality (e.g. IN, AE)" v={p.nationality} c={(v) => upd(i, "nationality", v.toUpperCase().slice(0, 2))} max={2} r={passportNeeded} />
                   <Input l="Passport number" v={p.passportNumber} c={(v) => upd(i, "passportNumber", v)} r={passportNeeded} />
-                  <Input l="Passport expiry" t="date" v={p.passportExpiry} c={(v) => upd(i, "passportExpiry", v)} r={passportNeeded || (!!cond?.passportExpiryRequired && !!p.passportNumber)} />
+                  <PassportDateInput label="Passport expiry" value={p.passportExpiry} onChange={(v) => upd(i, "passportExpiry", v)}
+                    problem={passportDateProblems(normalizedPassportDates(p)).passportExpiry}
+                    required={passportNeeded || (!!cond?.passportExpiryRequired && !!p.passportNumber)} />
                   {(passportNeeded || p.passportNumber) && (
-                    <Input l="Passport issue date" t="date" v={p.passportIssueDate} c={(v) => upd(i, "passportIssueDate", v)} />
+                    <PassportDateInput label="Passport issue date" value={p.passportIssueDate} onChange={(v) => upd(i, "passportIssueDate", v)}
+                      max={passportToday()} problem={passportDateProblems(normalizedPassportDates(p)).passportIssueDate} />
                   )}
                   {cond?.panApplicable && (
                     <Input l="PAN (optional)" v={p.panNumber} c={(v) => upd(i, "panNumber", v.toUpperCase().slice(0, 10))} ph="ABCDE1234F" max={10} />
