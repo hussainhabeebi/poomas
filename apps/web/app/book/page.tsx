@@ -6,8 +6,8 @@ import { ScanDocument, type ScannedTraveller } from "../components/ScanDocument"
 import SocialSignIn from "./SocialSignIn";
 import { bookingError } from "./booking-error";
 import { passengerNameProblem } from "./passenger-names";
-import { PassportDateInput } from "./PassportDateInput";
-import { normalizedPassportDates, passportDateProblems, passportToday } from "../../../../packages/types/src/passport-dates";
+import { PassengerDateInput } from "./PassengerDateInput";
+import { normalizedPassportDates, passengerDateProblems, passportToday } from "../../../../packages/types/src/passport-dates";
 import { CURRENCY_EVENT, readPrefCurrency, savePrefCurrency } from "../lib/currency-pref";
 import { convertInr, fetchFxRates, formatIn, GCC, isDisplayCurrency, type DisplayCurrency, type FxRates } from "../lib/fx";
 
@@ -607,7 +607,7 @@ export default function BookPage() {
   function bookingPayload(extra: Record<string, unknown> = {}) {
     if (!fare) throw new Error("No fare selected");
     for (const [i, p] of passengers.entries()) {
-      const problem = Object.values(passportDateProblems(normalizedPassportDates(p)))[0];
+      const problem = Object.values(passengerDateProblems({ ...p, ...normalizedPassportDates(p) }))[0];
       if (problem) throw new Error(`Traveller ${i + 1}: ${problem}`);
     }
     return {
@@ -688,7 +688,7 @@ export default function BookPage() {
     // Names must be real (no TBA / Test) — the airline and TripJack reject placeholders.
     for (const [i, p] of passengers.entries()) {
       const problem = passengerNameProblem(p.firstName, "First name") ?? passengerNameProblem(p.lastName, "Last name")
-        ?? Object.values(passportDateProblems(normalizedPassportDates(p)))[0];
+        ?? Object.values(passengerDateProblems({ ...p, ...normalizedPassportDates(p) }))[0];
       if (problem) { setError(`Traveller ${i + 1}: ${problem}`); setReviewing(false); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     }
     if (cond) {
@@ -989,7 +989,8 @@ export default function BookPage() {
               <div className="grid">
                 <Input l="First name"             v={p.firstName}      c={(v) => upd(i, "firstName",      v)} r />
                 <Input l="Last name"              v={p.lastName}       c={(v) => upd(i, "lastName",       v)} r />
-                <Input l="Date of birth"  t="date" v={p.dob}           c={(v) => upd(i, "dob",            v)} r={p.type !== "ADULT" || isInternational || !!cond?.dobRequired[p.type]} />
+                <PassengerDateInput label="Date of birth" value={p.dob} onChange={(v) => upd(i, "dob", v)} historical max={passportToday()}
+                  problem={passengerDateProblems(p).dob} required={p.type !== "ADULT" || isInternational || !!cond?.dobRequired[p.type]} />
                 <label>Gender
                   <select value={p.gender} onChange={(e) => upd(i, "gender", e.target.value as "M" | "F")}>
                     <option value="M">Male</option>
@@ -1004,12 +1005,12 @@ export default function BookPage() {
                 <div className="grid">
                   <Input l="Nationality (e.g. IN, AE)" v={p.nationality} c={(v) => upd(i, "nationality", v.toUpperCase().slice(0, 2))} max={2} r={passportNeeded} />
                   <Input l="Passport number" v={p.passportNumber} c={(v) => upd(i, "passportNumber", v)} r={passportNeeded} />
-                  <PassportDateInput label="Passport expiry" value={p.passportExpiry} onChange={(v) => upd(i, "passportExpiry", v)}
-                    problem={passportDateProblems(normalizedPassportDates(p)).passportExpiry}
+                  <PassengerDateInput label="Passport expiry" value={p.passportExpiry} onChange={(v) => upd(i, "passportExpiry", v)}
+                    problem={passengerDateProblems({ ...p, ...normalizedPassportDates(p) }).passportExpiry}
                     required={passportNeeded || (!!cond?.passportExpiryRequired && !!p.passportNumber)} />
                   {(passportNeeded || p.passportNumber) && (
-                    <PassportDateInput label="Passport issue date" value={p.passportIssueDate} onChange={(v) => upd(i, "passportIssueDate", v)}
-                      max={passportToday()} problem={passportDateProblems(normalizedPassportDates(p)).passportIssueDate} />
+                    <PassengerDateInput label="Passport issue date" value={p.passportIssueDate} onChange={(v) => upd(i, "passportIssueDate", v)}
+                      historical max={passportToday()} problem={passengerDateProblems({ ...p, ...normalizedPassportDates(p) }).passportIssueDate} />
                   )}
                   {cond?.panApplicable && (
                     <Input l="PAN (optional)" v={p.panNumber} c={(v) => upd(i, "panNumber", v.toUpperCase().slice(0, 10))} ph="ABCDE1234F" max={10} />

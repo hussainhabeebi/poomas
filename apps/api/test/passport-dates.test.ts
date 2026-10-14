@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { bookDirectRoutes } from "../src/routes/book.js";
 import { bookingError } from "../../web/app/book/booking-error.js";
-import { isPassportDate, normalizePassportDateEntry, normalizedPassportDates, passportDateProblems, passportToday } from "../../../packages/types/src/passport-dates.js";
+import { displayPassengerDate, isPassportDate, maskPassengerDate, normalizePassportDateEntry, normalizedPassportDates, passengerCalendarMonth, passengerDateFromDisplay, passengerDateProblems, passportDateProblems, passportToday, pastedPassengerDate } from "../../../packages/types/src/passport-dates.js";
 
 test("passport dates require exactly four positive year digits", () => {
   for (const value of ["222222-04-23", "22222-04-23", "026-04-23", "26-04-23", "0000-04-23", "+2026-04-23", "2026-4-23", "2026-04-3"])
@@ -83,6 +83,10 @@ test("booking API rejects invalid passport dates before any supplier or persiste
     [{ passportIssueDate: "2020-04-23", passportExpiry: "2020-04-23" }, /later than/],
     [{ passportIssueDate: "2020-04-23", passportExpiry: "2019-04-23" }, /later than/],
     [{ passportExpiry: "20300423" }, /YYYY-MM-DD/],
+    [{ dob: "275760-05-05" }, /birth.*four-digit/],
+    [{ dob: "1900-02-29" }, /birth.*valid date/],
+    [{ dob: "9999-05-05" }, /birth.*future/],
+    [{ dob: "05/05/2000" }, /birth.*YYYY-MM-DD/],
   ] as const) {
     for (const holdOnly of [false, true]) {
       const response = await app.request("/book", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
@@ -110,7 +114,7 @@ test("booking API accepts valid ISO passport dates and keeps optional dates opti
     await next();
   });
   app.route("/book", bookDirectRoutes);
-  for (const dates of [{}, { passportIssueDate: "2020-02-29", passportExpiry: "2030-04-23" }, { passportExpiry: "2030-04-23" }]) {
+  for (const dates of [{}, { dob: "2000-02-29", passportIssueDate: "2020-02-29", passportExpiry: "2030-04-23" }, { passportExpiry: "2030-04-23" }]) {
     const response = await app.request("/book", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       fareId: "mock-fare", supplier: "TRIPJACK", contactEmail: "mock@example.test", contactPhone: "+919999999999",
       origin: "COK", destination: "DXB", departureDate: "2030-04-01", totalFare: 250,
@@ -122,4 +126,43 @@ test("booking API accepts valid ISO passport dates and keeps optional dates opti
     assert.equal((await response.json()).errorCode, "BOOKING_UNAVAILABLE");
   }
   assert.equal(calls, 0);
+});
+
+test("DOB validates calendar days and past/current dates without changing optional requirements", () => {
+  for (const dob of ["", "2000-02-29", "2026-10-14"]) assert.deepEqual(passengerDateProblems({ dob }, "2026-10-14"), {});
+  for (const dob of ["275760-05-05", "0000-05-05", "1900-02-29", "2025-04-31"]) assert.match(passengerDateProblems({ dob }, "2026-10-14").dob!, /valid date/);
+  assert.match(passengerDateProblems({ dob: "2026-10-15" }, "2026-10-14").dob!, /future/);
+  assert.match(passengerDateProblems({ dob: "2000-02-29", passportIssueDate: "2020-01-01", passportExpiry: "2019-12-31" }).passportExpiry!, /later than/);
+});
+
+test("DD/MM/YYYY typing and numeric mobile drafts are bounded without truncation", () => {
+  const drafts = ["0", "05", "05/0", "05/05", "05/05/2", "05/05/20", "05/05/200", "05/05/2000"];
+  drafts.forEach((expected, i) => assert.equal(maskPassengerDate("05052000".slice(0, i + 1)), expected));
+  for (const raw of ["0505275760", "05/05/275760", "4444444444", "letters", "05-05-2000"]) assert.equal(maskPassengerDate(raw), undefined);
+  assert.equal(passengerDateFromDisplay("05/05/2000"), "2000-05-05");
+  for (const raw of ["05/05/275760", "29/02/1900", "31/04/2020", "00/01/2000", "05/05/200"]) assert.equal(passengerDateFromDisplay(raw), undefined);
+});
+
+test("paste supports explicit display/ISO formats and never salvages oversized years", () => {
+  for (const raw of ["29/02/2000", "29022000", "2000-02-29", " 29/2/2000 "]) assert.equal(pastedPassengerDate(raw), "29/02/2000");
+  for (const raw of ["05/05/275760", "4444444444", "2020-01-011", "5/5/20", "05/05/2000 extra"]) assert.equal(pastedPassengerDate(raw), undefined);
+  assert.equal(pastedPassengerDate("31/04/2000"), "31/04/2000"); // Kept editable, but cannot submit.
+});
+
+test("calendar selection matches manual entry including leap years and historical DOB years", () => {
+  for (const [year, days] of [[1900, 28], [2000, 29], [2024, 29], [2025, 28]]) assert.equal(passengerCalendarMonth(year, 2).days, days);
+  assert.deepEqual(passengerCalendarMonth(1, 1), { weekday: 1, days: 31 });
+  for (const date of ["0001-01-01", "1900-05-05", "2000-02-29", "2030-04-23"]) assert.equal(passengerDateFromDisplay(displayPassengerDate(date)), date);
+});
+
+test("display and API dates stay identical across timezones", () => {
+  const previous = process.env.TZ;
+  try {
+    for (const timezone of ["Pacific/Honolulu", "UTC", "Asia/Kolkata", "Pacific/Kiritimati"]) {
+      process.env.TZ = timezone;
+      assert.equal(displayPassengerDate("2000-02-29"), "29/02/2000");
+      assert.equal(passengerDateFromDisplay("29/02/2000"), "2000-02-29");
+      assert.equal(passengerCalendarMonth(2000, 2).days, 29);
+    }
+  } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
 });

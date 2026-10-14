@@ -1,0 +1,23 @@
+.field { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.field > label { font-size: 12px; font-weight: 700; color: #344054; }
+.control { position: relative; }
+.control input { width: 100%; min-width: 0; box-sizing: border-box; height: 50px; border: 1px solid #d0d5dd; border-radius: 12px; background: #fff; font-size: 16px; padding: 0 50px 0 13px !important; }
+.control input[aria-invalid="true"] { border-color: #b42318; }
+.toggle { position: absolute; right: 3px; top: 3px; width: 44px; height: 44px; border: 0; border-radius: 9px; background: transparent; color: #344054; display: grid; place-items: center; cursor: pointer; }
+.toggle:hover { background: #f2f4f7; }
+.hint { color: #667085; font-size: 11px; }
+.error { color: #b42318; font-size: 12px; line-height: 1.4; min-height: 4.2em; }
+.calendar { position: absolute; top: 76px; left: 0; width: 320px; max-width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #d0d5dd; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px #1018281a; z-index: 50; }
+.navigation { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; }
+.navigation select { min-width: 0; height: 44px !important; padding: 0 3px !important; font-size: 14px !important; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+.navigation select:first-of-type { flex: 1; }
+.navigation button { flex: 0 0 28px; font-size: 24px; height: 44px; border: 0; border-radius: 6px; background: #f9fafb; }
+.days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; text-align: center; }
+.days > span { font-size: 11px; color: #667085; padding: 5px 0; }
+.days button { min-width: 0; min-height: 44px; padding: 0; border: 0; border-radius: 8px; background: #fff; color: #344054; font-size: 14px; cursor: pointer; }
+.days button:hover { background: #f2f4f7; }
+.days button[aria-pressed="true"] { background: #111827; color: #fff; }
+.calendar button:disabled { opacity: .35; cursor: default; }
+.close { width: 100%; margin-top: 10px; min-height: 44px; border: 1px solid #eaecf0; border-radius: 8px; background: #f9fafb; color: #344054; }
+.field button:focus-visible, .field select:focus-visible { outline: 2px solid #ed1c24; outline-offset: 2px; }
+@media (max-width: 390px) { .calendar { padding: 8px; } .navigation { gap: 2px; } }

@@ -19,7 +19,7 @@ import { and, eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { collectExchanges, persistExchanges, persistInBackground, type ExchangeCollector } from "../lib/api-exchanges.js";
 import { passengerNameProblem } from "../lib/passenger-names.js";
-import { passportDateProblems } from "../../../../packages/types/src/passport-dates.js";
+import { passengerDateProblems } from "../../../../packages/types/src/passport-dates.js";
 import { fallbackHoldDeadline, findHoldDeadline, holdLabel } from "../lib/fare-hold.js";
 import { parseBookingDetails } from "../lib/trips.js";
 import { emailShell, escapeHtml, money, notifyCustomer, WEB_URL } from "../lib/customer-notify.js";
@@ -46,7 +46,7 @@ const passengerSchema = z.object({
     seat:    z.array(ssrPick).max(6).optional(),
   }).optional(),
 }).superRefine((p, ctx) => {
-  for (const [field, message] of Object.entries(passportDateProblems(p))) {
+  for (const [field, message] of Object.entries(passengerDateProblems(p))) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
   }
   for (const [field, label] of [["firstName", "First name"], ["lastName", "Last name"]] as const) {
@@ -242,7 +242,7 @@ bookDirectRoutes.get("/held/:id", async (c) => {
 bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   if (!result.success) {
     const nameIssue = result.error.issues.find((i) => i.path.includes("firstName") || i.path.includes("lastName"))
-      ?? result.error.issues.find((i) => ["panNumber", "documentId", "gstNumber", "registeredName", "passportIssueDate", "passportExpiry"].some((f) => i.path.includes(f)));
+      ?? result.error.issues.find((i) => ["panNumber", "documentId", "gstNumber", "registeredName", "passportIssueDate", "passportExpiry", "dob"].some((f) => i.path.includes(f)));
     return c.json({ errorCode: "BOOKING_DETAILS_INVALID", ...(nameIssue ? { error: nameIssue.message } : {}) }, 400);
   }
 }), async (c) => {

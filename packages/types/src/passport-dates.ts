@@ -1,6 +1,7 @@
 /** Passport dates are calendar dates, never local-time instants. */
 export type PassportDateFields = { passportIssueDate?: string; passportExpiry?: string };
 export type PassportDateProblems = Partial<Record<keyof PassportDateFields, string>>;
+export type PassengerDateFields = PassportDateFields & { dob?: string };
 
 export function isPassportDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -40,4 +41,59 @@ export function normalizedPassportDates(p: PassportDateFields): PassportDateFiel
     passportIssueDate: p.passportIssueDate ? normalizePassportDateEntry(p.passportIssueDate) : undefined,
     passportExpiry: p.passportExpiry ? normalizePassportDateEntry(p.passportExpiry) : undefined,
   };
+}
+
+/** Shared by the booking form and API. API dates must already be canonical ISO. */
+export function passengerDateProblems(p: PassengerDateFields, today = passportToday()): Partial<Record<keyof PassengerDateFields, string>> {
+  const problems = { ...passportDateProblems(p, today) } as Partial<Record<keyof PassengerDateFields, string>>;
+  if (p.dob && !isPassportDate(p.dob)) problems.dob = "Date of birth must be a valid date in YYYY-MM-DD format with a four-digit year.";
+  else if (p.dob && p.dob > today) problems.dob = "Date of birth cannot be in the future.";
+  return problems;
+}
+
+export function displayPassengerDate(value: string): string {
+  if (!isPassportDate(value)) return value;
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+/** Numeric keyboards enter DDMMYYYY; incomplete drafts never become API dates. */
+export function passengerDateFromDisplay(value: string): string | undefined {
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return undefined;
+  const [day, month, year] = value.split("/");
+  const iso = `${year}-${month}-${day}`;
+  return isPassportDate(iso) ? iso : undefined;
+}
+
+/** Reject excess digits instead of truncating an invalid year into a valid date. */
+export function maskPassengerDate(value: string): string | undefined {
+  if (/[^\d/]/.test(value)) return undefined;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length > 8) return undefined;
+  return [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4)].filter(Boolean).join("/");
+}
+
+export function pastedPassengerDate(value: string): string | undefined {
+  const raw = value.trim();
+  if (isPassportDate(raw)) return displayPassengerDate(raw);
+  if (/^\d{8}$/.test(raw)) return maskPassengerDate(raw);
+  const parts = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  return parts ? `${parts[1].padStart(2, "0")}/${parts[2].padStart(2, "0")}/${parts[3]}` : undefined;
+}
+
+/** UTC construction with setUTCFullYear also handles years 0001–0099 correctly. */
+export function passengerCalendarMonth(year: number, month: number): { weekday: number; days: number } {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, 1);
+  date.setUTCHours(0, 0, 0, 0);
+  const weekday = date.getUTCDay();
+  date.setUTCMonth(month, 0);
+  return { weekday, days: date.getUTCDate() };
+}
+
+export function shiftPassengerDate(value: string, days: number): string {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day + days);
+  return passportToday(date);
 }
