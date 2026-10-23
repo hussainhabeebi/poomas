@@ -131,6 +131,7 @@ export default function HotelsPage() {
   const [checkOut, setCheckOut] = useState("");
   const [rooms,    setRooms]    = useState(1);
   const [adults,   setAdults]   = useState(1);
+  const [occupancy, setOccupancy] = useState([{ adults: 1, children: 0, childAge: [] as number[] }]);
   const [currency, setCurrencyState] = useState<CurrencyCode>("INR");
   // Same currency as flights: chosen once for the visit.
   useEffect(() => { const c = readPrefCurrency(); if (c === "INR" || c === "AED" || c === "USD") setCurrencyState(c); }, []);
@@ -167,6 +168,7 @@ export default function HotelsPage() {
       checkOut,
       rooms:    String(rooms),
       adults:   String(adults),
+      occupancy: JSON.stringify(occupancy),
       currency,
       nationality,
     });
@@ -232,16 +234,15 @@ export default function HotelsPage() {
               <div className="hw-occupancy">
               <label className="hw-select-label">
                 <span>Rooms</span>
-                <select className="hw-select" value={rooms} onChange={(e) => setRooms(Number(e.target.value))}>
-                  {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+                <select className="hw-select" value={rooms} onChange={(e) => { const n = Number(e.target.value); setRooms(n); setOccupancy(old => Array.from({ length: n }, (_, i) => old[i] ?? { adults: 1, children: 0, childAge: [] })); }}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </label>
-              <label className="hw-select-label">
-                <span>Adults/room</span>
-                <select className="hw-select" value={adults} onChange={(e) => setAdults(Number(e.target.value))}>
-                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
+              {occupancy.map((r, i) => <fieldset key={i} style={{ minWidth: 0, border: '1px solid #ddd', padding: 8 }}><legend>Room {i + 1}</legend>
+                <label>Adults <select value={r.adults} onChange={e => { const n = Number(e.target.value); setOccupancy(old => old.map((x, j) => j === i ? { ...x, adults: n } : x)); setAdults(n); }}>{[1,2,3,4,5,6].map(n => <option key={n}>{n}</option>)}</select></label>
+                <label> Children <select value={r.children} onChange={e => { const n = Number(e.target.value); setOccupancy(old => old.map((x, j) => j === i ? { ...x, children: n, childAge: Array.from({ length: n }, (_, k) => x.childAge[k] ?? 0) } : x)); }}>{[0,1,2,3,4].map(n => <option key={n}>{n}</option>)}</select></label>
+                {r.childAge.map((age, k) => <label key={k}> Child {k + 1} age <input type="number" inputMode="numeric" required min={0} max={17} value={age} style={{ width: 60 }} onChange={e => setOccupancy(old => old.map((x, j) => j === i ? { ...x, childAge: x.childAge.map((v, l) => l === k ? Number(e.target.value) : v) } : x))} /></label>)}
+              </fieldset>)}
               </div>
               <button type="submit" className={searching ? "hw-search-btn search-btn-loading" : "hw-search-btn"} disabled={searching}>
                 {searching

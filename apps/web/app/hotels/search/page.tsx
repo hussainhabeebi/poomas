@@ -1,10 +1,11 @@
 import Link from "next/link";
+import { parseHotelRooms } from "../lib/occupancy";
 import styles from "./results.module.css";
 
 type SearchParams = {
   city?: string; cityName?: string;
   checkIn?: string; checkOut?: string;
-  rooms?: string; adults?: string;
+  rooms?: string; adults?: string; occupancy?: string;
   currency?: string; nationality?: string;
 };
 
@@ -42,7 +43,7 @@ async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
         ...(params.cityName ? { cityName: params.cityName } : {}),
         checkIn:     params.checkIn ?? "",
         checkOut:    params.checkOut ?? "",
-        rooms:       Array.from({ length: rooms }, () => ({ adults, children: 0 })),
+        rooms:       parseHotelRooms(params.occupancy, params.rooms, params.adults),
         nationality: /^[A-Z]{2}$/.test(params.nationality ?? "") ? params.nationality : "IN",
         currency:    params.currency ?? "INR",
       }),
@@ -60,35 +61,14 @@ async function searchHotels(params: SearchParams): Promise<HotelSearchResult> {
 function formatMoney(amount: number, currency: string): string {
   const code = (currency || "INR").toUpperCase();
   try {
-    return new Intl.NumberFormat("en-IN", { style: "currency", currency: code, maximumFractionDigits: 0 }).format(amount);
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency: code, maximumFractionDigits: 2 }).format(amount);
   } catch {
     return `${code} ${amount.toLocaleString()}`;
   }
 }
 
 function buildBookUrl(hotel: NormalizedHotel, rooms: number, adults: number, expiresAt?: string, nationality = "IN"): string {
-  const p = new URLSearchParams({
-    hid:       hotel.hid ?? hotel.hotelCode,
-    sid:       hotel.correlationId ?? "",
-    adults:    String(adults),
-    nat:       nationality,
-    exp:       expiresAt ?? "",
-    optionId:  hotel.id,
-    name:      hotel.name,
-    stars:     String(hotel.starRating),
-    price:     String(hotel.totalFare),
-    currency:  hotel.currency,
-    checkIn:   hotel.checkIn,
-    checkOut:  hotel.checkOut,
-    nights:    String(hotel.nights),
-    rooms:     String(rooms),
-    roomType:  hotel.roomType,
-    mealPlan:  hotel.mealPlan,
-    ref:       hotel.isRefundable ? "1" : "0",
-    city:      hotel.cityCode,
-    address:   hotel.address,
-    cc:        hotel.countryCode ?? "",
-  });
+  const p = new URLSearchParams({ hid: hotel.hid ?? hotel.hotelCode, sid: hotel.correlationId ?? "", adults: String(adults), nat: nationality, currency: hotel.currency, checkIn: hotel.checkIn, checkOut: hotel.checkOut, rooms: String(rooms) });
   return `/hotels/book?${p}`;
 }
 
@@ -155,7 +135,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
             {hotels.length} hotel{hotels.length !== 1 ? "s" : ""} found
           </p>
           {hotels.map((hotel, i) => (
-            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} adults={adults} expiresAt={result.expiresAt} nationality={nationality} />
+            <HotelCard key={`${hotel.id}-${i}`} hotel={hotel} rooms={rooms} adults={adults} expiresAt={result.expiresAt} nationality={nationality} occupancy={params.occupancy} />
           ))}
         </div>
       )}
@@ -163,7 +143,7 @@ export default async function HotelSearchPage({ searchParams }: PageProps) {
   );
 }
 
-function HotelCard({ hotel, rooms, adults, expiresAt, nationality = "IN" }: { hotel: NormalizedHotel; rooms: number; adults: number; expiresAt?: string; nationality?: string }) {
+function HotelCard({ hotel, rooms, adults, expiresAt, nationality = "IN", occupancy }: { hotel: NormalizedHotel; rooms: number; adults: number; expiresAt?: string; nationality?: string; occupancy?: string }) {
   const price = hotel.totalFare;
   const bookable = Boolean(hotel.id);
 
@@ -196,7 +176,7 @@ function HotelCard({ hotel, rooms, adults, expiresAt, nationality = "IN" }: { ho
           <p className={styles.stay}>{hotel.nights} night{hotel.nights !== 1 ? "s" : ""} · {rooms} room{rooms !== 1 ? "s" : ""}</p>
         </div>
         {bookable ? (
-          <Link href={buildBookUrl(hotel, rooms, adults, expiresAt, nationality)} className={styles.book}>Book Now <span aria-hidden="true">→</span></Link>
+          <Link href={buildBookUrl(hotel, rooms, adults, expiresAt, nationality) + (occupancy ? `&occupancy=${encodeURIComponent(occupancy)}` : "")} className={styles.book}>Choose rooms <span aria-hidden="true">→</span></Link>
         ) : <p className={styles.unavailable}>Indicative price · Not directly bookable</p>}
       </div>
     </article>

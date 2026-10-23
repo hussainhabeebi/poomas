@@ -62,14 +62,15 @@ export async function tripjackEnvironment(env: Env, tenantId: string): Promise<"
 const NATIONALITY_KEY = "hotel_v3:nationalities";
 
 export async function nationalityId(env: Env, client: TripjackHotelV3Client, iso2: string): Promise<string> {
+  const key = `${NATIONALITY_KEY}:${await client.cacheScope()}`;
   const code = iso2.toUpperCase();
   if (/^\d+$/.test(code)) return code;   // already a TripJack countryId
-  let map = await env.FARE_CACHE_KV.get(NATIONALITY_KEY, "json").catch(() => null) as Record<string, string> | null;
+  let map = await env.FARE_CACHE_KV.get(key, "json").catch(() => null) as Record<string, string> | null;
   if (!map) {
     const res = await client.nationalities();
     map = Object.fromEntries((res.nationalityInfos ?? []).map((n) => [String(n.code).toUpperCase(), String(n.countryId)]));
     if (Object.keys(map).length) {
-      await env.FARE_CACHE_KV.put(NATIONALITY_KEY, JSON.stringify(map), { expirationTtl: 7 * 86400 }).catch(() => {});
+      await env.FARE_CACHE_KV.put(key, JSON.stringify(map), { expirationTtl: 7 * 86400 }).catch(() => {});
     }
   }
   const id = map[code];
@@ -192,7 +193,7 @@ export async function resolveRegionIds(env: Env, city: string, countryIso2: stri
   const countries = COUNTRY_NAMES[countryIso2] ?? [];
   const matches = names.flatMap((n) => index.cities[n] ?? []);
   const inCountry = countries.length ? matches.filter(([, c]) => countries.includes(c)) : matches;
-  const ids = [...new Set((inCountry.length ? inCountry : matches).map(([id]) => String(id)))];
+  const ids = [...new Set((countries.length ? inCountry : matches).map(([id]) => String(id)))];
   if (!ids.length) {
     throw Object.assign(new Error(`TripJack has no hotel region for "${city}"${countryIso2 ? ` (${countryIso2})` : ""}`), { code: "CITY_NOT_FOUND" });
   }
@@ -201,19 +202,25 @@ export async function resolveRegionIds(env: Env, city: string, countryIso2: stri
 }
 
 export async function hotelIdsForRegions(env: Env, client: TripjackHotelV3Client, regionIds: string[]): Promise<string[]> {
-  const cacheKey = `hotel_v3:hids:${regionIds.slice().sort().join(",")}`;
+  const cacheKey = `hotel_v3:hids:${await client.cacheScope()}:${regionIds.slice().sort().join(",")}`;
   const cached = await env.FARE_CACHE_KV.get(cacheKey, "json").catch(() => null) as string[] | null;
   if (cached) return cached;
-  const res = await client.hotelMapping({ regionIds, page: 0, size: 2000 });
-  const hids = (res.hotels ?? []).map((h) => String(h.tjHotelId)).filter(Boolean);
+  const hids: string[] = [];
+  for (let page = 0; page < 50; page++) {
+    const res: any = await client.hotelMapping({ regionIds, page, size: 2000 });
+    hids.push(...(res.hotels ?? []).map((h: any) => String(h.tjHotelId)).filter(validHotelId));
+    if (!res.pageable || page + 1 >= res.pageable.totalPages) break;
+    if (page === 49) throw Object.assign(new Error('Hotel mapping exceeds safe page limit'), { code: 'MAPPING_LIMIT' });
+  }
   await env.FARE_CACHE_KV.put(cacheKey, JSON.stringify(hids), { expirationTtl: 86400 }).catch(() => {});
   return hids;
 }
 
-// Static content (images, stars, address) — cached per hotel for 7 days.
+// Static content (images, stars, address) — cached per hotel for 24 hours.
 export async function hotelContent(env: Env, client: TripjackHotelV3Client, hids: string[]): Promise<Record<string, HotelV3Content>> {
+  const scope = await client.cacheScope();
   const out: Record<string, HotelV3Content> = {};
-  const cached = await Promise.all(hids.map((h) => env.FARE_CACHE_KV.get(`hotel_v3:content:${h}`, "json").catch(() => null)));
+  const cached = await Promise.all(hids.map((h) => env.FARE_CACHE_KV.get(`hotel_v3:content:${scope}:${h}`, "json").catch(() => null)));
   const missing: string[] = [];
   hids.forEach((h, i) => { if (cached[i]) out[h] = cached[i] as HotelV3Content; else missing.push(h); });
   for (let i = 0; i < missing.length; i += 100) {
@@ -223,10 +230,10 @@ export async function hotelContent(env: Env, client: TripjackHotelV3Client, hids
         const c = normalizeContent(raw);
         if (!c.tjHotelId) continue;
         out[c.tjHotelId] = c;
-        await env.FARE_CACHE_KV.put(`hotel_v3:content:${c.tjHotelId}`, JSON.stringify(c), { expirationTtl: 7 * 86400 }).catch(() => {});
+        await env.FARE_CACHE_KV.put(`hotel_v3:content:${scope}:${c.tjHotelId}`, JSON.stringify(c), { expirationTtl: 86400 }).catch(() => {});
       }
     } catch (err) {
-      console.error("[hotels] static content failed", err);   // listing still works without images
+      console.error("[hotels] static content unavailable");   // listing still works without images
     }
   }
   return out;
@@ -274,7 +281,7 @@ export async function searchHotels(env: Env, client: TripjackHotelV3Client, inpu
     checkIn: input.checkIn, checkOut: input.checkOut, rooms: input.rooms, currency: input.currency,
     correlationId, nationality, hids: batch, timeoutMs: 13000,
   })));
-  const listed = settled.flatMap((r) => r.status === "fulfilled" ? r.value.hotels ?? [] : []);
+  const listed = settled.flatMap((r) => r.status === "fulfilled" ? r.value.hotels ?? [] : []).map(h => ({ ...h, hotelId: h.tjHotelId ?? h.hotelId, options: (h.options ?? []).filter((o: any) => o.inventory?.available !== false && typeof o.pricing?.totalPrice === 'number' && o.pricing.totalPrice > 0 && o.pricing.currency === input.currency) }));
   if (!listed.length) {
     const firstError = settled.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
     if (firstError) throw firstError.reason;

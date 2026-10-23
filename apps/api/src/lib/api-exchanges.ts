@@ -1,14 +1,10 @@
-// Stores raw supplier API exchanges for certification logs.
-//
-// Each exchange becomes two separate R2 files:
-//   <prefix>/<time>-<seq>-<endpoint>-request.json   exact URL, method, headers (incl. apikey) and body sent
-//   <prefix>/<time>-<seq>-<endpoint>-response.json  exact response text received — never re-serialised
-// (a non-JSON response keeps its raw text and gets a .txt name), plus an index row in
-// supplier_exchanges so admin can list them per booking or search.
+// Stores sanitized diagnostic exchanges. Raw credentials and guest/payment
+// payloads must never be retained, including for certification or error analysis.
 
 import type { ExchangeRecorder, SupplierExchange } from "@poomas/suppliers";
 import { supplierExchanges } from "@poomas/db/schema";
 import type { Env, Variables } from "../types.js";
+import { supplierLogBody, supplierLogHeaders, supplierLogUrl } from './supplier-log-redaction.js';
 
 export interface ExchangeCollector { recorder: ExchangeRecorder; exchanges: SupplierExchange[] }
 
@@ -33,33 +29,27 @@ export async function persistExchanges(
       const slug = x.endpoint.replace(/^\//, "").replace(/[^a-zA-Z0-9]+/g, "-");
       const base = `${prefix}/${stamp}-${String(i + 1).padStart(2, "0")}-${slug}`;
 
-      let parsedRequest: unknown = x.requestBody;
-      try { parsedRequest = JSON.parse(x.requestBody); } catch {}
       const requestKey = `${base}-request.json`;
-      // The apikey stays (TripJack certification needs it); our gateway secret never does.
-      const headers = Object.fromEntries(Object.entries(x.requestHeaders).filter(([k]) => k.toLowerCase() !== "x-poomas-gateway-key"));
       await env.DOCUMENTS_R2.put(requestKey, JSON.stringify({
-        method: x.method, url: x.url, headers, body: parsedRequest, sentAt: x.startedAt,
+        method: x.method, url: supplierLogUrl(x.url), headers: supplierLogHeaders(x.requestHeaders), body: supplierLogBody(x.requestBody), sentAt: x.startedAt,
       }, null, 2), { httpMetadata: { contentType: "application/json" } });
 
       let responseKey: string | null = null;
       if (x.responseBody !== null) {
-        let isJson = true;
-        try { JSON.parse(x.responseBody); } catch { isJson = false; }
-        responseKey = `${base}-response.${isJson ? "json" : "txt"}`;
-        await env.DOCUMENTS_R2.put(responseKey, x.responseBody, {
-          httpMetadata: { contentType: isJson ? "application/json" : "text/plain; charset=utf-8" },
-          customMetadata: { httpStatus: String(x.status ?? ""), responseHeaders: JSON.stringify(x.responseHeaders).slice(0, 1800) },
+        responseKey = `${base}-response.json`;
+        await env.DOCUMENTS_R2.put(responseKey, JSON.stringify(supplierLogBody(x.responseBody)), {
+          httpMetadata: { contentType: "application/json" },
+          customMetadata: { httpStatus: String(x.status ?? ""), responseHeaders: JSON.stringify(supplierLogHeaders(x.responseHeaders)) },
         });
       }
 
       await db.insert(supplierExchanges).values({
         tenantId, bookingId: link.bookingId ?? null, searchId: link.searchId ?? null, requestId: link.requestId ?? null,
-        supplier: x.supplier, endpoint: x.endpoint, url: x.url, httpStatus: x.status, durationMs: x.durationMs,
-        error: x.error ?? null, requestKey, responseKey, startedAt: new Date(x.startedAt),
+        supplier: x.supplier, endpoint: x.endpoint, url: supplierLogUrl(x.url), httpStatus: x.status, durationMs: x.durationMs,
+        error: x.error ? 'SUPPLIER_REQUEST_FAILED' : null, requestKey, responseKey, startedAt: new Date(x.startedAt),
       });
     } catch (err) {
-      console.error(`[api-exchanges] failed to store ${x.endpoint} log`, err);
+      console.error('[api-exchanges] failed to store sanitized diagnostic log');
     }
   }
 }

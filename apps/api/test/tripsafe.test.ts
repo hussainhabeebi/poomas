@@ -85,10 +85,11 @@ test("TripSafe search → book → policy view", async () => {
   assert.equal(cj.amendment.status, "SUCCESS", JSON.stringify(cj));
   assert.equal(calls.find((c) => c.url.endsWith("/amendment/confirm"))!.body.paymentRequests, undefined);
 
-  // Exchanges were stored with the apikey but never the gateway key
+  // Shared diagnostic logs must omit both supplier and gateway credentials.
   const reqFiles = [...r2.entries()].filter(([k]) => k.endsWith("-request.json")).map(([, v]) => JSON.parse(v));
   assert.ok(reqFiles.length >= 5);
-  assert.ok(reqFiles.every((f) => f.headers.apikey === "KEY" && !Object.keys(f.headers).some((h) => h.toLowerCase() === "x-poomas-gateway-key")));
+  assert.ok(reqFiles.every((f) => !Object.keys(f.headers).some((h) => ['apikey', 'authorization', 'x-poomas-gateway-key'].includes(h.toLowerCase()))));
+  assert.ok(reqFiles.every((f) => f.body.redacted === true));
   assert.ok(inserted.some((x) => x.bookingId === bj.reference && x.endpoint === "/insurance/v2/booking"));
   assert.ok(inserted.some((x) => x.searchId === "isid1" && x.endpoint === "/insurance/v2/search"));
 });

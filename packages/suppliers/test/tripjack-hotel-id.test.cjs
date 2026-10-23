@@ -15,6 +15,7 @@ test('hotel listing ID survives normalization, checkout URL and pricing', async 
   const option = { optionId: 'option-123', pricing: { totalPrice: 100, currency: 'INR' } };
   const invalid = [undefined, null, '', 'undefined', 'null', 'NULL', 'bad id'];
   const client = {
+    cacheScope: async () => 'fixture-account',
     listing: async () => ({ hotels: [{ hotelId: '100000569607', name: 'Test hotel', options: [option] }, ...invalid.map(hotelId => ({ hotelId, options: [option] }))] }),
     hotelContent: async (ids) => { assert.deepEqual(ids, ['100000569607']); return { hotels: [] }; },
   };
@@ -28,7 +29,7 @@ test('hotel listing ID survives normalization, checkout URL and pricing', async 
   const buildSource = page.slice(page.indexOf('function buildBookUrl('), page.indexOf('function Stars('));
   const { buildBookUrl } = await import(url(buildSource + '\nexport { buildBookUrl };'));
   const q = new URL(buildBookUrl(hotel, 1, 1), 'https://example.test').searchParams;
-  assert.equal(q.get('hid'), hotel.hid); assert.equal(q.get('optionId'), hotel.id); assert.equal(q.get('sid'), result.correlationId);
+  assert.equal(q.get('hid'), hotel.hid); assert.equal(q.has('price'), false); assert.equal(q.get('sid'), result.correlationId);
   const originalFetch = global.fetch; t.after(() => { global.fetch = originalFetch; });
   const pricing = new TripjackHotelV3Client({ baseUrl: 'https://gateway.example', apiKey: 'test' });
   let calls = 0;
@@ -38,8 +39,8 @@ test('hotel listing ID survives normalization, checkout URL and pricing', async 
   for (const hid of invalid) { assert.equal(validHotelId(hid), false); assert.throws(() => pricing.pricing({ ...req, hid }), /Invalid TripJack hotel ID/); }
   assert.equal(calls, 1);
   const checkout = source('apps/web/app/hotels/book/page.tsx');
-  assert.match(checkout, /hid:\s+q.get\("hid"\)/);
-  assert.match(checkout, /hid: info.hid, optionId/);
+  assert.match(checkout, /hid: p.get\('hid'\)/);
+  assert.match(checkout, /selection, optionId: option.optionId/);
   const api = source('apps/api/src/routes/hotel.ts');
   assert.match(api, /hid: z.string\(\).refine\(validHotelId/);
   assert.match(api, /client.pricing\(\{ correlationId: p.correlationId, hid: p.hid/);

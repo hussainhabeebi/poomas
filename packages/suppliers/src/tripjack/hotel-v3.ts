@@ -31,6 +31,7 @@ export interface HotelV3Pricing {
 export interface HotelV3Penalty { from: string; to: string; amount: number }
 
 export interface HotelV3Option {
+  pricingFields?: string[];
   optionId:     string;
   optionType:   "SRSM" | "SRCM" | "CRSM" | "CRCM" | string;
   roomInfo:     { id: string; name: string; adults?: number; children?: number }[];
@@ -43,7 +44,7 @@ export interface HotelV3Option {
   cancellation: { isRefundable: boolean; penalties: HotelV3Penalty[]; deadlineDateTime?: string };
 }
 
-export interface HotelV3ListingHotel { hotelId: string; name: string; options: HotelV3Option[] }
+export interface HotelV3ListingHotel { tjHotelId?: string; hotelId: string; name: string; options: HotelV3Option[] }
 
 // Validate before coercion: missing IDs and sentinel strings are never supplier IDs.
 export function validHotelId(value: unknown): value is string {
@@ -81,7 +82,7 @@ export class TripjackHotelError extends Error {
 // TripJack v3 error codes the UI reacts to.
 export const HOTEL_ERROR = {
   SESSION_EXPIRED: ["SEARCH_SESSION_EXPIRED", "6502"],
-  SOLD_OUT:        ["OPTION_SOLD_OUT", "6506", "6515"],
+  SOLD_OUT:        ["OPTION_SOLD_OUT", "6506"],
   PRICE_CHANGED:   ["PRICE_CHANGED", "6535"],
 } as const;
 
@@ -95,6 +96,10 @@ export class TripjackHotelV3Client {
   private apiKey:   string;
   private proxyKey: string;
   private recorder?: ExchangeRecorder;
+  async cacheScope(): Promise<string> {
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([this.baseUrl, this.apiKey])));
+    return Array.from(new Uint8Array(hash), x => x.toString(16).padStart(2, '0')).join('');
+  }
 
   constructor(creds: SupplierCredentials) {
     this.baseUrl  = String(creds.baseUrl ?? "").replace(/\/$/, "");
@@ -107,7 +112,7 @@ export class TripjackHotelV3Client {
   setRecorder(recorder: ExchangeRecorder | undefined) { this.recorder = recorder; }
 
   private record(x: SupplierExchange) {
-    try { this.recorder?.(x); } catch (err) { console.error("[tripjack-hotel] exchange recorder failed", err); }
+    try { this.recorder?.(x); } catch (err) { console.error("[tripjack-hotel] exchange recorder failed"); }
   }
 
   private async request<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
@@ -215,13 +220,10 @@ export class TripjackHotelV3Client {
 
   // ── Static content ────────────────────────────────────────────────────────
 
-  async nationalities() {
-    try {
-      return await this.request<{ nationalityInfos?: { countryId: string; code: string; name: string; dialCode: string }[] }>("GET", "/hms/v3/nationality-info");
-    } catch {
-      // UAT documents this endpoint on the flight host.
-      return this.request<{ nationalityInfos?: { countryId: string; code: string; name: string; dialCode: string }[] }>("GET", "/tj-main/hms/v3/nationality-info");
-    }
+  nationalities() {
+    // Existing gateway alias strips /tj-main and uses the main TripJack host,
+    // as required by the official nationality contract (not the HMS host).
+    return this.request<{ nationalityInfos?: { countryId: string; code: string; name: string; dialCode: string }[] }>("GET", "/tj-main/hms/v3/nationality-info");
   }
 
   staticDetail(hid: string) {
@@ -254,6 +256,7 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : N
 
 export function normalizeOption(o: any): HotelV3Option {
   return {
+    pricingFields: Array.isArray(o?.pricingFields) ? o.pricingFields : Object.keys(o?.pricing ?? {}).filter(k => typeof o.pricing[k] === "number"),
     optionId:     String(o?.optionId ?? ""),
     optionType:   String(o?.optionType ?? ""),
     roomInfo:     Array.isArray(o?.roomInfo) ? o.roomInfo.map((r: any) => ({ id: String(r?.id ?? ""), name: String(r?.name ?? ""), adults: r?.adults, children: r?.children })) : [],
