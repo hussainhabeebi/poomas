@@ -1,10 +1,13 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env, Variables, TenantContext } from "../types.js";
 import { createDb } from "@poomas/db";
+import { createLogsDb } from "@poomas/db/logs";
 import { tenants, tenantSupplierConfigs } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 
-const TENANT_CACHE_TTL = 60;
+// Every cache miss is a Neon query (and keeps the Neon compute awake), so the tenant
+// record is cached for an hour; admin edits clear it via forgetTenantCache().
+const TENANT_CACHE_TTL = 3600;
 
 // Derives tenant_id from the request hostname (subdomain or custom domain).
 // Never trusts X-Tenant-ID header from clients — all tenant derivation is server-side.
@@ -20,6 +23,7 @@ export const resolveTenant: MiddlewareHandler<{ Bindings: Env; Variables: Variab
 
   const db = createDb(c.env.DATABASE_URL);
   c.set("db", db);
+  c.set("logs", createLogsDb(c.env.LOGS_DB));
 
   const host = new URL(c.req.url).hostname;
 
@@ -129,4 +133,16 @@ function extractSlug(host: string, platformSlug: string): string {
   }
 
   return host.split(".")[0];
+}
+
+// Clears every cached host → tenant entry for a tenant (after admin edits): its subdomain,
+// its custom domain and, for the platform tenant, the hosts extractSlug() maps to it.
+export async function forgetTenantCache(
+  env: Pick<Env, "TENANT_CACHE_KV" | "PLATFORM_TENANT_SLUG">,
+  tenant: { slug: string; customDomain?: string | null },
+) {
+  const hosts = [`${tenant.slug}.flypoomas.com`];
+  if (tenant.customDomain) hosts.push(tenant.customDomain);
+  if (tenant.slug === env.PLATFORM_TENANT_SLUG) hosts.push("api.flypoomas.com", "flypoomas.com");
+  await Promise.all(hosts.map((h) => env.TENANT_CACHE_KV.delete(`tenant:host:${h}`).catch(() => {})));
 }

@@ -63,6 +63,17 @@ max_batch_timeout = 2
 binding = "HYPERDRIVE"
 id      = "4cd8c2e342f4419590460c43c1b25943"
 
+# ── D1: logs database (supplier logs, API exchanges, email logs, agency activity) ──
+# High-volume logs live here instead of Neon so the Neon compute can scale to zero.
+# Bookings, payments, wallets, users and tenants stay in Neon. The deploy workflow
+# creates the database, fills in database_id and applies the migrations; if D1 is
+# unavailable it removes this block and the API runs with logging skipped.
+[[d1_databases]]
+binding        = "LOGS_DB"
+database_name  = "poomas-logs"
+database_id    = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/db/d1/migrations"
+
 # ── Durable Objects (per-tenant rate limiter) ─────────────────────
 [[durable_objects.bindings]]
 name       = "TENANT_RATE_LIMITER"

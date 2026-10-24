@@ -14,7 +14,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./logs": "./src/logs/index.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",

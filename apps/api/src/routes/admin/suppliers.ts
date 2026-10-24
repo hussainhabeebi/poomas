@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { tenantSupplierConfigs, tenants } from "@poomas/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
+import { forgetTenantCache } from "../../middleware/tenant.js";
 import { requireRole } from "../../middleware/auth.js";
 
 export const suppliersAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -58,7 +59,7 @@ suppliersAdminRoutes.patch("/:supplier", async (c) => {
 
   // Invalidate tenant cache so next request picks up new supplier config
   const tenant = c.get("tenant");
-  await c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.flypoomas.com`);
+  await forgetTenantCache(c.env, tenant);
 
   return c.json({ ok: true });
 });
@@ -68,7 +69,7 @@ suppliersAdminRoutes.post("/seed", async (c) => {
   requireRole("SUPER_ADMIN")(c.get("userRole"));
   const db = c.get("db");
 
-  const allTenants = await db.select({ id: tenants.id, slug: tenants.slug }).from(tenants);
+  const allTenants = await db.select({ id: tenants.id, slug: tenants.slug, customDomain: tenants.customDomain }).from(tenants);
   let seeded = 0;
   for (const t of allTenants) {
     for (const [supplier, priority] of [["TRIPJACK", 2], ["RIYA", 1]] as const) {
@@ -78,6 +79,7 @@ suppliersAdminRoutes.post("/seed", async (c) => {
       }).onConflictDoNothing();
       seeded++;
     }
+    await forgetTenantCache(c.env, t);
   }
   return c.json({ ok: true, seeded, tenants: allTenants.length });
 });

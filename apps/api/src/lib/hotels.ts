@@ -44,7 +44,7 @@ export const hotelExchanges = async (c: any, next: () => Promise<void>) => {
   let body: any = null;
   if (c.req.method === "POST") { try { body = await c.req.json(); } catch { /* no JSON body */ } }
   const pathBooking = /\/bookings\/([A-Za-z0-9_-]+)/.exec(c.req.path)?.[1];
-  persistInBackground(c, persistExchanges(c.env, c.get("db"), c.get("tenantId"), collector.exchanges, {
+  persistInBackground(c, persistExchanges(c.env, c.get("tenantId"), collector.exchanges, {
     bookingId: body?.bookingId ?? pathBooking ?? null,
     searchId:  body?.correlationId ?? null,
     requestId: c.get("hotelRequestId"),
