@@ -4,7 +4,8 @@
 // Never throws — a failed email must not fail the request or job that sent it.
 
 import { eq } from "drizzle-orm";
-import { emailLogs, tenants } from "@poomas/db/schema";
+import { tenants } from "@poomas/db/schema";
+import { createLogsDb, emailLogs } from "@poomas/db/logs";
 import type { Env, Variables } from "../types.js";
 
 type Db = Variables["db"];
@@ -101,7 +102,7 @@ export async function sendMail(env: Env, db: Db, tenantId: string | null, msg: M
   }
   if (!result.ok) console.error(`[email] ${msg.category} "${msg.subject}" not sent:`, result.error);
   try {
-    await db.insert(emailLogs).values({
+    await createLogsDb(env.LOGS_DB)?.insert(emailLogs).values({
       tenantId, toEmail: (to.length ? to : [String(msg.to)]).join(", ").slice(0, 300), subject: msg.subject.slice(0, 250), category: msg.category,
       status: result.ok ? "SENT" : result.skipped ? "SKIPPED" : "FAILED", providerId: result.id ?? null, error: result.error?.slice(0, 500) ?? null,
     });

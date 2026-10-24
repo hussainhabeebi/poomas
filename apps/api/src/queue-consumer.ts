@@ -487,7 +487,7 @@ async function bookPaidBooking(
   // Raw TripJack exchanges (review / book / booking-details) for certification logs.
   const collector = collectExchanges();
   const flightMeta = (booking.flightData ?? {}) as Record<string, unknown>;
-  const saveLogs = () => persistExchanges(env, db, booking.tenantId, collector.exchanges.splice(0), {
+  const saveLogs = () => persistExchanges(env, booking.tenantId, collector.exchanges.splice(0), {
     bookingId: booking.id, searchId: typeof flightMeta.searchId === "string" ? flightMeta.searchId : null,
   });
   for (const cfg of supplierConfigs) {
