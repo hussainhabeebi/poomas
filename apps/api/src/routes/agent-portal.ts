@@ -61,7 +61,7 @@ function randomToken(bytes = 24) {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function saveUpload(env: Env, prefix: string, file: File) {
+export async function saveUpload(env: Env, prefix: string, file: File) {
   if (!FILE_TYPES.includes(file.type)) throw new HTTPException(415, { message: "Upload a PDF, JPG, PNG, WEBP or HEIC file" });
   if (file.size > MAX_FILE) throw new HTTPException(413, { message: "Files must be under 8 MB" });
   const safe = file.name.replace(/[^\w.-]+/g, "_").slice(-80) || "file";
@@ -752,7 +752,7 @@ agentPortalRoutes.get("/wallet/bank-accounts", async (c) => {
   return c.json({
     walletCurrency: wallet?.currency ?? null,
     onlineTopup: Boolean(settings?.nomod?.enabled),
-    accounts: visibleAccounts(await getBankAccounts(c.env, tenantId), wallet?.currency ?? ""),
+    accounts: visibleAccounts(await getBankAccounts(c.env, tenantId, c.get("tenant")?.slug), wallet?.currency ?? ""),
   });
 });
 
@@ -769,7 +769,7 @@ agentPortalRoutes.post("/deposits", async (c) => {
   const bad = files.find((f) => !/^(image\/|application\/pdf$)/.test(f.type) || f.size > 8 * 1024 * 1024);
   if (bad) return c.json({ error: "The receipt must be a photo, screenshot or PDF under 8 MB" }, 400);
   const tenantId = c.get("tenantId");
-  const accounts = (await getBankAccounts(c.env, tenantId)).filter((x) => x.active);
+  const accounts = (await getBankAccounts(c.env, tenantId, c.get("tenant")?.slug)).filter((x) => x.active);
   const bank = bankAccountId ? accounts.find((x) => x.id === bankAccountId) : null;
   if (bankAccountId && !bank) return c.json({ error: "Choose one of the listed bank accounts" }, 400);
   if (method === "BANK_TRANSFER" && accounts.length && !bank) return c.json({ error: "Choose the bank account you paid into" }, 400);

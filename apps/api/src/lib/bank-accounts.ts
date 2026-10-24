@@ -23,13 +23,34 @@ export type BankAccount = z.infer<typeof bankAccountSchema> & { id: string; crea
 
 const key = (tenantId: string) => `admin_settings:${tenantId}:bank_accounts`;
 
-export async function getBankAccounts(env: Env, tenantId: string): Promise<BankAccount[]> {
+// Poomas' own collection account. Shown on the platform tenant until Admin saves
+// its own list (editing, hiding or removing it there replaces this default).
+export const DEFAULT_PLATFORM_BANK_ACCOUNTS: BankAccount[] = [{
+  id:            "poomas-mashreq-aed",
+  label:         "Mashreq · AED",
+  bankName:      "Mashreq",
+  accountName:   "Poomas FZE LLC",
+  accountNumber: "019101696733",
+  iban:          "AE270330000019101696733",
+  swift:         "",
+  ifsc:          "",
+  branch:        "",
+  currency:      "AED",
+  country:       "AE",
+  instructions:  "Use your agent number or registered email as the transfer reference, then upload the payment screenshot.",
+  active:        true,
+  createdAt:     "2026-10-12T00:00:00.000Z",
+  updatedAt:     "2026-10-12T00:00:00.000Z",
+}];
+
+// tenantSlug: pass the request's tenant slug so the platform tenant gets the default account.
+export async function getBankAccounts(env: Env, tenantId: string, tenantSlug?: string): Promise<BankAccount[]> {
+  const isPlatform = Boolean(tenantSlug) && tenantSlug === env.PLATFORM_TENANT_SLUG;
   try {
     const list = await env.TENANT_CACHE_KV.get(key(tenantId), "json") as BankAccount[] | null;
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
+    if (Array.isArray(list)) return list;
+  } catch {}
+  return isPlatform ? DEFAULT_PLATFORM_BANK_ACCOUNTS.map((a) => ({ ...a })) : [];
 }
 
 export async function saveBankAccounts(env: Env, tenantId: string, list: BankAccount[]) {

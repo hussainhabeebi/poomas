@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
 import styles from "./wallet.module.css";
+import BankRecharge from "./BankRecharge";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.flypoomas.com";
 
@@ -9,7 +10,7 @@ interface Coupon { id: string; code: string; amount: string; status: string; exp
 
 const TX_LABEL: Record<string, string> = {
   BOOKING_BONUS: "Booking bonus", ADMIN_CREDIT: "Added by POOMAS", BOOKING_DEBIT: "Paid for booking",
-  REFUND_CREDIT: "Refund", COUPON_DEBIT: "Coupon created", COUPON_CREDIT: "Coupon redeemed", COUPON_REFUND: "Coupon returned",
+  REFUND_CREDIT: "Refund", TOPUP: "Bank transfer recharge", COUPON_DEBIT: "Coupon created", COUPON_CREDIT: "Coupon redeemed", COUPON_REFUND: "Coupon returned",
 };
 const DEBITS = new Set(["BOOKING_DEBIT", "COUPON_DEBIT"]);
 interface Referral { code: string; reward: number; stats: { joined: number; rewarded: number; earned: number }; referredBy: { code: string; rewarded: boolean } | null }
@@ -210,6 +211,8 @@ export default function WalletPage() {
           </section>
         )}
       </div>
+
+      <BankRecharge api={API} token={token} onChange={load} />
 
       <section className={styles.infoStrip} aria-label="Wallet benefits">
         <span className={styles.infoIcon}><WalletIcon kind="wallet" /></span>

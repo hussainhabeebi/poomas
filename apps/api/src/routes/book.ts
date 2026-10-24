@@ -19,6 +19,7 @@ import { and, eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { collectExchanges, persistExchanges, persistInBackground, type ExchangeCollector } from "../lib/api-exchanges.js";
 import { passengerNameProblem } from "../lib/passenger-names.js";
+import { passengerDateProblems } from "../../../../packages/types/src/passport-dates.js";
 import { fallbackHoldDeadline, findHoldDeadline, holdLabel } from "../lib/fare-hold.js";
 import { parseBookingDetails } from "../lib/trips.js";
 import { emailShell, escapeHtml, money, notifyCustomer, WEB_URL } from "../lib/customer-notify.js";
@@ -35,7 +36,7 @@ const passengerSchema = z.object({
   passportNumber:  z.string().optional(),
   passportExpiry:  z.string().optional(),
   passportCountry: z.string().max(2).optional(),
-  passportIssueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  passportIssueDate: z.string().optional(),
   panNumber:       z.string().regex(/^[A-Za-z]{5}\d{4}[A-Za-z]$/, "PAN must look like ABCDE1234F").optional(),
   documentId:      z.string().regex(/^[A-Za-z0-9]{3,30}$/, "Document ID must be letters and digits only").optional(),
   ssr: z.object({
@@ -45,6 +46,9 @@ const passengerSchema = z.object({
     seat:    z.array(ssrPick).max(6).optional(),
   }).optional(),
 }).superRefine((p, ctx) => {
+  for (const [field, message] of Object.entries(passengerDateProblems(p))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
+  }
   for (const [field, label] of [["firstName", "First name"], ["lastName", "Last name"]] as const) {
     const problem = passengerNameProblem(p[field], label);
     if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: problem });
@@ -238,7 +242,7 @@ bookDirectRoutes.get("/held/:id", async (c) => {
 bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   if (!result.success) {
     const nameIssue = result.error.issues.find((i) => i.path.includes("firstName") || i.path.includes("lastName"))
-      ?? result.error.issues.find((i) => ["panNumber", "documentId", "gstNumber", "registeredName", "passportIssueDate"].some((f) => i.path.includes(f)));
+      ?? result.error.issues.find((i) => ["panNumber", "documentId", "gstNumber", "registeredName", "passportIssueDate", "passportExpiry", "dob"].some((f) => i.path.includes(f)));
     return c.json({ errorCode: "BOOKING_DETAILS_INVALID", ...(nameIssue ? { error: nameIssue.message } : {}) }, 400);
   }
 }), async (c) => {
