@@ -1,0 +1,64 @@
+name: Hotel isolated PostgreSQL verification
+on:
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: 'Deliberately fail migration gate to prove dependent job is skipped (expected red run)'
+        type: boolean
+        default: false
+      run_neon_adapter:
+        description: 'Use separately approved disposable Neon database; requires environment approval'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  postgres:
+    if: github.ref == 'refs/heads/review/hotel-api-readiness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: bash scripts/hotel-preuat/postgres.sh
+      - run: bash scripts/hotel-preuat/migration-failure.sh
+      - name: Simulate migration job failure
+        if: inputs.simulate_failure
+        run: exit 23
+  dependent-gate-sentinel:
+    needs: postgres
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Non-deploying sentinel; runs only if migration job succeeded'
+  verify-skip:
+    if: always() && inputs.simulate_failure && github.ref == 'refs/heads/review/hotel-api-readiness'
+    needs: [postgres, dependent-gate-sentinel]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert dependent deployment-equivalent job was skipped
+        env:
+          MIGRATION: ${{ needs.postgres.result }}
+          DEPENDENT: ${{ needs.dependent-gate-sentinel.result }}
+        run: test "$MIGRATION" = failure && test "$DEPENDENT" = skipped
+  neon-adapter:
+    if: inputs.run_neon_adapter && github.ref == 'refs/heads/review/hotel-api-readiness'
+    runs-on: ubuntu-latest
+    environment: hotel-uat-verification
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @poomas/db exec tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck test/hotel-neon-adapter.ts
+      - run: node --import ./node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs packages/db/test/hotel-neon-adapter.ts
+        env:
+          NODE_ENV: production
+          HOTEL_TEST_NEON_URL: ${{ secrets.HOTEL_TEST_NEON_URL }}
+          HOTEL_TEST_NEON_HOST: ${{ vars.HOTEL_TEST_NEON_HOST }}
+          HOTEL_TEST_NEON_APPROVED: ${{ vars.HOTEL_TEST_NEON_APPROVED }}
