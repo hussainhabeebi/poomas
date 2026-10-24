@@ -146,3 +146,5 @@ test evidence handling and live launch. These are not technical defaults.
 | Hotel unit/route regression tests | See final command results |
 | Supplier UAT / 14 certification cases | BLOCKED; authorized access and approvals |
 | Production migration / deployment / live booking | Not authorized; not executed |
+
+Latest gate review and proposed fail-fast release strategy: [hotel-external-gates-20261024.md](hotel-external-gates-20261024.md).
