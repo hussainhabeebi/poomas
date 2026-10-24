@@ -2,14 +2,14 @@
 //
 //   POST /api/hotels/search             city (or hotel IDs) → hotels with cheapest option
 //   POST /api/hotels/detail             all options for one hotel (+ static details)
-//   POST /api/hotels/review             re-validate an option → TripJack bookingId + final price
-//   POST /api/hotels/book               instant (paymentInfos) or hold booking, then poll status
-//   GET  /api/hotels/bookings/:id       booking details (status polling)
+//   POST /api/profile/hotels/review     authenticated durable quotation
+//   POST /api/profile/hotels/book       durable UAT-only submission; default disabled
+//   GET  /api/profile/hotels/bookings/:id owner-checked status recovery
 //   Confirm-hold, cancel, booking list and the city sync are Admin-only
 //   (/api/admin/hotels) so a booking ID alone can't cancel or charge a booking.
 //   GET  /api/hotels/nationalities      nationality list (ISO2 + TripJack countryId)
 //
-// Every TripJack call is written to Admin → Supplier logs with the full error.
+// Supplier logs retain sanitized operational metadata only.
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
@@ -20,8 +20,10 @@ import {
 } from "@poomas/suppliers";
 import type { Env, Variables } from "../types.js";
 import { logSupplierCall } from "../lib/supplier-logger.js";
+import { realHotelDate, hotelStayIssues } from '../lib/hotel-input.js';
+import { supplierLogCode } from '../lib/supplier-log-redaction.js';
 import {
-  SEARCH_TTL_MS, hotelExchanges, hotelRecorder, cheapest, hotelClient, hotelContent, nationalityId, searchHotels, tripjackEnvironment,
+  SEARCH_TTL_MS, hotelExchanges, hotelRecorder, hotelClient, hotelContent, nationalityId, searchHotels,
 } from "../lib/hotels.js";
 
 // ── Logging helpers ─────────────────────────────────────────────────────────
@@ -59,7 +61,7 @@ export async function logged<T>(
     }));
     return result;
   } catch (err: any) {
-    console.error(`[hotel] ${endpoint} failed`, err);
+    console.error('[hotel] supplier operation failed', { endpoint, requestId, code: supplierLogCode(errorCodeOf(err)) });
     await logSupplierCall(c.get("db"), {
       ...base, level: "ERROR",
       httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
@@ -87,28 +89,32 @@ export function hotelError(c: any, err: any, fallback: string) {
   const message = isHotelError(err, "SESSION_EXPIRED") ? "Your search has expired. Please search again."
     : isHotelError(err, "SOLD_OUT") ? "This room was just sold out. Please choose another option."
     : isHotelError(err, "PRICE_CHANGED") ? "The price for this room has changed. Please review the new price."
-    : err?.message ?? fallback;
-  return c.json({ error: message, errorCode: code, requestId: err?.requestId }, status);
+    : fallback;
+  return c.json({ error: message, errorCode: supplierLogCode(code), requestId: err?.requestId }, status);
 }
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
 const roomSchema = z.object({
-  adults:    z.number().int().min(1).max(9).default(1),
+  adults:    z.number().int().min(1).max(6).default(1),
   children:  z.number().int().min(0).max(4).default(0),
   childAge:  z.array(z.number().int().min(0).max(17)).optional(),
   childAges: z.array(z.number().int().min(0).max(17)).optional(),   // older clients
+}).superRefine((r, c) => {
+  const ages = r.childAge ?? r.childAges ?? [];
+  if (ages.length !== r.children) c.addIssue({ code: 'custom', path: ['childAge'], message: 'Provide one age for each child.' });
+  if (r.childAge && r.childAges && JSON.stringify(r.childAge) !== JSON.stringify(r.childAges)) c.addIssue({ code: 'custom', path: ['childAges'], message: 'Child ages must agree.' });
 }).transform((r) => ({
   adults: r.adults,
   ...(r.children ? { children: r.children, childAge: r.childAge ?? r.childAges ?? [] } : {}),
 }));
 
 const stayFields = {
-  checkIn:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  checkOut:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  checkIn:     z.string().refine(realHotelDate, 'Enter a real date in YYYY-MM-DD format.'),
+  checkOut:    z.string().refine(realHotelDate, 'Enter a real date in YYYY-MM-DD format.'),
   rooms:       z.array(roomSchema).min(1).max(9).default([{ adults: 1, children: 0 }]),
-  nationality: z.string().min(2).max(6).default("IN"),
-  currency:    z.string().length(3).toUpperCase().default("INR"),
+  nationality: z.string().regex(/^[A-Za-z]{2}$/).transform(x => x.toUpperCase()).default("IN"),
+  currency:    z.enum(['INR', 'AED', 'USD']).default("INR"),
 };
 
 const searchSchema = z.object({
@@ -121,31 +127,37 @@ const searchSchema = z.object({
 
 // TripJack hotel IDs are numeric today; accept any plain ID so a format change
 // doesn't block checkout (it is only ever sent back to TripJack).
-const detailSchema = z.object({ correlationId: z.string().min(8), hid: z.string().refine(validHotelId, "Invalid TripJack hotel ID"), ...stayFields });
+const detailSchema = z.object({ correlationId: z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/), hid: z.string().refine(validHotelId, "Invalid TripJack hotel ID"), ...stayFields });
 
-const reviewSchema = detailSchema.extend({
-  optionId:   z.string().min(1),
-  reviewHash: z.string().optional(),
+export const reviewSchema = detailSchema.extend({
+  optionId:   z.string().min(1).max(1000),
+  reviewHash: z.string().max(4000).optional(),
 });
 
-const guestSchema = z.object({
-  title:     z.string().min(1),
-  firstName: z.string().min(1),
-  lastName:  z.string().min(1),
+export const guestSchema = z.object({
+  title:     z.enum(["Mr", "Mrs", "Ms", "Miss", "Master"]),
+  firstName: z.string().trim().min(1).max(80).regex(/^[^\u0000-\u001f\u007f]+$/),
+  lastName:  z.string().trim().min(1).max(80).regex(/^[^\u0000-\u001f\u007f]+$/),
   type:      z.enum(["ADULT", "CHILD"]).default("ADULT"),
   pan:       z.string().regex(/^[A-Z]{5}\d{4}[A-Z]$/i).optional(),
-  passport:  z.string().min(5).optional(),
+  passport:  z.string().trim().min(5).max(30).regex(/^[A-Za-z0-9 -]+$/).optional(),
 });
 
-const bookSchema = z.object({
-  bookingId:    z.string().min(5),
-  amount:       z.number().positive(),
-  rooms:        z.array(z.object({ guests: z.array(guestSchema).min(1) })).min(1),
+export const bookSchema = z.object({
+  quoteId: z.string().uuid(),
+  acceptedQuote: z.literal(true),
+  idempotencyKey: z.string().uuid(),
+
+  rooms:        z.array(z.object({ guests: z.array(guestSchema).min(1).max(10) }).superRefine((r, c) => {
+    const adults = r.guests.filter(g => g.type === 'ADULT').length;
+    const children = r.guests.filter(g => g.type === 'CHILD').length;
+    if (adults < 1 || adults > 6 || children > 4) c.addIssue({ code: 'custom', path: ['guests'], message: 'Each room needs 1–6 adults and at most 4 children.' });
+  })).min(1).max(9),
   contactEmail: z.string().email(),
-  contactPhone: z.string().min(6),
+  contactPhone: z.string().trim().regex(/^\+?[0-9 ()-]{6,22}$/),
   dialCode:     z.string().regex(/^\+?\d{1,4}$/).default("+91"),
   gstInfo:      z.object({ gstNumber: z.string().min(5), registeredName: z.string().min(2) }).optional(),
-  hold:         z.boolean().default(false),
+
 });
 
 export const hotelRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -153,14 +165,16 @@ hotelRoutes.use("*", hotelExchanges);
 
 // Request validation with a readable reason ("checkIn: Invalid") instead of the
 // raw zod object, logged to Admin → Supplier logs so a rejected request shows up.
-function validJson<T extends z.ZodTypeAny>(schema: T, endpoint: string) {
+export function validJson<T extends z.ZodTypeAny>(schema: T, endpoint: string) {
   return zValidator("json", schema, (result, c: any) => {
-    if (result.success) return;
-    const issues = result.error.issues.slice(0, 5).map((i) => `${i.path.join(".") || "body"}: ${i.message}`);
+    const stay = result.success && typeof result.data.checkIn === 'string' && typeof result.data.checkOut === 'string'
+      ? hotelStayIssues(result.data) : [];
+    if (result.success && !stay.length) return;
+    const issues = result.success ? stay : result.error.issues.slice(0, 5).map((i) => `${i.path.join(".") || "body"}: ${i.message}`);
     c.executionCtx.waitUntil(logSupplierCall(c.get("db"), {
       tenantId: c.get("tenantId"), supplier: "TRIPJACK", endpoint: `hotel ${endpoint}`, level: "WARN",
       errorCode: "INVALID_REQUEST", errorMessage: `Hotel ${endpoint} request rejected before calling TripJack — ${issues.join("; ")}`,
-      requestSummary: { issues, body: (result as any).data },
+      requestSummary: {},
     }).catch(() => {}));
     return c.json({ error: `Some booking details are invalid (${issues[0]}). Please search again.`, code: "INVALID_REQUEST", issues }, 400);
   });
@@ -195,7 +209,7 @@ hotelRoutes.post("/search", validJson(searchSchema, "search"), async (c) => {
 
 // ── Detail (all options for one hotel) ──────────────────────────────────────
 
-async function pricingFor(c: any, client: TripjackHotelV3Client, p: z.infer<typeof detailSchema>) {
+export async function pricingFor(c: any, client: TripjackHotelV3Client, p: z.infer<typeof detailSchema>) {
   const nationality = await nationalityId(c.env, client, p.nationality);
   return logged(c, "/hms/v3/hotel/pricing", { correlationId: p.correlationId, hid: p.hid, checkIn: p.checkIn, checkOut: p.checkOut },
     () => client.pricing({ correlationId: p.correlationId, hid: p.hid, checkIn: p.checkIn, checkOut: p.checkOut,
@@ -208,7 +222,7 @@ hotelRoutes.post("/detail", validJson(detailSchema, "detail"), async (c) => {
   const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
   try {
     const [pricing, content] = await Promise.all([pricingFor(c, client, p), hotelContent(c.env, client, [p.hid])]);
-    const options = (pricing.options ?? []).map(normalizeOption).sort((a, b) => a.pricing.totalPrice - b.pricing.totalPrice);
+    const options = (pricing.options ?? []).filter((o: any) => o.inventory?.available !== false && typeof o.pricing?.totalPrice === "number" && o.pricing.totalPrice > 0 && o.pricing?.currency === p.currency).map(normalizeOption).sort((a, b) => a.pricing.totalPrice - b.pricing.totalPrice);
     return c.json({
       correlationId: p.correlationId,
       hid:           p.hid,
@@ -224,29 +238,28 @@ hotelRoutes.post("/detail", validJson(detailSchema, "detail"), async (c) => {
 
 // ── Review (re-validate the chosen option; returns TripJack bookingId) ───────
 
-hotelRoutes.post("/review", validJson(reviewSchema, "review"), async (c) => {
-  const p = c.req.valid("json");
-  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
-  try {
-    let reviewHash = p.reviewHash;
-    let optionId = p.optionId;
-    let listedPrice: number | undefined;
-    if (!reviewHash) {
-      // Coming straight from search: fetch the hotel's options for the reviewHash.
-      const pricing = await pricingFor(c, client, p);
-      reviewHash = pricing.reviewHash;
-      const options = (pricing.options ?? []).map(normalizeOption);
-      const same = options.find((o) => o.optionId === optionId);
-      const pick = same ?? cheapest(options);
-      if (!pick) return c.json({ error: "No rooms are available at this hotel for these dates.", errorCode: "NO_OPTIONS" }, 409);
-      optionId = pick.optionId;
-      listedPrice = pick.pricing.totalPrice;
+export async function reviewedHotel(c: any, client: TripjackHotelV3Client, p: z.infer<typeof reviewSchema>) {
+    // Never accept a browser-supplied review hash as proof of availability and
+    // never fall back to a cheaper/different option if the selected rate is gone.
+    const pricing = await pricingFor(c, client, p);
+    const reviewHash = pricing.reviewHash;
+    const optionId = p.optionId;
+    const same = (pricing.options ?? []).filter((o: any) => o.inventory?.available !== false && typeof o.pricing?.totalPrice === "number" && o.pricing.totalPrice > 0 && o.pricing?.currency === p.currency).map(normalizeOption).find(o => o.optionId === optionId);
+    if (!same) return c.json({ error: "The selected room or rate is no longer available. Choose another option.", errorCode: "OPTION_SOLD_OUT" }, 409);
+    if (!reviewHash || same.pricing.currency !== p.currency || !Number.isFinite(same.pricing.totalPrice) || same.pricing.totalPrice <= 0) {
+      return c.json({ error: 'This rate could not be verified. Please choose another option.', errorCode: 'INVALID_RATE' }, 409);
     }
+    if (same.roomInfo.length !== p.rooms.length || same.roomInfo.some(r => !r.id || !r.name)) return c.json({ error: 'Supplier room details are incomplete. Choose another rate.', errorCode: 'INVALID_RATE' }, 409);
+    const listedPrice = same.pricing.totalPrice;
     const review = await logged(c, "/hms/v3/hotel/review", { correlationId: p.correlationId, hid: p.hid, optionId },
       () => client.review({ correlationId: p.correlationId, optionId, reviewHash: reviewHash!, hid: p.hid }),
       (r) => ({ bookingId: r.bookingId, totalPrice: r.option?.pricing?.totalPrice }));
+    if (typeof review.option?.pricing?.totalPrice !== 'number' || review.option?.pricing?.currency !== p.currency) return c.json({ error: 'Supplier rate is incomplete.', errorCode: 'INVALID_RATE' }, 409);
     const option = normalizeOption(review.option);
-    return c.json({
+    if (JSON.stringify(option.roomInfo) !== JSON.stringify(same.roomInfo) || option.mealBasis !== same.mealBasis || option.optionId !== optionId || option.pricing.currency !== p.currency || !Number.isFinite(option.pricing.totalPrice) || option.pricing.totalPrice <= 0) {
+      return c.json({ error: 'The selected rate has changed. Please choose a room again.', errorCode: 'INVALID_RATE' }, 409);
+    }
+    return {
       bookingId:     review.bookingId,
       hid:           p.hid,
       hotelName:     review.hotelName,
@@ -254,11 +267,9 @@ hotelRoutes.post("/review", validJson(reviewSchema, "review"), async (c) => {
       optionChanged: optionId !== p.optionId,
       priceChanged:  listedPrice !== undefined && Math.abs(listedPrice - option.pricing.totalPrice) > 0.01,
       onholdAllowed: String(review.onholdAllowed) === "true",
-    });
-  } catch (err) {
-    return hotelError(c, err, "Could not confirm this room");
-  }
-});
+    };
+}
+hotelRoutes.post('/review', validJson(reviewSchema, 'review'), c => c.json({ error: 'Sign in and use the secure hotel quotation flow.', errorCode: 'AUTHENTICATED_QUOTE_REQUIRED' }, 401));
 
 // ── Book ────────────────────────────────────────────────────────────────────
 
@@ -270,69 +281,17 @@ export async function pollDetails(c: any, client: TripjackHotelV3Client, booking
       last = parseHotelBookingDetails(await client.bookingDetails(bookingId));
       if (HOTEL_TERMINAL_STATUSES.includes(last.status)) return last;
     } catch (err) {
-      console.warn(`[hotel] booking-details ${bookingId} failed`, err);
+      console.warn('[hotel] booking status lookup failed', { code: supplierLogCode(errorCodeOf(err)) });
     }
     await new Promise((r) => setTimeout(r, 5000));
   }
   return last;
 }
 
-hotelRoutes.post("/book", validJson(bookSchema, "book"), async (c) => {
-  const p = c.req.valid("json");
-  const tenantId = c.get("tenantId");
-  const client = await hotelClient(c.env, tenantId, hotelRecorder(c));
-  // Production has no customer hotel payment step yet: never charge the TripJack
-  // wallet from the website there — place a hold that Admin confirms after payment.
-  const production = (await tripjackEnvironment(c.env, tenantId)) === "PRODUCTION";
-  const hold = p.hold || production;
-  const phone = p.contactPhone.replace(/\D/g, "");
-  try {
-    const res = await logged(c, "/oms/v3/hotel/book", {
-      bookingId: p.bookingId, mode: hold ? "HOLD" : "INSTANT", amount: p.amount,
-      rooms: p.rooms.length, guests: p.rooms.reduce((n, r) => n + r.guests.length, 0), contactEmail: p.contactEmail,
-    }, () => client.book({
-      bookingId: p.bookingId,
-      roomTravellerInfo: p.rooms.map((r) => ({
-        travellerInfo: r.guests.map((g) => ({
-          ti: g.title, pt: g.type, fN: g.firstName.trim(), lN: g.lastName.trim(),
-          ...(g.pan ? { pan: g.pan.toUpperCase() } : {}), ...(g.passport ? { pNum: g.passport } : {}),
-        })),
-      })),
-      deliveryInfo: { emails: [p.contactEmail], contacts: [phone.slice(-10)], code: [p.dialCode.startsWith("+") ? p.dialCode : `+${p.dialCode}`] },
-      ...(p.gstInfo ? { gstInfo: p.gstInfo } : {}),
-      ...(hold ? {} : { paymentInfos: [{ amount: p.amount }] }),
-    }));
-
-    const bookingId = res.bookingId || p.bookingId;
-    // TripJack confirms asynchronously (up to 180 s): poll briefly here; the
-    // client keeps polling GET /bookings/:id after that.
-    const details = await logged(c, "/oms/v3/hotel/booking-details", { bookingId, reason: "post-book poll" },
-      () => pollDetails(c, client, bookingId, 25_000), (d) => ({ status: d?.status }));
-    return c.json({
-      bookingId,
-      mode:    hold ? "HOLD" : "INSTANT",
-      status:  details?.status ?? "IN_PROGRESS",
-      pending: !details || !HOTEL_TERMINAL_STATUSES.includes(details.status),
-      details,
-      ...(production && !p.hold ? { note: "Reserved on hold — our team confirms it once payment is received." } : {}),
-    }, 201);
-  } catch (err) {
-    return hotelError(c, err, "Hotel booking failed");
-  }
-});
-
-hotelRoutes.get("/bookings/:bookingId", async (c) => {
-  const { bookingId } = c.req.param();
-  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
-  try {
-    const raw = await logged(c, "/oms/v3/hotel/booking-details", { bookingId }, () => client.bookingDetails(bookingId),
-      (r) => ({ status: r?.order?.status }));
-    const details = parseHotelBookingDetails(raw);
-    return c.json({ ...details, pending: !HOTEL_TERMINAL_STATUSES.includes(details.status) });
-  } catch (err) {
-    return hotelError(c, err, "Could not load the hotel booking");
-  }
-});
+// Legacy public endpoints cannot submit or disclose bookings. Secure operations
+// live under /api/profile/hotels and require a verified account and owner match.
+hotelRoutes.post('/book', validJson(bookSchema, 'book'), c => c.json({ error: 'Use the signed-in hotel booking flow.', bookingEnabled: false }, 401));
+hotelRoutes.get('/bookings/:bookingId', c => c.json({ error: 'Authentication required.' }, 401));
 
 hotelRoutes.get("/nationalities", async (c) => {
   const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));

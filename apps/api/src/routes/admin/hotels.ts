@@ -1,6 +1,9 @@
 // Admin → TripJack hotels (v3): city index sync, hold confirmation, cancellation,
 // booking lookups. Kept off the public /api/hotels routes on purpose.
 
+import { and, eq, desc } from 'drizzle-orm';
+import { hotelAttempts, hotelQuotes } from '@poomas/db/schema';
+import { recoverStoredHotelBooking, storedHotelAction } from '../hotel-checkout.js';
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -51,27 +54,20 @@ hotelsAdminRoutes.get("/bookings/:bookingId", async (c) => {
   }
 });
 
-hotelsAdminRoutes.post("/bookings/:bookingId/confirm", zValidator("json", z.object({ amount: z.number().positive() })), async (c) => {
-  const { bookingId } = c.req.param();
-  const { amount } = c.req.valid("json");
-  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
-  try {
-    await logged(c, "/oms/v3/hotel/confirm-book", { bookingId, amount }, () => client.confirmBook(bookingId, amount));
-    const details = await pollDetails(c, client, bookingId, 20_000);
-    return c.json({ bookingId, status: details?.status ?? "IN_PROGRESS", details });
-  } catch (err) {
-    return hotelError(c, err, "Could not confirm the hotel booking");
-  }
-});
+hotelsAdminRoutes.post('/bookings/:bookingId/confirm', c => storedHotelAction(c, 'confirm', c.req.param('bookingId')));
+hotelsAdminRoutes.post('/bookings/:bookingId/cancel', c => storedHotelAction(c, 'cancel', c.req.param('bookingId')));
 
-hotelsAdminRoutes.post("/bookings/:bookingId/cancel", async (c) => {
-  const { bookingId } = c.req.param();
-  const client = await hotelClient(c.env, c.get("tenantId"), hotelRecorder(c));
-  try {
-    await logged(c, "/oms/v3/hotel/cancel-booking", { bookingId }, () => client.cancel(bookingId));
-    const details = parseHotelBookingDetails(await client.bookingDetails(bookingId).catch(() => ({})));
-    return c.json({ bookingId, status: details.status || "CANCELLATION_REQUESTED", details });
-  } catch (err) {
-    return hotelError(c, err, "Could not cancel the hotel booking");
-  }
+// Existing admin permission middleware is retained. These operations only read
+// provider status; they cannot create, confirm, cancel or retry a booking.
+hotelsAdminRoutes.get('/attempts', async c => {
+  const attempts = await c.get('db').select().from(hotelAttempts)
+    .where(eq(hotelAttempts.tenantId, c.get('tenantId'))).orderBy(desc(hotelAttempts.createdAt)).limit(100);
+  return c.json({ attempts });
+});
+hotelsAdminRoutes.post('/attempts/:id/reconcile', async c => {
+  const db = c.get('db');
+  const [a] = await db.select().from(hotelAttempts).where(and(eq(hotelAttempts.tenantId, c.get('tenantId')), eq(hotelAttempts.id, c.req.param('id')))).limit(1);
+  if (!a) return c.json({ error: 'Booking not found.' }, 404);
+  const [q] = await db.select().from(hotelQuotes).where(and(eq(hotelQuotes.tenantId, c.get('tenantId')), eq(hotelQuotes.id, a.quoteId))).limit(1);
+  return recoverStoredHotelBooking(c, a, q, true);
 });

@@ -1,0 +1,37 @@
+name: Hotel isolated browser verification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    if: github.ref == 'refs/heads/review/hotel-api-readiness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install isolated pinned browser test tooling (no repository dependency changes)
+        run: |
+          mkdir -p "$RUNNER_TEMP/hotel-playwright"
+          cp scripts/hotel-preuat/browser/*.cjs "$RUNNER_TEMP/hotel-playwright/"
+          npm install --prefix "$RUNNER_TEMP/hotel-playwright" --ignore-scripts --no-audit --no-fund @playwright/test@1.64.0
+          "$RUNNER_TEMP/hotel-playwright/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Synthetic hotel UI only; supplier egress blocked
+        run: '"$RUNNER_TEMP/hotel-playwright/node_modules/.bin/playwright" test -c "$RUNNER_TEMP/hotel-playwright/playwright.config.cjs"'
+        env:
+          HOTEL_REPO_ROOT: ${{ github.workspace }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hotel-synthetic-browser-evidence
+          path: |
+            ${{ runner.temp }}/hotel-playwright/test-results/
+            ${{ runner.temp }}/hotel-playwright/playwright-report/
+          retention-days: 7

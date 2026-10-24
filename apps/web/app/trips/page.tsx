@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiCall, inr, readCustomerToken, STATUS_LABEL } from "../lib/customer-api";
+import { HotelTrips } from "../hotels/HotelTrips";
 import styles from "./trips.module.css";
 
 interface TripRow {
@@ -60,6 +61,7 @@ export default function TripsPage() {
       <img className={styles.heroImage} src="/trips/airplane-wing-clouds.webp" alt="" width="2048" height="694" fetchPriority="high" />
       <div className={styles.heroContent}><h1>My Trips</h1><p>Manage your bookings and travel details</p></div>
     </header>
+    <HotelTrips />
     {signedIn === null || (loading && signedIn) ? <div className={styles.message} role="status">Loading your bookings…</div>
       : !signedIn ? <section className={styles.message}>
         <h2>Sign in to see your trips</h2><p>Bookings made with your account will appear here.</p>

@@ -1,0 +1,273 @@
+--- a/apps/api/src/routes/hotel-checkout.ts
++++ b/apps/api/src/routes/hotel-checkout.ts
+@@ -16,6 +16,19 @@
+ }, hotelExchanges);
+ const owner = (c: any) => and(eq(hotelQuotes.tenantId, c.get('tenantId')), eq(hotelQuotes.userId, c.get('userId')));
+ const attemptOwner = (c: any) => and(eq(hotelAttempts.tenantId, c.get('tenantId')), eq(hotelAttempts.userId, c.get('userId')));
++// A SQL compare-and-set token: state + monotonic poll counter + one-time action
++// markers. Every status writer checks the same persisted snapshot. Admin intents
++// change state/markers and immediately invalidate all earlier in-flight lookups.
++function attemptStateGuard(a: typeof hotelAttempts.$inferSelect) {
++  return and(eq(hotelAttempts.id, a.id), eq(hotelAttempts.tenantId, a.tenantId),
++    eq(hotelAttempts.state, a.state),
++    a.confirmationStartedAt == null ? isNull(hotelAttempts.confirmationStartedAt) : eq(hotelAttempts.confirmationStartedAt, a.confirmationStartedAt),
++    a.cancellationStartedAt == null ? isNull(hotelAttempts.cancellationStartedAt) : eq(hotelAttempts.cancellationStartedAt, a.cancellationStartedAt));
++}
++function attemptPollGuard(a: typeof hotelAttempts.$inferSelect, checks = a.checks) {
++  return and(attemptStateGuard(a), eq(hotelAttempts.checks, checks));
++}
++
+ // Fingerprint prevents recovering a booking against a different gateway/account.
+ async function providerScope(c: any) {
+   const saved = await c.env.TENANT_CACHE_KV.get(`admin_settings:${c.get('tenantId')}:integration:tripjack`, 'json');
+@@ -81,9 +94,9 @@
+         ...(mode === 'INSTANT_UAT' ? { paymentInfos: [{ amount: snapshot.option.pricing.totalPrice }] } : {}) });
+       // Never trust an unrelated returned booking ID for recovery.
+       if (result.bookingId && result.bookingId !== q.providerBookingId) throw new Error('Supplier reference mismatch');
+-      await db.update(hotelAttempts).set({ state: 'PENDING', updatedAt: new Date() }).where(eq(hotelAttempts.id, id));
++      await db.update(hotelAttempts).set({ state: 'PENDING', updatedAt: new Date() }).where(and(eq(hotelAttempts.id, id), eq(hotelAttempts.state, 'SUBMITTING'), isNull(hotelAttempts.confirmationStartedAt), isNull(hotelAttempts.cancellationStartedAt)));
+     } catch {
+-      await db.update(hotelAttempts).set({ state: 'UNKNOWN', updatedAt: new Date() }).where(eq(hotelAttempts.id, id));
++      await db.update(hotelAttempts).set({ state: 'UNKNOWN', updatedAt: new Date() }).where(and(eq(hotelAttempts.id, id), eq(hotelAttempts.state, 'SUBMITTING'), isNull(hotelAttempts.confirmationStartedAt), isNull(hotelAttempts.cancellationStartedAt)));
+     }
+     const [a] = await db.select().from(hotelAttempts).where(eq(hotelAttempts.id, id)).limit(1);
+     return c.json(publicAttempt(a), 202);
+@@ -112,26 +125,32 @@
+   if (!['FAILED', 'ABORTED', 'CANCELLED'].includes(a.state) && (operator || a.checks < HOTEL_MAX_CHECKS && Date.now() - a.createdAt.getTime() < HOTEL_POLL_WINDOW_MS || ['SUCCESS', 'ON_HOLD', 'CANCELLATION_PENDING'].includes(a.state))) {
+     const now = new Date();
+     const claimed = await db.update(hotelAttempts).set({ checks: a.checks + 1, nextCheckAt: new Date(now.getTime() + 60_000), updatedAt: now })
+-      .where(and(eq(hotelAttempts.id, a.id), eq(hotelAttempts.checks, a.checks), lte(hotelAttempts.nextCheckAt, now))).returning();
++      .where(and(attemptPollGuard(a), lte(hotelAttempts.nextCheckAt, now))).returning();
+     if (claimed.length) {
+       try {
+         const client = await hotelClient(c.env, c.get('tenantId'), hotelRecorder(c));
+         const details = parseHotelBookingDetails(await client.bookingDetails(a.providerBookingId));
+         if (details.bookingId !== a.providerBookingId) throw new Error('Unrelated booking details');
+         // Persist only status metadata, never supplier guest/contact payloads.
+-        const outcome = { status: details.status, confirmationNo: details.confirmationNo, holdDeadline: details.holdDeadline };
+-        const settled = ['SUCCESS', 'ON_HOLD', 'CANCELLATION_PENDING'].includes(details.status);
++        const state = hotelRecoveryState(a.state, details.status);
++        // Without supplier ordering/version fields, regressive observations cannot
++        // erase verified details or acknowledge an unresolved admin action.
++        const outcome = state === details.status
++          ? { status: state, confirmationNo: details.confirmationNo, holdDeadline: details.holdDeadline }
++          : a.outcome;
++        const settled = ['SUCCESS', 'ON_HOLD', 'CANCELLATION_PENDING'].includes(state);
+         let nextCheckAt = new Date(Date.now() + (settled ? 86400_000 : 5000));
+         // Supplier deadline strings without an offset are IST, never browser-local.
+-        if (details.status === 'ON_HOLD' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(details.holdDeadline ?? '')) {
+-          const deadline = Date.parse(`${details.holdDeadline}+05:30`);
++        const holdDeadline = (outcome as { holdDeadline?: string } | null)?.holdDeadline;
++        if (state === 'ON_HOLD' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(holdDeadline ?? '')) {
++          const deadline = Date.parse(`${holdDeadline}+05:30`);
+           if (Number.isFinite(deadline)) nextCheckAt = new Date(Math.min(nextCheckAt.getTime(), Math.max(Date.now() + 5000, deadline + 5000)));
+         }
+-        await db.update(hotelAttempts).set({ state: hotelRecoveryState(a.state, details.status), outcome, nextCheckAt, updatedAt: new Date() })
+-          .where(and(eq(hotelAttempts.id, a.id), eq(hotelAttempts.checks, a.checks + 1)));
++        await db.update(hotelAttempts).set({ state, outcome, nextCheckAt, updatedAt: new Date() })
++          .where(attemptPollGuard(a, a.checks + 1));
+       } catch {
+         // Unknown/not-found is NOT proof no booking exists. Never resubmit.
+-        await db.update(hotelAttempts).set({ nextCheckAt: new Date(Date.now() + (operator ? 60_000 : 5000)) }).where(and(eq(hotelAttempts.id, a.id), eq(hotelAttempts.checks, a.checks + 1)));
++        await db.update(hotelAttempts).set({ nextCheckAt: new Date(Date.now() + (operator ? 60_000 : 5000)) }).where(attemptPollGuard(a, a.checks + 1));
+       }
+     }
+   }
+@@ -176,7 +195,7 @@
+     if (currency !== price.currency) return c.json({ error: 'Supplier currency mismatch.' }, 409);
+     // Exclude concurrent confirmation and cancellation. No browser amount is used.
+     const claimed = await db.update(hotelAttempts).set({ [marker]: new Date(), state: action === 'confirm' ? 'CONFIRM_PENDING' : 'CANCELLATION_PENDING', nextCheckAt: new Date(), updatedAt: new Date() })
+-      .where(and(eq(hotelAttempts.id, a.id), eq(hotelAttempts.state, a.state), ...(action === 'confirm' ? [isNull(hotelAttempts.confirmationStartedAt), isNull(hotelAttempts.cancellationStartedAt)] : [isNull(hotelAttempts.cancellationStartedAt), eq(hotelAttempts.state, a.state)]))).returning();
++      .where(and(attemptStateGuard(a), ...(action === 'confirm' ? [isNull(hotelAttempts.confirmationStartedAt), isNull(hotelAttempts.cancellationStartedAt)] : [isNull(hotelAttempts.cancellationStartedAt), eq(hotelAttempts.state, a.state)]))).returning();
+     if (!claimed.length) return c.json({ error: 'An action is already in progress. Reconcile before proceeding.' }, 409);
+     try { if (action === 'confirm') await client.confirmBook(bookingId, price.totalPrice); else await client.cancel(bookingId); }
+     catch { /* Persisted intent survives errors and process restarts. Never replay. */ }
+--- a/apps/api/src/lib/hotel-booking-state.ts
++++ b/apps/api/src/lib/hotel-booking-state.ts
+@@ -33,8 +33,12 @@
+   return Array.from(new Uint8Array(buffer), x => x.toString(16).padStart(2, '0')).join('');
+ }
+ export function hotelRecoveryState(previous: string, incoming: string): string {
+-  // A stale poll must never restore a cancelled/failed booking.
++  // Supplier snapshots have no documented ordering token. Progress is therefore
++  // monotonic locally; unknown/regressive snapshots never clear admin intent.
+   if (['CANCELLED', 'ABORTED', 'FAILED'].includes(previous)) return previous;
+-  if (incoming === 'CANCELLATION_PENDING') return incoming;
+-  return HOTEL_SETTLED.includes(incoming) ? incoming : ['SUCCESS', 'ON_HOLD', 'CANCELLATION_PENDING'].includes(previous) ? previous : 'UNKNOWN';
++  if (previous === 'CANCELLATION_PENDING') return incoming === 'CANCELLED' ? incoming : previous;
++  if (incoming === 'CANCELLATION_PENDING' || incoming === 'CANCELLED') return incoming;
++  if (previous === 'CONFIRM_PENDING') return ['SUCCESS', 'FAILED', 'ABORTED'].includes(incoming) ? incoming : previous;
++  if (previous === 'SUCCESS') return previous;
++  return HOTEL_SETTLED.includes(incoming) ? incoming : previous === 'ON_HOLD' ? previous : 'UNKNOWN';
+ }
+--- a/apps/api/test/hotel-recovery-ordering.test.ts
++++ b/apps/api/test/hotel-recovery-ordering.test.ts
+@@ -1,4 +1,4 @@
+-// Pre-UAT regression: intentionally exposes a confirmed race; implementation unchanged.
++// Regression for persisted compare-and-set guards against delayed supplier snapshots.
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { recoverStoredHotelBooking } from '../src/routes/hotel-checkout.js';
+@@ -22,3 +22,123 @@
+   release();await pending;
+   assert.equal(tables.hotel_attempts[0].state,'CANCELLATION_PENDING');
+ });
++
++// All concurrency cases execute real route/service SQL builders with a labelled
++// in-memory database fixture. They do NOT prove native PostgreSQL locking/restart.
++import { storedHotelAction } from '../src/routes/hotel-checkout.js';
++import { hotelRecoveryState } from '../src/lib/hotel-booking-state.js';
++function deferred() {
++  let resolve!: () => void;
++  const promise = new Promise<void>(r => { resolve = r; });
++  return { promise, resolve };
++}
++async function recoveryFixture(t: any, state = 'ON_HOLD') {
++  const {db,tables} = hotelDatabaseFixture();
++  const env:any = { ENVIRONMENT: 'test', HOTEL_BOOKING_MODE: 'HOLD_UAT', TRIPJACK_API_BASE_URL: 'https://mock.invalid', TRIPJACK_API_KEY: 'fixture-key', TENANT_CACHE_KV: { get: async () => null } };
++  const a:any = { id: 'attempt', tenantId: 'tenant', userId: 'owner', quoteId: 'quote', state, mode: 'HOLD_UAT', providerBookingId: 'TJ-fixture-12345', checks: 0,
++    confirmationStartedAt: null, cancellationStartedAt: null, outcome: { status: state, confirmationNo: 'existing-confirmation' }, nextCheckAt: new Date(0), createdAt: new Date() };
++  const q:any = { id: 'quote', tenantId: 'tenant', providerScope: await hotelRequestHash([env.TRIPJACK_API_BASE_URL,env.TRIPJACK_API_KEY,'UAT']), snapshot: { option: { pricing: { totalPrice: 120, currency: 'INR' } } } };
++  tables.hotel_attempts.push(structuredClone(a)); tables.hotel_quotes.push(q);
++  const context = () => ({ env, get: (key:string) => key === 'db' ? db : key === 'tenantId' ? 'tenant' : key === 'userRole' ? 'SUPER_ADMIN' : undefined,
++    json: (body:any, status = 200) => ({body,status}) } as any);
++  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
++  return { db,tables,a,q,context,row: () => tables.hotel_attempts[0] };
++}
++function supplierStatus(status: string, confirmationNo = 'new-confirmation') {
++  return Response.json({ order: { bookingId: 'TJ-fixture-12345', status, amount: 120 }, itemInfos: { HOTEL: { hInfo: { ops: [{ sc: 'INR' }] } } }, hotelConfirmationNumber: confirmationNo });
++}
++for (const action of ['cancel','confirm'] as const) {
++  test(`delayed lookup cannot overwrite actual concurrent ${action} intent or its polling schedule`, { timeout: 3000 }, async t => {
++    const f = await recoveryFixture(t), started = deferred(), release = deferred();
++    let lookups = 0, actions = 0;
++    globalThis.fetch = async url => {
++      if (String(url).endsWith('/booking-details')) {
++        lookups++;
++        if (lookups === 1) { started.resolve(); await release.promise; }
++        return supplierStatus('ON_HOLD');
++      }
++      assert.ok(String(url).includes(action === 'cancel' ? '/cancel-booking/' : '/confirm-book'));
++      actions++; return Response.json({ status: { success: true } });
++    };
++    const pending = recoverStoredHotelBooking(f.context(), f.a, f.q);
++    await started.promise;
++    const result = await storedHotelAction(f.context(), action, f.a.providerBookingId);
++    assert.equal(result.status,202);
++    const schedule = f.row().nextCheckAt.getTime();
++    release.resolve(); await pending;
++    assert.equal(f.row().state, action === 'cancel' ? 'CANCELLATION_PENDING' : 'CONFIRM_PENDING');
++    assert.equal(f.row().nextCheckAt.getTime(),schedule);
++    assert.ok(f.row()[action === 'cancel' ? 'cancellationStartedAt' : 'confirmationStartedAt']);
++    // A second action request reads its durable marker, without sending again.
++    await storedHotelAction(f.context(), action, f.a.providerBookingId);
++    assert.equal(actions,1);
++  });
++}
++test('delayed lookup errors cannot postpone a newer cancellation intent', { timeout: 3000 }, async t => {
++  const f = await recoveryFixture(t), started = deferred(), release = deferred();
++  globalThis.fetch = async () => { started.resolve(); await release.promise; throw new Error('Fixture timeout'); };
++  const pending = recoverStoredHotelBooking(f.context(),f.a,f.q);
++  await started.promise;
++  const nextCheckAt = new Date(Date.now() + 300_000);
++  Object.assign(f.row(),{state:'CANCELLATION_PENDING',cancellationStartedAt:new Date(),nextCheckAt});
++  release.resolve(); await pending;
++  assert.equal(f.row().nextCheckAt.getTime(),nextCheckAt.getTime());
++  assert.equal(f.row().state,'CANCELLATION_PENDING');
++});
++test('a stale snapshot cannot even claim a lookup after an admin intent changes the row', async t => {
++  const f=await recoveryFixture(t); let calls=0;
++  Object.assign(f.row(),{state:'CONFIRM_PENDING',confirmationStartedAt:new Date()});
++  globalThis.fetch=async()=>{calls++;throw new Error('No supplier call expected');};
++  await recoverStoredHotelBooking(f.context(),f.a,f.q);
++  assert.equal(calls,0);assert.equal(f.row().checks,0);assert.equal(f.row().state,'CONFIRM_PENDING');
++});
++test('simultaneous polls claim one persisted lease and send one Booking Details request', { timeout: 3000 }, async t => {
++  const f=await recoveryFixture(t),started=deferred(),release=deferred();let calls=0;
++  globalThis.fetch=async()=>{calls++;started.resolve();await release.promise;return supplierStatus('SUCCESS');};
++  const first=recoverStoredHotelBooking(f.context(),structuredClone(f.a),f.q);
++  await started.promise;
++  await recoverStoredHotelBooking(f.context(),structuredClone(f.a),f.q);
++  assert.equal(calls,1);release.resolve();await first;
++  assert.equal(f.row().state,'SUCCESS');assert.equal(f.row().checks,1);
++});
++for (const oldFails of [false,true]) {
++  test(`recovered lease/new context keeps newer confirmation despite late ${oldFails ? 'error' : 'response'}`, { timeout:3000 }, async t => {
++    const f=await recoveryFixture(t),started=deferred(),release=deferred();let calls=0;
++    globalThis.fetch=async()=>{
++      calls++;
++      if(calls===1){started.resolve();await release.promise;if(oldFails)throw new Error('Lost old request');return supplierStatus('ON_HOLD','old-confirmation');}
++      return supplierStatus('SUCCESS','new-confirmation');
++    };
++    const old=recoverStoredHotelBooking(f.context(),structuredClone(f.a),f.q);await started.promise;
++    // Simulate a dead worker's expired durable lease. A fresh request context,
++    // reading only database state, can recover it; no in-memory lock is reused.
++    f.row().nextCheckAt=new Date(0);
++    await recoverStoredHotelBooking(f.context(),structuredClone(f.row()),f.q);
++    const schedule=f.row().nextCheckAt.getTime();release.resolve();await old;
++    assert.equal(calls,2);assert.equal(f.row().checks,2);assert.equal(f.row().state,'SUCCESS');
++    assert.equal(f.row().outcome.confirmationNo,'new-confirmation');assert.equal(f.row().nextCheckAt.getTime(),schedule);
++  });
++}
++for (const [previous,incoming,expected] of [
++  ['CANCELLATION_PENDING','SUCCESS','CANCELLATION_PENDING'],
++  ['CANCELLATION_PENDING','ON_HOLD','CANCELLATION_PENDING'],
++  ['CANCELLATION_PENDING','CANCELLED','CANCELLED'],
++  ['CONFIRM_PENDING','ON_HOLD','CONFIRM_PENDING'],
++  ['CONFIRM_PENDING','PENDING','CONFIRM_PENDING'],
++  ['CONFIRM_PENDING','SUCCESS','SUCCESS'],
++  ['SUCCESS','ON_HOLD','SUCCESS'],['SUCCESS','PENDING','SUCCESS'],
++  ['SUCCESS','CANCELLATION_PENDING','CANCELLATION_PENDING'],
++  ['CANCELLED','SUCCESS','CANCELLED'],
++] as const) {
++  test(`supplier order ${previous} → ${incoming} preserves ${expected}`, () => {
++    assert.equal(hotelRecoveryState(previous,incoming),expected);
++  });
++}
++test('a fresh request context (simulated restart) preserves cancellation intent despite supplier success', async t => {
++  const f=await recoveryFixture(t,'CANCELLATION_PENDING');f.row().cancellationStartedAt=new Date();let calls=0;
++  globalThis.fetch=async()=>{calls++;return supplierStatus('SUCCESS');};
++  const snapshot=structuredClone(f.row());
++  await recoverStoredHotelBooking(f.context(),snapshot,f.q);
++  assert.equal(calls,1);assert.equal(f.row().state,'CANCELLATION_PENDING');
++  assert.deepEqual(f.row().outcome,snapshot.outcome);assert.ok(f.row().cancellationStartedAt);
++});
+--- a/apps/api/test/hotel-booking-state.test.ts
++++ b/apps/api/test/hotel-booking-state.test.ts
+@@ -14,7 +14,7 @@
+ const option = { optionId: 'rate', roomInfo: [{ id: 'room', name: 'Suite', adults: 1, children: 1 }], mealBasis: 'Breakfast', pricing: { totalPrice: 120, basePrice: 100, taxes: 10, mf: 8, mft: 2, currency: 'INR' }, compliance: {}, cancellation: { isRefundable: true, penalties: [] } };
+ const guest = { title: 'Mr', firstName: 'Fixture', lastName: 'Adult', type: 'ADULT' };
+ const guests = [{ guests: [guest, { ...guest, title: 'Miss', type: 'CHILD', firstName: 'Child' }] }];
+-async function fixture() {
++async function fixture(control: { bookWait?: Promise<void>; bookStarted?: () => void } = {}) {
+   const { db, tables } = hotelDatabaseFixture(); const jobs: Promise<any>[] = [];
+   const env: any = { ENVIRONMENT: 'test', JWT_SECRET: 'fixture-signing-key-not-a-real-secret', HOTEL_BOOKING_MODE: 'HOLD_UAT', TRIPJACK_API_BASE_URL: 'https://mock.invalid', TRIPJACK_API_KEY: 'fixture-key',
+     TENANT_CACHE_KV: { get: async () => null }, SESSIONS_KV: { get: async () => ({ sessionId: 'fixture-session', tenantId: 'tenant' }) }, FARE_CACHE_KV: { get: async () => ({ IN: '106' }), put: async () => {} }, DOCUMENTS_R2: { put: async () => {} } };
+@@ -31,7 +31,7 @@
+     const path = String(url);
+     if (path.endsWith('/pricing')) return Response.json({ reviewHash: 'server-hash', options: [{ ...option, pricing: { ...option.pricing, totalPrice: changed ? 130 : 120 } }] });
+     if (path.endsWith('/review')) return Response.json({ bookingId: 'TJ-fixture-12345', option, onholdAllowed: 'true', hotelName: 'Fixture hotel' });
+-    if (path.endsWith('/book')) { bookCalls++; bookBodies.push(JSON.parse(init?.body as string)); if (bookError) throw new Error('Timeout after send'); return Response.json({ bookingId: 'TJ-fixture-12345', status: { success: true } }); }
++    if (path.endsWith('/book')) { bookCalls++; bookBodies.push(JSON.parse(init?.body as string)); control.bookStarted?.(); if (control.bookWait) await control.bookWait; if (bookError) throw new Error('Timeout after send'); return Response.json({ bookingId: 'TJ-fixture-12345', status: { success: true } }); }
+     if (path.endsWith('/confirm-book')) { confirmCalls++; if (actionTimeout) throw new Error('Ambiguous confirmation'); bookBodies.push(JSON.parse(init?.body as string)); status='SUCCESS'; return Response.json({status:{success:true}}); }
+     if (path.includes('/cancel-booking/')) { cancelCalls++; status='CANCELLED'; return Response.json({status:{success:true}}); }
+     if (path.endsWith('/booking-details')) { detailsCalls++; if (status === 'NOT_FOUND') return Response.json({ status: { success: false }, errors: [{ errCode: '6511' }] }, { status: 400 }); return Response.json({ order: { bookingId: 'TJ-fixture-12345', status, amount: 120 }, itemInfos: { HOTEL: { hInfo: { ops: [{ sc: 'INR' }] } } }, hotelConfirmationNumber: 'fixture-confirmation' }); }
+@@ -174,3 +174,18 @@
+   assert.equal((await f.request(path,{amount:1},admin)).status,202);assert.equal(f.counts().confirmCalls,1);
+   assert.ok(f.tables.hotel_attempts[0].confirmationStartedAt);
+ });
++
++for (const failedResponse of [false,true]) {
++  test(`late Book ${failedResponse ? 'error' : 'acknowledgement'} cannot overwrite already-reconciled confirmation`, {timeout:3000}, async t => {
++    let release!:()=>void,started!:()=>void;
++    const wait=new Promise<void>(r=>release=r),seen=new Promise<void>(r=>started=r);
++    const f=await fixture({bookWait:wait,bookStarted:started});t.after(f.restore);
++    const q=await f.review();if(failedResponse)f.timeout();
++    const submitting=f.request('/api/profile/hotels/book',f.payload(q));await seen;
++    const id=f.tables.hotel_attempts[0].id;
++    await f.request(`/api/profile/hotels/bookings/${id}`);
++    assert.equal(f.tables.hotel_attempts[0].state,'SUCCESS');
++    release();const result:any=await (await submitting).json();
++    assert.equal(result.status,'SUCCESS');assert.equal(f.tables.hotel_attempts[0].state,'SUCCESS');assert.equal(f.counts().bookCalls,1);
++  });
++}

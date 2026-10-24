@@ -52,22 +52,13 @@ jobs:
       - name: Install psql client
         if: steps.database.outputs.configured == 'true'
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Apply migrations
-        if: steps.database.outputs.configured == 'true'
-        run: |
-          for f in packages/db/drizzle/migrations/*.sql; do
-            echo "Applying $f..."
-            psql "$DATABASE_URL" -f "$f" || echo "Warning: $f may already be applied, continuing..."
-          done
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
-      - name: Require social sign-in schema
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f packages/db/drizzle/migrations/0003_customer_social_signin.sql
+      - name: Apply verified one-time hotel migration (fail closed)
+        run: bash scripts/migrations/hotel-release.sh
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
   deploy-web:
+    needs: migrate-db
     name: Deploy Web
     runs-on: ubuntu-latest
     defaults:
@@ -88,6 +79,7 @@ jobs:
       - run: pnpm exec wrangler deploy
 
   deploy-portal:
+    needs: migrate-db
     name: Deploy Portal
     runs-on: ubuntu-latest
     defaults:
@@ -108,6 +100,7 @@ jobs:
       - run: pnpm exec wrangler deploy
 
   deploy-admin:
+    needs: migrate-db
     name: Deploy Admin
     runs-on: ubuntu-latest
     defaults:

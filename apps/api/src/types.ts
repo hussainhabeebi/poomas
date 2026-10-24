@@ -23,6 +23,7 @@ export interface Env {
   RIYA_API_KEY:           string;
   RIYA_API_SECRET:        string;
   RIYA_API_BASE_URL:      string;
+  HOTEL_BOOKING_MODE?: "DISABLED" | "HOLD_UAT" | "INSTANT_UAT"; // unset = disabled; UAT approval only
   TRIPJACK_API_KEY:       string;
   TRIPJACK_API_BASE_URL:  string;
   TRIPJACK_OMS_BASE_URL?: string;  // OMS (book/cancel) base URL — set when proxy only covers FMS

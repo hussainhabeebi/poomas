@@ -1,5 +1,6 @@
 import type { Db } from "@poomas/db";
 import { supplierApiLogs } from "@poomas/db/schema";
+import { supplierLogBody, supplierLogCode, supplierLogSummary } from './supplier-log-redaction.js';
 
 export interface SupplierCallLog {
   tenantId:       string;
@@ -24,13 +25,13 @@ export async function logSupplierCall(db: Db, entry: SupplierCallLog): Promise<v
       httpStatus:      entry.httpStatus ?? null,
       level:           entry.level,
       requestId:       entry.requestId ?? null,
-      requestSummary:  entry.requestSummary ?? null,
-      responseSnippet: entry.responseSnippet ? entry.responseSnippet.slice(0, 800) : null,
-      errorCode:       entry.errorCode ?? null,
-      errorMessage:    entry.errorMessage ?? null,
+      requestSummary:  supplierLogSummary(entry.requestSummary),
+      responseSnippet: entry.responseSnippet ? JSON.stringify(supplierLogBody(entry.responseSnippet)) : null,
+      errorCode:       entry.errorCode ? supplierLogCode(entry.errorCode) : null,
+      errorMessage:    entry.errorMessage ? 'Supplier operation failed; inspect the sanitized code and request ID.' : null,
       durationMs:      entry.durationMs ?? null,
     });
   } catch (err) {
-    console.error("[supplier-logger] insert failed:", err instanceof Error ? err.message : String(err));
+    console.error("[supplier-logger] sanitized diagnostic insert failed");
   }
 }
