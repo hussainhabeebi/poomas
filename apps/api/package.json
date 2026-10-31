@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev":      "wrangler dev --port 4000",
-    "build":    "tsc --noEmit",
-    "deploy":   "wrangler deploy",
-    "preview":  "wrangler dev --port 4000 --env staging",
+    "dev": "wrangler dev --port 4000",
+    "build": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev --port 4000 --env staging",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,7 +17,6 @@
     "@poomas/db": "workspace:*",
     "@poomas/suppliers": "workspace:*",
     "drizzle-orm": "^0.36.0",
-    "@neondatabase/serverless": "^0.10.0",
     "jose": "^5.9.0"
   },
   "devDependencies": {

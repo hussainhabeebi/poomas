@@ -9,6 +9,7 @@
 // Trips   /api/agent/trips/*   the My Trips routes, scoped to the agency tree.
 
 import { emailAgencyRegistered } from "../lib/transactional-emails.js";
+import { inList } from "@poomas/db";
 import { assignAgentNumber, resolveAgentNumber } from "../lib/agent-number.js";
 import { getBankAccounts, visibleAccounts } from "../lib/bank-accounts.js";
 import {
@@ -440,21 +441,21 @@ agentPortalRoutes.get("/dashboard", async (c) => {
   const [wallet, tier, todayRows, monthRows, pending, recent, openRequests, subCount] = await Promise.all([
     agentWallet(db, tenantId, a.id),
     agentTier(db, tenantId, a.id, program),
-    db.select({ n: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${bookings.totalAmount}),0)` }).from(bookings)
+    db.select({ n: sql<number>`count(*)`, total: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` }).from(bookings)
       .where(and(eq(bookings.agentId, a.id), gte(bookings.createdAt, today), confirmed)),
-    db.select({ n: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${bookings.totalAmount}),0)`, margin: sql<string>`coalesce(sum(${bookings.markup}),0)` }).from(bookings)
-      .where(and(inArray(bookings.agentId, scope), gte(bookings.createdAt, monthStart), confirmed)),
+    db.select({ n: sql<number>`count(*)`, total: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))`, margin: sql<string>`printf('%.2f', coalesce(sum(${bookings.markup}), 0))` }).from(bookings)
+      .where(and(inList(bookings.agentId, scope), gte(bookings.createdAt, monthStart), confirmed)),
     db.select({ id: bookings.id, status: bookings.status, origin: bookings.origin, destination: bookings.destination, departureDate: bookings.departureDate,
       totalAmount: bookings.totalAmount, currency: bookings.currency, heldUntil: bookings.heldUntil, pnr: bookings.pnr })
-      .from(bookings).where(and(inArray(bookings.agentId, scope), inArray(bookings.status, ["HELD", "PAYMENT_PENDING"]), gte(bookings.createdAt, new Date(Date.now() - 3 * 86_400_000))))
+      .from(bookings).where(and(inList(bookings.agentId, scope), inArray(bookings.status, ["HELD", "PAYMENT_PENDING"]), gte(bookings.createdAt, new Date(Date.now() - 3 * 86_400_000))))
       .orderBy(asc(bookings.heldUntil)).limit(20),
     db.select({ id: bookings.id, status: bookings.status, origin: bookings.origin, destination: bookings.destination, departureDate: bookings.departureDate,
       totalAmount: bookings.totalAmount, currency: bookings.currency, pnr: bookings.pnr, createdAt: bookings.createdAt, agentId: bookings.agentId })
-      .from(bookings).where(inArray(bookings.agentId, scope)).orderBy(desc(bookings.createdAt)).limit(8),
-    db.select({ n: sql<number>`count(*)::int` }).from(agentRequests).where(and(eq(agentRequests.agentId, a.id), inArray(agentRequests.status, ["OPEN", "IN_PROGRESS", "QUOTED"]))),
-    db.select({ n: sql<number>`count(*)::int` }).from(agents).where(and(eq(agents.tenantId, tenantId), eq(agents.parentAgentId, a.id))),
+      .from(bookings).where(inList(bookings.agentId, scope)).orderBy(desc(bookings.createdAt)).limit(8),
+    db.select({ n: sql<number>`count(*)` }).from(agentRequests).where(and(eq(agentRequests.agentId, a.id), inArray(agentRequests.status, ["OPEN", "IN_PROGRESS", "QUOTED"]))),
+    db.select({ n: sql<number>`count(*)` }).from(agents).where(and(eq(agents.tenantId, tenantId), eq(agents.parentAgentId, a.id))),
   ]);
-  const commissionRows = await db.select({ total: sql<string>`coalesce(sum(${walletTransactions.amount}),0)` }).from(walletTransactions)
+  const commissionRows = await db.select({ total: sql<string>`printf('%.2f', coalesce(sum(${walletTransactions.amount}), 0))` }).from(walletTransactions)
     .where(and(eq(walletTransactions.walletAccountId, wallet?.id ?? "-"), eq(walletTransactions.type, "COMMISSION_CREDIT"), gte(walletTransactions.createdAt, monthStart)));
   return c.json({
     agent: { businessName: a.businessName, status: a.status, currency: a.currency, agentNumber: a.agentNumber },
@@ -1050,12 +1051,12 @@ agentPortalRoutes.get("/reports", async (c) => {
   const tenantId = c.get("tenantId");
   const scope = await descendantIds(db, tenantId, c.get("agentId")!);
   const { from, to } = range(c);
-  const where = and(inArray(bookings.agentId, scope), gte(bookings.createdAt, from), lte(bookings.createdAt, to));
+  const where = and(inList(bookings.agentId, scope), gte(bookings.createdAt, from), lte(bookings.createdAt, to));
   const [byStatus, byRoute, byAgent] = await Promise.all([
-    db.select({ status: bookings.status, n: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${bookings.totalAmount}),0)` }).from(bookings).where(where).groupBy(bookings.status),
-    db.select({ origin: bookings.origin, destination: bookings.destination, n: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${bookings.totalAmount}),0)` })
+    db.select({ status: bookings.status, n: sql<number>`count(*)`, total: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` }).from(bookings).where(where).groupBy(bookings.status),
+    db.select({ origin: bookings.origin, destination: bookings.destination, n: sql<number>`count(*)`, total: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` })
       .from(bookings).where(and(where, inArray(bookings.status, ["CONFIRMED", "TICKETED"]))).groupBy(bookings.origin, bookings.destination).orderBy(desc(sql`count(*)`)).limit(10),
-    db.select({ agentId: bookings.agentId, name: agents.businessName, n: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${bookings.totalAmount}),0)` })
+    db.select({ agentId: bookings.agentId, name: agents.businessName, n: sql<number>`count(*)`, total: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` })
       .from(bookings).innerJoin(agents, eq(agents.id, bookings.agentId)).where(and(where, inArray(bookings.status, ["CONFIRMED", "TICKETED"]))).groupBy(bookings.agentId, agents.businessName),
   ]);
   return c.json({

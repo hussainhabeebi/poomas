@@ -15,6 +15,7 @@ import {
   type TripsafeTripInput, type TripsafeTraveller, type TripsafeBookResult, type TripsafeBookingDetails,
 } from "@poomas/suppliers";
 import { createLogsDb, supplierExchanges, type LogsDb } from "@poomas/db/logs";
+import { inList } from "@poomas/db";
 import { and, asc, desc, eq, inArray, like, or } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { collectExchanges, persistExchanges } from "./api-exchanges.js";
@@ -291,7 +292,7 @@ export async function tripsafePack(env: Env, record: TripsafeRecord, folder = ""
     eq(supplierExchanges.tenantId, record.tenantId),
     like(supplierExchanges.endpoint, "/insurance/%"),
     record.searchIds.length
-      ? or(eq(supplierExchanges.bookingId, record.reference), inArray(supplierExchanges.searchId, record.searchIds))
+      ? or(eq(supplierExchanges.bookingId, record.reference), inList(supplierExchanges.searchId, record.searchIds))
       : eq(supplierExchanges.bookingId, record.reference),
   )).orderBy(asc(supplierExchanges.startedAt));
   // One Search (the one the booking used), the Booking, every amendment, and
@@ -332,7 +333,7 @@ export async function exchangesPack(env: Env, tenantId: string, ids: string[], e
   const logs = createLogsDb(env.LOGS_DB);
   if (!ids.length || !logs) return [];
   const rows = await logs.select().from(supplierExchanges).where(and(
-    eq(supplierExchanges.tenantId, tenantId), like(supplierExchanges.endpoint, "/insurance/%"), inArray(supplierExchanges.id, ids),
+    eq(supplierExchanges.tenantId, tenantId), like(supplierExchanges.endpoint, "/insurance/%"), inList(supplierExchanges.id, ids),
   )).orderBy(asc(supplierExchanges.startedAt));
   return exchangeFiles(env, rows, tripjackHost(environment), "");
 }

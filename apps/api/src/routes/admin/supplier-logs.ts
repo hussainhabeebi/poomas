@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { supplierApiLogs, supplierExchanges } from "@poomas/db/logs";
+import { inList } from "@poomas/db";
 import { eq, and, desc, gte, inArray, like, lte, or, asc } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { buildZip } from "../../lib/zip.js";
@@ -176,7 +177,7 @@ supplierLogsAdminRoutes.get("/exchanges.zip", async (c) => {
   const used = new Map<string, number>();
   const logs = c.get("logs");
   const rows = logs ? await logs.select({ id: supplierExchanges.id }).from(supplierExchanges)
-    .where(and(eq(supplierExchanges.tenantId, c.get("tenantId")), inArray(supplierExchanges.id, ids))).orderBy(asc(supplierExchanges.startedAt)) : [];
+    .where(and(eq(supplierExchanges.tenantId, c.get("tenantId")), inList(supplierExchanges.id, ids))).orderBy(asc(supplierExchanges.startedAt)) : [];
   for (const { id } of rows) {
     for (const part of ["request", "response"] as const) {
       const f = await exchangeFile(c, id, part);

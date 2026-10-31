@@ -1,4 +1,4 @@
-import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace, D1Database } from "@cloudflare/workers-types";
+import type { KVNamespace, R2Bucket, Queue, DurableObjectNamespace, D1Database } from "@cloudflare/workers-types";
 import type { Db } from "@poomas/db";
 import type { LogsDb } from "@poomas/db/logs";
 
@@ -12,10 +12,9 @@ export interface Env {
   PUBLIC_ASSETS_R2: R2Bucket;
   BOOKING_QUEUE:    Queue;
   NOTIFY_QUEUE:     Queue;
-  HYPERDRIVE:       Hyperdrive;
+  DB:               D1Database;   // Cloudflare D1 (main database)
   LOGS_DB?:         D1Database;   // supplier / email / agency-activity logs (optional: logging is skipped without it)
   TENANT_RATE_LIMITER: DurableObjectNamespace;
-  DATABASE_URL:           string;
   JWT_SECRET:             string;
   GOOGLE_CLIENT_ID?:      string;
   APPLE_CLIENT_ID?:       string;

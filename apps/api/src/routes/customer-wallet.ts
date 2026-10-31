@@ -268,7 +268,7 @@ customerWalletRoutes.post("/deposits", async (c) => {
   const bank = accounts.find((a) => a.id === bankAccountId);
   if (!bank) return c.json({ error: "Choose the bank account you paid into" }, 400);
 
-  const [open] = await db.select({ n: sql<number>`count(*)::int` }).from(customerWalletDeposits)
+  const [open] = await db.select({ n: sql<number>`count(*)` }).from(customerWalletDeposits)
     .where(and(eq(customerWalletDeposits.userId, userId), eq(customerWalletDeposits.status, "PENDING")));
   if ((open?.n ?? 0) >= MAX_PENDING_DEPOSITS) return c.json({ error: "You already have several recharges waiting for approval. Please wait until they're checked." }, 429);
   // The same transfer reference can't be credited twice.

@@ -5,6 +5,7 @@
 // instead. Anything else — logins, wallet with no movements, markup overrides,
 // documents, requests, quotes, travellers, analytics — is removed with it.
 
+import { inList } from "@poomas/db";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import {
   agents, auditLogs, bookingAmendments, bookings, commissions, markupRules, supportRequests,
@@ -34,12 +35,12 @@ export async function deleteAgent(
   const walletIds = wallets.map((w) => w.id);
 
   const [[b], [cm], [sub], [tx]] = await Promise.all([
-    db.select({ n: sql<number>`count(*)::int` }).from(bookings)
-      .where(staffIds.length ? or(eq(bookings.agentId, a.id), inArray(bookings.userId, staffIds)) : eq(bookings.agentId, a.id)),
-    db.select({ n: sql<number>`count(*)::int` }).from(commissions).where(eq(commissions.agentId, a.id)),
-    db.select({ n: sql<number>`count(*)::int` }).from(agents).where(eq(agents.parentAgentId, a.id)),
+    db.select({ n: sql<number>`count(*)` }).from(bookings)
+      .where(staffIds.length ? or(eq(bookings.agentId, a.id), inList(bookings.userId, staffIds)) : eq(bookings.agentId, a.id)),
+    db.select({ n: sql<number>`count(*)` }).from(commissions).where(eq(commissions.agentId, a.id)),
+    db.select({ n: sql<number>`count(*)` }).from(agents).where(eq(agents.parentAgentId, a.id)),
     walletIds.length
-      ? db.select({ n: sql<number>`count(*)::int` }).from(walletTransactions).where(inArray(walletTransactions.walletAccountId, walletIds))
+      ? db.select({ n: sql<number>`count(*)` }).from(walletTransactions).where(inList(walletTransactions.walletAccountId, walletIds))
       : Promise.resolve([{ n: 0 }]),
   ]);
   const blockers = [
@@ -56,14 +57,14 @@ export async function deleteAgent(
 
   await db.delete(markupRules).where(eq(markupRules.agentId, a.id));
   await forgetMarkupRules(env, a.tenantId);
-  if (walletIds.length) await db.delete(walletAccounts).where(inArray(walletAccounts.id, walletIds));
+  if (walletIds.length) await db.delete(walletAccounts).where(inList(walletAccounts.id, walletIds));
   if (staffIds.length) {
     // Keep the history these logins left behind, without the user link.
-    await db.update(auditLogs).set({ userId: null }).where(inArray(auditLogs.userId, staffIds));
-    await db.update(supportRequests).set({ userId: null }).where(inArray(supportRequests.userId, staffIds));
-    await db.update(bookingAmendments).set({ userId: null }).where(inArray(bookingAmendments.userId, staffIds));
-    await db.update(walletCoupons).set({ redeemedByUserId: null }).where(inArray(walletCoupons.redeemedByUserId, staffIds));
-    await db.delete(users).where(and(inArray(users.id, staffIds), eq(users.agentId, a.id)));
+    await db.update(auditLogs).set({ userId: null }).where(inList(auditLogs.userId, staffIds));
+    await db.update(supportRequests).set({ userId: null }).where(inList(supportRequests.userId, staffIds));
+    await db.update(bookingAmendments).set({ userId: null }).where(inList(bookingAmendments.userId, staffIds));
+    await db.update(walletCoupons).set({ redeemedByUserId: null }).where(inList(walletCoupons.redeemedByUserId, staffIds));
+    await db.delete(users).where(and(inList(users.id, staffIds), eq(users.agentId, a.id)));
   }
   await db.delete(agents).where(eq(agents.id, a.id));
   await forgetAgentNumber(env, a.tenantId, a.agentNumber);

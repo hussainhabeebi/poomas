@@ -12,16 +12,12 @@ const TENANT_CACHE_TTL = 3600;
 // Derives tenant_id from the request hostname (subdomain or custom domain).
 // Never trusts X-Tenant-ID header from clients — all tenant derivation is server-side.
 export const resolveTenant: MiddlewareHandler<{ Bindings: Env; Variables: Variables }> = async (c, next) => {
-  // @poomas/db currently uses drizzle-orm/neon-http. That driver must receive the
-  // actual Neon DATABASE_URL. A Cloudflare Hyperdrive connectionString is a Postgres
-  // proxy socket URL and is NOT compatible with neon-http; using it can result in
-  // Cloudflare origin/DNS failures before the route handler executes.
-  if (!c.env.DATABASE_URL) {
-    console.error("[tenant] DATABASE_URL Worker secret is not configured");
+  if (!c.env.DB) {
+    console.error("[tenant] D1 binding DB is not configured");
     return c.json({ error: "Database connection is not configured" }, 503);
   }
 
-  const db = createDb(c.env.DATABASE_URL);
+  const db = createDb(c.env.DB);
   c.set("db", db);
   c.set("logs", createLogsDb(c.env.LOGS_DB));
 

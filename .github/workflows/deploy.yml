@@ -11,7 +11,6 @@ env:
 jobs:
   deploy-api:
     name: Deploy API Worker
-    needs: migrate-db
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -27,6 +26,20 @@ jobs:
         working-directory: .
       - run: pnpm --filter @poomas/api typecheck
         working-directory: .
+      # D1 main database: create it once, point wrangler.toml at it, apply migrations.
+      # Unlike the logs database this is required — the deploy stops if it fails.
+      - name: Prepare D1 main database
+        run: |
+          set -euo pipefail
+          find_id() { pnpm exec wrangler d1 list --json | jq -r '.[] | select(.name == "poomas-db") | .uuid' | head -n1; }
+          id="$(find_id)"
+          if [ -z "$id" ]; then
+            pnpm exec wrangler d1 create poomas-db --update-config=false
+            id="$(find_id)"
+          fi
+          [ -n "$id" ] || { echo "Could not find or create the poomas-db D1 database"; exit 1; }
+          sed -i "s/^database_id       = .*/database_id       = \"$id\"/" wrangler.toml
+          pnpm exec wrangler d1 migrations apply DB --remote
       # D1 logs database: create it once, point wrangler.toml at it, apply migrations.
       # Never blocks the deploy — without D1 the API runs with log writes skipped.
       - name: Prepare D1 logs database
@@ -51,48 +64,13 @@ jobs:
           python3 - <<'PY'
           import re
           s = open("wrangler.toml").read()
-          s = re.sub(r"\[\[d1_databases\]\]\n(?:[^\n\[#]+\n)*", "", s)
+          s = re.sub(r"\[\[d1_databases\]\]\nbinding\s*=\s*\"LOGS_DB\"\n(?:[^\n\[#]+\n)*", "", s)
           open("wrangler.toml", "w").write(s)
           PY
       - run: pnpm exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-  migrate-db:
-    name: Run DB Migrations
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check database configuration
-        id: database
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          if [ -z "$DATABASE_URL" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "DATABASE_URL is required before deploying the social sign-in schema."
-            exit 1
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Install psql client
-        if: steps.database.outputs.configured == 'true'
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Apply migrations
-        if: steps.database.outputs.configured == 'true'
-        run: |
-          for f in packages/db/drizzle/migrations/*.sql; do
-            echo "Applying $f..."
-            psql "$DATABASE_URL" -f "$f" || echo "Warning: $f may already be applied, continuing..."
-          done
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
-      - name: Require social sign-in schema
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f packages/db/drizzle/migrations/0003_customer_social_signin.sql
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
   deploy-web:
     name: Deploy Web

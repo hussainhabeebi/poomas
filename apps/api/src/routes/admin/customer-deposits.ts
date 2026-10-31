@@ -32,7 +32,7 @@ customerDepositsAdminRoutes.get("/", async (c) => {
     .where(and(eq(customerWalletDeposits.tenantId, tenantId), status === "ALL" ? undefined : eq(customerWalletDeposits.status, status)))
     .orderBy(status === "PENDING" ? asc(customerWalletDeposits.createdAt) : desc(customerWalletDeposits.updatedAt))
     .limit(200);
-  const [counts] = await db.select({ pending: sql<number>`count(*) filter (where ${customerWalletDeposits.status} = 'PENDING')::int` })
+  const [counts] = await db.select({ pending: sql<number>`count(*) filter (where ${customerWalletDeposits.status} = 'PENDING')` })
     .from(customerWalletDeposits).where(eq(customerWalletDeposits.tenantId, tenantId));
   // Suggested credit in the wallet currency (INR) at today's rate; staff can change it.
   const fx = await getFx(c.env, tenantId, c.executionCtx).catch(() => null);
