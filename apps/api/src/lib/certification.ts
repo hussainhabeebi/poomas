@@ -16,7 +16,8 @@
 // Requests are shown as sent to TripJack: the Poomas gateway URL is replaced by
 // TripJack's endpoint and our internal gateway secret is never included.
 
-import { bookingPassengers, supplierExchanges, type bookings } from "@poomas/db/schema";
+import { bookingPassengers, type bookings } from "@poomas/db/schema";
+import { createLogsDb, supplierExchanges } from "@poomas/db/logs";
 import { and, asc, desc, eq, gte, lte, or } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { passengerNameProblem } from "./passenger-names.js";
@@ -141,13 +142,14 @@ type Exchange = typeof supplierExchanges.$inferSelect;
 
 // Bookings that reached checkout without the search reference: find the search
 // whose response offered this booking's fare (within the 2 hours before it).
-async function fallbackSearch(env: Env, db: Db, b: Booking): Promise<Exchange | null> {
+async function fallbackSearch(env: Env, b: Booking): Promise<Exchange | null> {
   const fareIds: string[] = [
     ...(((b.flightData as any)?.tripjack?.priceIds ?? []) as string[]),
     (b.flightData as any)?.id,
   ].filter((x): x is string => typeof x === "string" && x.length > 3);
-  if (!fareIds.length) return null;
-  const candidates = await db.select().from(supplierExchanges).where(and(
+  const logs = createLogsDb(env.LOGS_DB);
+  if (!fareIds.length || !logs) return null;
+  const candidates = await logs.select().from(supplierExchanges).where(and(
     eq(supplierExchanges.tenantId, b.tenantId),
     or(eq(supplierExchanges.endpoint, "/air-search-all/v2"), eq(supplierExchanges.endpoint, "/fms/v1/air-search-all")),
     gte(supplierExchanges.startedAt, new Date(b.createdAt.getTime() - 2 * 3600_000)),
@@ -165,9 +167,10 @@ async function fallbackSearch(env: Env, db: Db, b: Booking): Promise<Exchange | 
 // of each TripJack service, named like TripJack's sample (SearchRequest.json …).
 export async function certificationPack(env: Env, db: Db, b: Booking, environment: "UAT" | "PRODUCTION", folder = ""): Promise<PackFile[]> {
   const host = tripjackHost(environment);
-  const all = await db.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt));
+  const logs = createLogsDb(env.LOGS_DB);
+  const all = logs ? await logs.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt)) : [];
   if (!all.some((x) => stepOf(x.endpoint) === "Search")) {
-    const search = await fallbackSearch(env, db, b).catch(() => null);
+    const search = await fallbackSearch(env, b).catch(() => null);
     if (search) all.unshift(search);
   }
   // Keep the last call of each service: the review / booking TripJack actually
@@ -208,9 +211,9 @@ export function certificationFileName(endpoint: string, part: "request" | "respo
 
 // Which of TripJack's required services (Search, Review, Booking, BookingDetail)
 // are in this booking's logs, with a request and a response.
-export async function certificationCoverage(env: Env, db: Db, b: Booking, exchanges: Exchange[]) {
+export async function certificationCoverage(env: Env, b: Booking, exchanges: Exchange[]) {
   const have = new Set(exchanges.filter((x) => x.requestKey && x.responseKey).map((x) => stepOf(x.endpoint)));
-  if (!have.has("Search") && b.supplier === "TRIPJACK" && await fallbackSearch(env, db, b).catch(() => null)) have.add("Search");
+  if (!have.has("Search") && b.supplier === "TRIPJACK" && await fallbackSearch(env, b).catch(() => null)) have.add("Search");
   return REQUIRED_STEPS.map((service) => ({ service, logged: have.has(service) }));
 }
 

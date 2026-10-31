@@ -96,29 +96,7 @@ export const promoCodes = sqliteTable("promo_codes", {
   tenantCodeIdx: uniqueIndex("promo_codes_tenant_code_idx").on(t.tenantId, t.code),
 }));
 
-// TripJack / supplier API call logs — retained 90 days for error analysis
-export const supplierApiLogs = sqliteTable("supplier_api_logs", {
-  id:        uuidPk(),
-  tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-
-  supplier:   text("supplier", { enum: supplierNameEnum }).notNull(),
-  endpoint:   text("endpoint").notNull(),           // e.g. /oms/v1/air/book
-  httpStatus: integer("http_status"),               // null = no HTTP response (timeout/network)
-  level:      text("level").notNull().default("INFO"), // INFO | WARN | ERROR
-  requestId:  text("request_id"),                   // correlates to booking
-
-  // Sanitised request (no full names/emails, just structural shape)
-  requestSummary: json("request_summary"),         // { fareId, paxCount, origin, destination }
-  responseSnippet: text("response_snippet"),         // first 800 chars of raw response
-  errorCode:      text("error_code"),
-  errorMessage:   text("error_message"),
-  durationMs:     integer("duration_ms"),
-
-  createdAt: timestampNow("created_at"),
-}, (t) => ({
-  tenantTimeIdx: index("supplier_api_logs_tenant_time_idx").on(t.tenantId, t.createdAt),
-  levelIdx:      index("supplier_api_logs_level_idx").on(t.tenantId, t.level, t.createdAt),
-}));
+// supplier_api_logs and supplier_exchanges live in the D1 logs database (src/logs/schema.ts).
 
 // Leadvyne / WhatsApp bot integration config (per tenant, per environment)
 export const leadvyneConfigs = sqliteTable("leadvyne_configs", {
@@ -151,22 +129,3 @@ export const leadvyneConfigs = sqliteTable("leadvyne_configs", {
 }, (t) => ({
   tenantEnvIdx: uniqueIndex("leadvyne_configs_tenant_env_idx").on(t.tenantId, t.environment),
 }));
-
-// Raw supplier API exchanges (request + response files in R2) for certification logs.
-export const supplierExchanges = sqliteTable("supplier_exchanges", {
-  id:          uuidPk(),
-  tenantId:    text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  bookingId:   text("booking_id"),
-  searchId:    text("search_id"),
-  requestId:   text("request_id"),
-  supplier:    text("supplier").notNull(),
-  endpoint:    text("endpoint").notNull(),
-  url:         text("url").notNull(),
-  httpStatus:  integer("http_status"),
-  durationMs:  integer("duration_ms"),
-  error:       text("error"),
-  requestKey:  text("request_key").notNull(),
-  responseKey: text("response_key"),
-  startedAt:   timestamp("started_at").notNull(),
-  createdAt:   timestampNow("created_at"),
-});

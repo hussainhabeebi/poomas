@@ -1,5 +1,6 @@
-import type { KVNamespace, R2Bucket, Queue, D1Database, DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { KVNamespace, R2Bucket, Queue, DurableObjectNamespace, D1Database } from "@cloudflare/workers-types";
 import type { Db } from "@poomas/db";
+import type { LogsDb } from "@poomas/db/logs";
 
 export interface Env {
   ENVIRONMENT:          string;
@@ -12,6 +13,7 @@ export interface Env {
   BOOKING_QUEUE:    Queue;
   NOTIFY_QUEUE:     Queue;
   DB:               D1Database;   // Cloudflare D1 (main database)
+  LOGS_DB?:         D1Database;   // supplier / email / agency-activity logs (optional: logging is skipped without it)
   TENANT_RATE_LIMITER: DurableObjectNamespace;
   JWT_SECRET:             string;
   GOOGLE_CLIENT_ID?:      string;
@@ -61,6 +63,7 @@ export interface Env {
 
 export interface Variables {
   db:       Db;
+  logs:     LogsDb | null;
   tenantId: string;
   tenant:   TenantContext;
   userId?:  string;

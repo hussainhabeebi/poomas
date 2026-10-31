@@ -10,12 +10,12 @@
 // request / response files) linked to the reference or the TripJack searchId,
 // and summarised in Admin → Supplier logs.
 
-import { inList } from "@poomas/db";
 import {
   TripjackInsuranceClient, parseTripsafeBooking, tripsafeSearchBody, normalizeTripsafeProduct,
   type TripsafeTripInput, type TripsafeTraveller, type TripsafeBookResult, type TripsafeBookingDetails,
 } from "@poomas/suppliers";
-import { supplierExchanges } from "@poomas/db/schema";
+import { createLogsDb, supplierExchanges, type LogsDb } from "@poomas/db/logs";
+import { inList } from "@poomas/db";
 import { and, asc, desc, eq, inArray, like, or } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { collectExchanges, persistExchanges } from "./api-exchanges.js";
@@ -83,14 +83,14 @@ export async function trackedCall<T>(
   client.setRecorder(collector.recorder);
   const started = Date.now();
   const base = { tenantId, supplier: "TRIPJACK" as const, endpoint, requestId };
-  const store = (searchId?: string | null) => persistExchanges(c.env, db, tenantId, collector.exchanges,
+  const store = (searchId?: string | null) => persistExchanges(c.env, tenantId, collector.exchanges,
     { bookingId: link.bookingId ?? null, searchId: searchId ?? link.searchId ?? null, requestId });
   try {
     const result = await call();
     const searchId = link.searchIdFrom?.(result);
     await Promise.all([
       store(searchId),
-      logSupplierCall(db, { ...base, level: "INFO", httpStatus: 200, durationMs: Date.now() - started,
+      logSupplierCall(c.get("logs"), { ...base, level: "INFO", httpStatus: 200, durationMs: Date.now() - started,
         requestSummary: { ...summary, ...(searchId ? { searchId } : {}), ...(link.bookingId ? { reference: link.bookingId } : {}) } }),
     ]);
     return result;
@@ -98,7 +98,7 @@ export async function trackedCall<T>(
     console.error(`[tripsafe] ${endpoint} failed`, err);
     await Promise.all([
       store(),
-      logSupplierCall(db, {
+      logSupplierCall(c.get("logs"), {
         ...base, level: "ERROR",
         httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
         errorCode: String(err?.code ?? "TRIPSAFE_ERROR"),
@@ -285,9 +285,10 @@ async function exchangeFiles(env: Env, rows: (typeof supplierExchanges.$inferSel
 }
 
 // Summary + request / response files (TripJack names) for one TripSafe booking.
-export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, folder = ""): Promise<PackFile[]> {
+export async function tripsafePack(env: Env, record: TripsafeRecord, folder = ""): Promise<PackFile[]> {
   const host = tripjackHost(record.environment);
-  const all = await db.select().from(supplierExchanges).where(and(
+  const logs = createLogsDb(env.LOGS_DB);
+  const all = !logs ? [] : await logs.select().from(supplierExchanges).where(and(
     eq(supplierExchanges.tenantId, record.tenantId),
     like(supplierExchanges.endpoint, "/insurance/%"),
     record.searchIds.length
@@ -328,16 +329,18 @@ export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, fol
 }
 
 // Any TripSafe exchanges by ID (e.g. the negative validation case, which never becomes a booking).
-export async function exchangesPack(env: Env, db: Db, tenantId: string, ids: string[], environment: "UAT" | "PRODUCTION"): Promise<PackFile[]> {
-  if (!ids.length) return [];
-  const rows = await db.select().from(supplierExchanges).where(and(
+export async function exchangesPack(env: Env, tenantId: string, ids: string[], environment: "UAT" | "PRODUCTION"): Promise<PackFile[]> {
+  const logs = createLogsDb(env.LOGS_DB);
+  if (!ids.length || !logs) return [];
+  const rows = await logs.select().from(supplierExchanges).where(and(
     eq(supplierExchanges.tenantId, tenantId), like(supplierExchanges.endpoint, "/insurance/%"), inList(supplierExchanges.id, ids),
   )).orderBy(asc(supplierExchanges.startedAt));
   return exchangeFiles(env, rows, tripjackHost(environment), "");
 }
 
-export async function recentExchanges(db: Db, tenantId: string, limit = 200) {
-  return db.select({
+export async function recentExchanges(logs: LogsDb | null, tenantId: string, limit = 200) {
+  if (!logs) return [];
+  return logs.select({
     id: supplierExchanges.id, endpoint: supplierExchanges.endpoint, httpStatus: supplierExchanges.httpStatus,
     durationMs: supplierExchanges.durationMs, error: supplierExchanges.error, bookingId: supplierExchanges.bookingId,
     searchId: supplierExchanges.searchId, startedAt: supplierExchanges.startedAt, hasResponse: supplierExchanges.responseKey,

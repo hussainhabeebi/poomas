@@ -2,6 +2,8 @@
 
 The API's database moved from Neon Postgres to **Cloudflare D1** (SQLite), so the
 whole backend now runs on Cloudflare: Workers, D1, KV, R2, Queues and Durable Objects.
+There are two D1 databases: `poomas-db` (binding `DB`, everything) and `poomas-logs`
+(binding `LOGS_DB`, supplier/email logs and agency activity, `packages/db/src/logs`).
 
 - Schema: `packages/db/src/schema` (Drizzle `sqlite-core`)
 - Migrations: `packages/db/migrations` (applied by wrangler; tracked in D1's `d1_migrations` table)
@@ -10,18 +12,12 @@ whole backend now runs on Cloudflare: Workers, D1, KV, R2, Queues and Durable Ob
 
 ## One-time switch-over
 
-1. **Create the database** and paste its id into `apps/api/wrangler.toml`
-   (`database_id = "REPLACE_WITH_D1_DATABASE_ID"`):
+1. **Database + tables are automatic.** On every push to `main` the deploy workflow
+   creates `poomas-db` if it doesn't exist, fills its id into `wrangler.toml` and applies
+   the migrations. The `CLOUDFLARE_API_TOKEN` secret needs **D1 Edit** permission.
 
-   ```bash
-   cd apps/api && pnpm exec wrangler d1 create poomas-db
-   ```
-
-2. **Create the tables:**
-
-   ```bash
-   pnpm db:migrate
-   ```
+2. *(Only for running commands from your machine)* put the id from
+   `wrangler d1 list` into `apps/api/wrangler.toml` (`REPLACE_WITH_D1_DATABASE_ID`).
 
 3. **Copy the data from Neon.** Neon must answer queries for this step: while the
    project is over its quota, wait for the monthly reset or upgrade for one day.
@@ -35,7 +31,7 @@ whole backend now runs on Cloudflare: Workers, D1, KV, R2, Queues and Durable Ob
    The import replaces the seed rows with the real data (same ids, so existing
    sessions and links keep working).
 
-4. **Deploy** the API (`git push` to `main`, or `pnpm deploy:api`), then remove the old
+4. Remove the old
    secret: `pnpm exec wrangler secret delete DATABASE_URL`. The Hyperdrive config
    can also be deleted in the Cloudflare dashboard.
 

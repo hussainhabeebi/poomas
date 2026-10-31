@@ -20,6 +20,7 @@ import { and, eq } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import { collectExchanges, persistExchanges, persistInBackground, type ExchangeCollector } from "../lib/api-exchanges.js";
 import { passengerNameProblem } from "../lib/passenger-names.js";
+import { passengerDateProblems } from "../../../../packages/types/src/passport-dates.js";
 import { fallbackHoldDeadline, findHoldDeadline, holdLabel } from "../lib/fare-hold.js";
 import { parseBookingDetails } from "../lib/trips.js";
 import { emailShell, escapeHtml, money, notifyCustomer, WEB_URL } from "../lib/customer-notify.js";
@@ -36,7 +37,7 @@ const passengerSchema = z.object({
   passportNumber:  z.string().optional(),
   passportExpiry:  z.string().optional(),
   passportCountry: z.string().max(2).optional(),
-  passportIssueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  passportIssueDate: z.string().optional(),
   panNumber:       z.string().regex(/^[A-Za-z]{5}\d{4}[A-Za-z]$/, "PAN must look like ABCDE1234F").optional(),
   documentId:      z.string().regex(/^[A-Za-z0-9]{3,30}$/, "Document ID must be letters and digits only").optional(),
   ssr: z.object({
@@ -46,6 +47,9 @@ const passengerSchema = z.object({
     seat:    z.array(ssrPick).max(6).optional(),
   }).optional(),
 }).superRefine((p, ctx) => {
+  for (const [field, message] of Object.entries(passengerDateProblems(p))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
+  }
   for (const [field, label] of [["firstName", "First name"], ["lastName", "Last name"]] as const) {
     const problem = passengerNameProblem(p[field], label);
     if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: problem });
@@ -123,7 +127,7 @@ bookDirectRoutes.use("/", async (c, next) => {
   const collector = collectExchanges();
   (c as any).set("exchanges", collector);
   await next();
-  persistInBackground(c, persistExchanges(c.env, c.get("db"), c.get("tenantId"), collector.exchanges, {
+  persistInBackground(c, persistExchanges(c.env, c.get("tenantId"), collector.exchanges, {
     bookingId: (c as any).get("exchangeBookingId") ?? null,
     searchId: (c as any).get("exchangeSearchId") ?? null,
     requestId: (c as any).get("exchangeRequestId") ?? null,
@@ -155,8 +159,8 @@ bookDirectRoutes.post("/review", zValidator("json", z.object({
     const ttl = Math.max(60, Math.min(summary.conditions.sessionSeconds ?? 900, 1800));
     await c.env.SESSIONS_KV.put(REVIEW_KEY(tenantId, summary.bookingId),
       JSON.stringify({ priceIds, summary, createdAt: new Date().toISOString() } satisfies StoredReview), { expirationTtl: ttl });
-    persistInBackground(c, persistExchanges(c.env, db, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
-    runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+    persistInBackground(c, persistExchanges(c.env, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
+    runInBackground(c, logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
       httpStatus: 200, level: summary.totalFare ? "INFO" : "WARN", requestId,
       requestSummary: { priceIds, bookingId: summary.bookingId, tf: summary.totalFare, conditions: summary.conditions,
         fareIdentifiers: summary.fareIdentifiers, fareAlert: summary.fareAlert, ssrSegments: summary.segments.filter((s) => s.ssr.baggage.length || s.ssr.meal.length).length },
@@ -169,8 +173,8 @@ bookDirectRoutes.post("/review", zValidator("json", z.object({
       : undefined;
     return c.json({ ...summary, displayTotal, expiresAt: new Date(Date.now() + ttl * 1000).toISOString(), requestId });
   } catch (err: any) {
-    persistInBackground(c, persistExchanges(c.env, db, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
-    runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+    persistInBackground(c, persistExchanges(c.env, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
+    runInBackground(c, logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
       httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined, level: "ERROR", requestId: err?.requestId ?? requestId,
       requestSummary: { priceIds, supplierErrorCodes: err?.supplierErrorCodes }, errorCode: err?.code,
       errorMessage: err?.supplierMessage ? `${err.message} — TripJack: ${err.supplierMessage}` : err?.message,
@@ -205,12 +209,12 @@ bookDirectRoutes.post("/seat-map", zValidator("json", z.object({ reviewBookingId
     const segments = parseTripjackSeatMap(raw);
     const ttl = Math.max(60, Math.min(stored.summary.conditions.sessionSeconds ?? 900, 1800));
     if (segments.length) await c.env.SESSIONS_KV.put(SEAT_MAP_KEY(tenantId, reviewBookingId), JSON.stringify(segments), { expirationTtl: ttl });
-    persistInBackground(c, persistExchanges(c.env, c.get("db"), tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
+    persistInBackground(c, persistExchanges(c.env, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
     if (!segments.length) return c.json({ errorCode: "SEAT_MAP_EMPTY", error: "The airline hasn't released seats for this flight yet." }, 404);
     return c.json({ segments });
   } catch (err: any) {
-    persistInBackground(c, persistExchanges(c.env, c.get("db"), tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
-    runInBackground(c, logSupplierCall(c.get("db"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/seat", level: "ERROR", requestId,
+    persistInBackground(c, persistExchanges(c.env, tenantId, collector.exchanges, { searchId: searchId ?? null, requestId }));
+    runInBackground(c, logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/seat", level: "ERROR", requestId,
       httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined, requestSummary: { bookingId: reviewBookingId },
       errorCode: err?.code ?? "SEAT_MAP_FAILED", errorMessage: err?.message, responseSnippet: err?.responseSnippet }));
     return c.json({ errorCode: "SEAT_MAP_FAILED", error: "Seat map is unavailable right now." }, 502);
@@ -239,7 +243,7 @@ bookDirectRoutes.get("/held/:id", async (c) => {
 bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   if (!result.success) {
     const nameIssue = result.error.issues.find((i) => i.path.includes("firstName") || i.path.includes("lastName"))
-      ?? result.error.issues.find((i) => ["panNumber", "documentId", "gstNumber", "registeredName", "passportIssueDate"].some((f) => i.path.includes(f)));
+      ?? result.error.issues.find((i) => ["panNumber", "documentId", "gstNumber", "registeredName", "passportIssueDate", "passportExpiry", "dob"].some((f) => i.path.includes(f)));
     return c.json({ errorCode: "BOOKING_DETAILS_INVALID", ...(nameIssue ? { error: nameIssue.message } : {}) }, 400);
   }
 }), async (c) => {
@@ -336,7 +340,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
         console.warn("[book-review] TF not found; payable booking will be rejected. rr keys:",
           JSON.stringify(Object.keys(rr ?? {})), "snippet:", JSON.stringify(rr).slice(0, 500));
       }
-      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+      void logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
         httpStatus: 200, level: reviewPaymentAmount ? "INFO" : "WARN", requestId,
         requestSummary: { fareId: body.fareId, bookingId: review.bookingId, tf: reviewPaymentAmount,
           tfMissing: !reviewPaymentAmount || undefined },
@@ -345,7 +349,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     } catch (err: any) {
       console.error("[book-review]", JSON.stringify({ code: err?.code, requestId: err?.requestId }));
       // waitUntil: a bare promise can be cancelled once the response is sent.
-      runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
+      runInBackground(c, logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/fms/v1/review",
         httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
         level: "ERROR", requestId: err?.requestId ?? requestId,
         requestSummary: { fareId: body.fareId, supplierErrorCodes: err?.supplierErrorCodes },
@@ -430,11 +434,11 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
           until ??= findHoldDeadline(details);
         } catch { /* the PNR also shows later in My Trips */ }
         hold = { ref: held.bookingRef, pnr, until: until ?? fallbackHoldDeadline(new Date(body.departureDate)) };
-        runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book", level: "INFO", requestId,
+        runInBackground(c, logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book", level: "INFO", requestId,
           requestSummary: { bookingId: hold.ref, hold: true, pnr: hold.pnr, holdUntil: hold.until.toISOString(), deadlineFromSupplier: Boolean(until) },
           durationMs: Date.now() - holdStart }));
       } catch (err: any) {
-        runInBackground(c, logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book", level: "ERROR", requestId,
+        runInBackground(c, logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book", level: "ERROR", requestId,
           httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
           requestSummary: { bookingId: bookingSessionId, hold: true },
           responseSnippet: err?.responseSnippet, errorCode: "HOLD_FAILED",
@@ -561,7 +565,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   }
 
   // Log that a book attempt is being made — written before the call so CF timeout can't swallow it.
-  void logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+  void logSupplierCall(c.get("logs"), { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
     level: "INFO", requestId,
     requestSummary: { bookingId: bookingSessionId, fareId: body.fareId,
       origin: body.origin, destination: body.destination, paxCount: body.passengers.length,
@@ -587,7 +591,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     const status = Number(err?.statusCode);
     const isTimeout = err?.name === "TimeoutError" || err?.name === "AbortError" || /timeout/i.test(String(err?.message));
     if (status === 409) {
-      c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+      c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
         httpStatus: 409, level: "ERROR", requestId,
         requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination },
         errorCode: "FARE_EXPIRED", errorMessage: "Booking session expired", durationMs: Date.now() - bookStart }));
@@ -598,7 +602,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       ? (err as any).supplierDetail.trim() : undefined;
     const errorCode = isTimeout ? "BOOK_TIMEOUT" : rejected ? "BOOKING_REJECTED" : "BOOKING_STATUS_UNKNOWN";
     console.error("[book-submit]", JSON.stringify({ requestId, httpStatus: status || null, code: errorCode }));
-    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+    c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
       httpStatus: status || undefined, level: "ERROR", requestId,
       requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
       errorCode,
@@ -613,7 +617,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
     const orderMsg = String(raw?.data?.order?.statusMessage ?? raw?.data?.statusMessage ?? "");
     const topMsg   = String(raw?.status?.statusMessage ?? "");
     console.error("[book-rejected]", JSON.stringify({ requestId, orderMsg, topMsg, paymentAmount: reviewPaymentAmount ?? body.totalFare, raw: JSON.stringify(raw).slice(0, 600) }));
-    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
+    c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "/oms/v1/air/book",
       httpStatus: 200, level: "ERROR", requestId,
       requestSummary: { bookingId: bookingSessionId, origin: body.origin, destination: body.destination, paxCount: body.passengers.length },
       responseSnippet: JSON.stringify(raw).slice(0, 800),
@@ -676,7 +680,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error("[book-save]", JSON.stringify({ requestId, bookingReference: result.bookingRef, error: errMsg }));
-    c.executionCtx.waitUntil(logSupplierCall(db, { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "db:bookings:insert",
+    c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), { tenantId, supplier: body.supplier as "TRIPJACK", endpoint: "db:bookings:insert",
       level: "ERROR", requestId,
       requestSummary: { bookingRef: result.bookingRef, pnr: result.pnr },
       errorCode: "DB_WRITE_FAILED", errorMessage: errMsg }));

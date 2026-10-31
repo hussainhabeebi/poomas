@@ -185,18 +185,6 @@ CREATE TABLE `users` (
 CREATE UNIQUE INDEX `users_tenant_email_idx` ON `users` (`tenant_id`,`email`);--> statement-breakpoint
 CREATE UNIQUE INDEX `users_tenant_phone_idx` ON `users` (`tenant_id`,`phone`);--> statement-breakpoint
 CREATE UNIQUE INDEX `users_tenant_social_idx` ON `users` (`tenant_id`,`social_provider`,`social_subject`);--> statement-breakpoint
-CREATE TABLE `agent_activity_daily` (
-	`agent_id` text NOT NULL,
-	`day` text NOT NULL,
-	`tenant_id` text NOT NULL,
-	`searches` integer DEFAULT 0 NOT NULL,
-	`checkouts` integer DEFAULT 0 NOT NULL,
-	PRIMARY KEY(`agent_id`, `day`),
-	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
-CREATE INDEX `agent_activity_daily_tenant_idx` ON `agent_activity_daily` (`tenant_id`,`day`);--> statement-breakpoint
 CREATE TABLE `agent_documents` (
 	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
 	`agent_id` text NOT NULL,
@@ -484,6 +472,32 @@ CREATE TABLE `commissions` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `commissions_booking_id_idx` ON `commissions` (`booking_id`);--> statement-breakpoint
+CREATE TABLE `customer_wallet_deposits` (
+	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
+	`tenant_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`wallet_account_id` text NOT NULL,
+	`amount` numeric NOT NULL,
+	`currency` text NOT NULL,
+	`credit_amount` numeric,
+	`method` text DEFAULT 'BANK_TRANSFER' NOT NULL,
+	`reference` text,
+	`paid_on` text,
+	`bank_account` text,
+	`attachments` text DEFAULT '[]' NOT NULL,
+	`status` text DEFAULT 'PENDING' NOT NULL,
+	`admin_note` text,
+	`reviewed_by_id` text,
+	`reviewed_at` text,
+	`created_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) NOT NULL,
+	`updated_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) NOT NULL,
+	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`wallet_account_id`) REFERENCES `wallet_accounts`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `customer_wallet_deposits_queue_idx` ON `customer_wallet_deposits` (`tenant_id`,`status`,`created_at`);--> statement-breakpoint
+CREATE INDEX `customer_wallet_deposits_user_idx` ON `customer_wallet_deposits` (`user_id`,`created_at`);--> statement-breakpoint
 CREATE TABLE `payments` (
 	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
 	`booking_id` text NOT NULL,
@@ -628,44 +642,6 @@ CREATE TABLE `promo_codes` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `promo_codes_tenant_code_idx` ON `promo_codes` (`tenant_id`,`code`);--> statement-breakpoint
-CREATE TABLE `supplier_api_logs` (
-	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
-	`tenant_id` text NOT NULL,
-	`supplier` text NOT NULL,
-	`endpoint` text NOT NULL,
-	`http_status` integer,
-	`level` text DEFAULT 'INFO' NOT NULL,
-	`request_id` text,
-	`request_summary` text,
-	`response_snippet` text,
-	`error_code` text,
-	`error_message` text,
-	`duration_ms` integer,
-	`created_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) NOT NULL,
-	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
-CREATE INDEX `supplier_api_logs_tenant_time_idx` ON `supplier_api_logs` (`tenant_id`,`created_at`);--> statement-breakpoint
-CREATE INDEX `supplier_api_logs_level_idx` ON `supplier_api_logs` (`tenant_id`,`level`,`created_at`);--> statement-breakpoint
-CREATE TABLE `supplier_exchanges` (
-	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
-	`tenant_id` text NOT NULL,
-	`booking_id` text,
-	`search_id` text,
-	`request_id` text,
-	`supplier` text NOT NULL,
-	`endpoint` text NOT NULL,
-	`url` text NOT NULL,
-	`http_status` integer,
-	`duration_ms` integer,
-	`error` text,
-	`request_key` text NOT NULL,
-	`response_key` text,
-	`started_at` text NOT NULL,
-	`created_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) NOT NULL,
-	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
 CREATE TABLE `tenant_supplier_configs` (
 	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
 	`tenant_id` text NOT NULL,
@@ -702,18 +678,4 @@ CREATE TABLE `audit_logs` (
 --> statement-breakpoint
 CREATE INDEX `audit_logs_entity_idx` ON `audit_logs` (`tenant_id`,`entity`,`entity_id`);--> statement-breakpoint
 CREATE INDEX `audit_logs_user_idx` ON `audit_logs` (`tenant_id`,`user_id`);--> statement-breakpoint
-CREATE INDEX `audit_logs_time_idx` ON `audit_logs` (`tenant_id`,`created_at`);--> statement-breakpoint
-CREATE TABLE `email_logs` (
-	`id` text PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))) NOT NULL,
-	`tenant_id` text,
-	`to_email` text NOT NULL,
-	`subject` text NOT NULL,
-	`category` text NOT NULL,
-	`status` text NOT NULL,
-	`provider_id` text,
-	`error` text,
-	`created_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) NOT NULL,
-	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
-CREATE INDEX `email_logs_tenant_idx` ON `email_logs` (`tenant_id`,`created_at`);
+CREATE INDEX `audit_logs_time_idx` ON `audit_logs` (`tenant_id`,`created_at`);

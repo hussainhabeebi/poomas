@@ -41,17 +41,7 @@ export const agents = sqliteTable("agents", {
   numberIdx: uniqueIndex("agents_tenant_number_idx").on(t.tenantId, t.agentNumber),
 }));
 
-// Daily searches / checkout links per agency (Leadvyne Live Agency analytics).
-export const agentActivityDaily = sqliteTable("agent_activity_daily", {
-  agentId:   text("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
-  day:       date("day").notNull(),
-  tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  searches:  integer("searches").notNull().default(0),
-  checkouts: integer("checkouts").notNull().default(0),
-}, (t) => ({
-  pk: primaryKey({ columns: [t.agentId, t.day] }),
-  tenantIdx: index("agent_activity_daily_tenant_idx").on(t.tenantId, t.day),
-}));
+// agent_activity_daily lives in the D1 logs database (src/logs/schema.ts).
 
 export const agentDocuments = sqliteTable("agent_documents", {
   id:      uuidPk(),

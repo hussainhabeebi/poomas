@@ -6,7 +6,8 @@
 // searches, checkout links and bookings.
 
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { agentActivityDaily, agents } from "@poomas/db/schema";
+import { agents } from "@poomas/db/schema";
+import { agentActivityDaily, type LogsDb } from "@poomas/db/logs";
 import type { Env, Variables } from "../types.js";
 import type { DisplayCurrency } from "./fx.js";
 
@@ -80,10 +81,11 @@ export function agentNumberFrom(c: { req: { header(n: string): string | undefine
   return normalizeAgentNumber(c.req.header("X-FP-Agent") ?? b.agentNumber ?? b.agent_number ?? null);
 }
 
-// +1 search or checkout link for today (UTC).
-export async function trackAgentActivity(db: Db, tenantId: string, agentId: string, field: "searches" | "checkouts") {
+// +1 search or checkout link for today (UTC), in the D1 logs database.
+export async function trackAgentActivity(logs: LogsDb | null, tenantId: string, agentId: string, field: "searches" | "checkouts") {
+  if (!logs) return;
   const day = new Date().toISOString().slice(0, 10);
-  await db.insert(agentActivityDaily).values({ agentId, tenantId, day, searches: field === "searches" ? 1 : 0, checkouts: field === "checkouts" ? 1 : 0 })
+  await logs.insert(agentActivityDaily).values({ agentId, tenantId, day, searches: field === "searches" ? 1 : 0, checkouts: field === "checkouts" ? 1 : 0 })
     .onConflictDoUpdate({
       target: [agentActivityDaily.agentId, agentActivityDaily.day],
       set: field === "searches" ? { searches: sql`${agentActivityDaily.searches} + 1` } : { checkouts: sql`${agentActivityDaily.checkouts} + 1` },

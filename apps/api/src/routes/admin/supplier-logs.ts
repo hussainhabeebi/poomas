@@ -1,6 +1,6 @@
 import { Hono } from "hono";
+import { supplierApiLogs, supplierExchanges } from "@poomas/db/logs";
 import { inList } from "@poomas/db";
-import { supplierApiLogs, supplierExchanges } from "@poomas/db/schema";
 import { eq, and, desc, gte, inArray, like, lte, or, asc } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { buildZip } from "../../lib/zip.js";
@@ -12,8 +12,10 @@ import { zValidator } from "@hono/zod-validator";
 
 export const supplierLogsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+// Supplier logs live in the D1 logs database; without the LOGS_DB binding the lists are empty.
+
 supplierLogsAdminRoutes.get("/", async (c) => {
-  const db       = c.get("db");
+  const db       = c.get("logs");
   const tenantId = c.get("tenantId");
   const role     = c.get("userRole");
 
@@ -45,6 +47,7 @@ supplierLogsAdminRoutes.get("/", async (c) => {
   if (from)     conditions.push(gte(supplierApiLogs.createdAt, new Date(from)));
   if (to)       conditions.push(lte(supplierApiLogs.createdAt, new Date(to)));
 
+  if (!db) return c.json({ logs: [], limit, offset });
   try {
     const rows = await db
       .select()
@@ -63,7 +66,7 @@ supplierLogsAdminRoutes.get("/", async (c) => {
 
 // GET /api/admin/supplier-logs/export — download TripJack API logs as JSON (UAT submission)
 supplierLogsAdminRoutes.get("/export", async (c) => {
-  const db       = c.get("db");
+  const db       = c.get("logs");
   const tenantId = c.get("tenantId");
   const role     = c.get("userRole");
   const supplier = (c.req.query("supplier") ?? "TRIPJACK") as "TRIPJACK" | "RIYA";
@@ -82,12 +85,12 @@ supplierLogsAdminRoutes.get("/export", async (c) => {
   if (from) conditions.push(gte(supplierApiLogs.createdAt, new Date(from)));
   if (to)   conditions.push(lte(supplierApiLogs.createdAt, new Date(to)));
 
-  const rows = await db
+  const rows = db ? await db
     .select()
     .from(supplierApiLogs)
     .where(and(...conditions))
     .orderBy(desc(supplierApiLogs.createdAt))
-    .limit(500);
+    .limit(500) : [];
 
   const filename = `${supplier.toLowerCase()}-logs-${new Date().toISOString().slice(0, 10)}.json`;
   return new Response(JSON.stringify({ exportedAt: new Date().toISOString(), supplier, count: rows.length, logs: rows }, null, 2), {
@@ -121,7 +124,8 @@ const serviceName = (endpoint: string) => endpoint.replace(/^\/(hms|oms|fms)\/v\
   .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("") || "Call";
 
 supplierLogsAdminRoutes.get("/exchanges", async (c) => {
-  const db = c.get("db");
+  const db = c.get("logs");
+  if (!db) return c.json({ exchanges: [] });
   const scope = c.req.query("scope");
   const onlyErrors = c.req.query("errors") === "1";
   const limit = Math.min(parseInt(c.req.query("limit") ?? "100") || 100, 300);
@@ -142,7 +146,9 @@ supplierLogsAdminRoutes.get("/exchanges", async (c) => {
 });
 
 async function exchangeFile(c: any, id: string, part: "request" | "response") {
-  const [x] = await c.get("db").select().from(supplierExchanges)
+  const logs = c.get("logs") as Variables["logs"];
+  if (!logs) return null;
+  const [x] = await logs.select().from(supplierExchanges)
     .where(and(eq(supplierExchanges.id, id), eq(supplierExchanges.tenantId, c.get("tenantId")))).limit(1);
   const key = part === "request" ? x?.requestKey : x?.responseKey;
   if (!x || !key) return null;
@@ -169,8 +175,9 @@ supplierLogsAdminRoutes.get("/exchanges.zip", async (c) => {
   if (!ids.length) throw new HTTPException(400, { message: "Pass ?ids=" });
   const files: { name: string; data: Uint8Array; date: Date }[] = [];
   const used = new Map<string, number>();
-  const rows = await c.get("db").select({ id: supplierExchanges.id }).from(supplierExchanges)
-    .where(and(eq(supplierExchanges.tenantId, c.get("tenantId")), inList(supplierExchanges.id, ids))).orderBy(asc(supplierExchanges.startedAt));
+  const logs = c.get("logs");
+  const rows = logs ? await logs.select({ id: supplierExchanges.id }).from(supplierExchanges)
+    .where(and(eq(supplierExchanges.tenantId, c.get("tenantId")), inList(supplierExchanges.id, ids))).orderBy(asc(supplierExchanges.startedAt)) : [];
   for (const { id } of rows) {
     for (const part of ["request", "response"] as const) {
       const f = await exchangeFile(c, id, part);

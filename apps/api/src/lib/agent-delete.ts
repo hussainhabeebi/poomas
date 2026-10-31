@@ -5,8 +5,8 @@
 // instead. Anything else — logins, wallet with no movements, markup overrides,
 // documents, requests, quotes, travellers, analytics — is removed with it.
 
-import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { inList } from "@poomas/db";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import {
   agents, auditLogs, bookingAmendments, bookings, commissions, markupRules, supportRequests,
   users, walletAccounts, walletCoupons, walletTransactions,
@@ -15,6 +15,7 @@ import type { Db } from "@poomas/db";
 import type { Env } from "../types.js";
 import { forgetAgentNumber } from "./agent-number.js";
 import { audit } from "./agent-program.js";
+import { forgetMarkupRules } from "./markup-rules.js";
 
 export type DeleteAgentResult =
   | { ok: true; businessName: string }
@@ -55,6 +56,7 @@ export async function deleteAgent(
   }
 
   await db.delete(markupRules).where(eq(markupRules.agentId, a.id));
+  await forgetMarkupRules(env, a.tenantId);
   if (walletIds.length) await db.delete(walletAccounts).where(inList(walletAccounts.id, walletIds));
   if (staffIds.length) {
     // Keep the history these logins left behind, without the user link.

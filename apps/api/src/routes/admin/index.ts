@@ -17,6 +17,7 @@ import { apiKeysAdminRoutes }      from "./api-keys.js";
 import { markupAdminRoutes }       from "./markup.js";
 import { supplierLogsAdminRoutes } from "./supplier-logs.js";
 import { customerWalletsAdminRoutes } from "./customer-wallets.js";
+import { customerDepositsAdminRoutes } from "./customer-deposits.js";
 import { cancellationsAdminRoutes, supportAdminRoutes } from "./post-booking.js";
 import { agentProgramAdminRoutes } from "./agent-program.js";
 import { leadvyneAgentsAdminRoutes } from "./leadvyne-agents.js";
@@ -63,6 +64,7 @@ adminRoutes.route("/api-keys",       apiKeysAdminRoutes);
 adminRoutes.route("/markup",         markupAdminRoutes);
 adminRoutes.route("/supplier-logs",  supplierLogsAdminRoutes);
 adminRoutes.route("/customer-wallets", customerWalletsAdminRoutes);
+adminRoutes.route("/customer-deposits", customerDepositsAdminRoutes);
 adminRoutes.route("/cancellations", cancellationsAdminRoutes);
 adminRoutes.route("/support-requests", supportAdminRoutes);
 

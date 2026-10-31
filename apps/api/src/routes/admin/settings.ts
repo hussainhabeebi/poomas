@@ -18,7 +18,7 @@ import { z } from "zod";
 import type { Env, Variables } from "../../types.js";
 import { RAZORPAY_ENABLED } from "../../lib/payment-gateway.js";
 import { DEFAULT_EMAIL_SETTINGS, emailLayout, getEmailSettings, resendKey, saveEmailSettings, sendMail } from "../../lib/email.js";
-import { emailLogs } from "@poomas/db/schema";
+import { emailLogs } from "@poomas/db/logs";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { FOREIGN_CURRENCIES, getFx, getFxSettings, readAutoRates, refreshAutoRates, saveFxSettings, type FxSettings } from "../../lib/fx.js";
 
@@ -279,11 +279,12 @@ settingsAdminRoutes.get("/email", async (c) => {
   const tenantId = c.get("tenantId");
   const s = await getEmailSettings(c.env, tenantId);
   const since = new Date(Date.now() - 7 * 86_400_000);
-  const [stats] = await c.get("db").select({
-    sent: sql<number>`count(*) filter (where ${emailLogs.status} = 'SENT')`,
-    failed: sql<number>`count(*) filter (where ${emailLogs.status} = 'FAILED')`,
-    skipped: sql<number>`count(*) filter (where ${emailLogs.status} = 'SKIPPED')`,
-  }).from(emailLogs).where(and(eq(emailLogs.tenantId, tenantId), gte(emailLogs.createdAt, since))).catch(() => [{ sent: 0, failed: 0, skipped: 0 }]);
+  const logs = c.get("logs");
+  const [stats] = logs ? await logs.select({
+    sent: sql<number>`coalesce(sum(case when ${emailLogs.status} = 'SENT' then 1 else 0 end), 0)`,
+    failed: sql<number>`coalesce(sum(case when ${emailLogs.status} = 'FAILED' then 1 else 0 end), 0)`,
+    skipped: sql<number>`coalesce(sum(case when ${emailLogs.status} = 'SKIPPED' then 1 else 0 end), 0)`,
+  }).from(emailLogs).where(and(eq(emailLogs.tenantId, tenantId), gte(emailLogs.createdAt, since))).catch(() => [{ sent: 0, failed: 0, skipped: 0 }]) : [];
   return c.json({
     settings: { ...s, apiKey: "" },
     apiKeyMasked: maskKey(s.apiKey),
@@ -328,8 +329,9 @@ settingsAdminRoutes.post("/email/test", zValidator("json", z.object({ to: z.stri
 
 settingsAdminRoutes.get("/email/logs", async (c) => {
   const status = c.req.query("status");
-  const rows = await c.get("db").select().from(emailLogs)
+  const logs = c.get("logs");
+  const rows = logs ? await logs.select().from(emailLogs)
     .where(and(eq(emailLogs.tenantId, c.get("tenantId")), status ? eq(emailLogs.status, status) : undefined))
-    .orderBy(desc(emailLogs.createdAt)).limit(100);
+    .orderBy(desc(emailLogs.createdAt)).limit(100) : [];
   return c.json({ logs: rows });
 });

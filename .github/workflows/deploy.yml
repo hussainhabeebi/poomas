@@ -11,7 +11,6 @@ env:
 jobs:
   deploy-api:
     name: Deploy API Worker
-    needs: migrate-db
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -27,29 +26,48 @@ jobs:
         working-directory: .
       - run: pnpm --filter @poomas/api typecheck
         working-directory: .
+      # D1 main database: create it once, point wrangler.toml at it, apply migrations.
+      # Unlike the logs database this is required — the deploy stops if it fails.
+      - name: Prepare D1 main database
+        run: |
+          set -euo pipefail
+          find_id() { pnpm exec wrangler d1 list --json | jq -r '.[] | select(.name == "poomas-db") | .uuid' | head -n1; }
+          id="$(find_id)"
+          if [ -z "$id" ]; then
+            pnpm exec wrangler d1 create poomas-db --update-config=false
+            id="$(find_id)"
+          fi
+          [ -n "$id" ] || { echo "Could not find or create the poomas-db D1 database"; exit 1; }
+          sed -i "s/^database_id       = .*/database_id       = \"$id\"/" wrangler.toml
+          pnpm exec wrangler d1 migrations apply DB --remote
+      # D1 logs database: create it once, point wrangler.toml at it, apply migrations.
+      # Never blocks the deploy — without D1 the API runs with log writes skipped.
+      - name: Prepare D1 logs database
+        id: d1
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          find_id() { pnpm exec wrangler d1 list --json | jq -r '.[] | select(.name == "poomas-logs") | .uuid' | head -n1; }
+          id="$(find_id)"
+          if [ -z "$id" ]; then
+            pnpm exec wrangler d1 create poomas-logs --update-config=false
+            id="$(find_id)"
+          fi
+          [ -n "$id" ] || { echo "Could not find or create the poomas-logs D1 database"; exit 1; }
+          sed -i "s/^database_id    = .*/database_id    = \"$id\"/" wrangler.toml
+          pnpm exec wrangler d1 migrations apply LOGS_DB --remote
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Deploy without D1 (logging skipped)
+        if: steps.d1.outputs.ready != 'true'
+        run: |
+          echo "::warning::D1 logs database unavailable (check the CLOUDFLARE_API_TOKEN has D1 Edit permission). Deploying without LOGS_DB."
+          python3 - <<'PY'
+          import re
+          s = open("wrangler.toml").read()
+          s = re.sub(r"\[\[d1_databases\]\]\nbinding\s*=\s*\"LOGS_DB\"\n(?:[^\n\[#]+\n)*", "", s)
+          open("wrangler.toml", "w").write(s)
+          PY
       - run: pnpm exec wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-  migrate-db:
-    name: Run D1 Migrations
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/api
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-        working-directory: .
-      # Applies packages/db/migrations to the D1 database bound as DB in wrangler.toml.
-      # Already-applied migrations are skipped (tracked in the d1_migrations table).
-      - run: pnpm exec wrangler d1 migrations apply poomas-db --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
