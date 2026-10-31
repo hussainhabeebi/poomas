@@ -9,6 +9,7 @@
 // agent gets its tier commission.
 
 import type { Db } from "@poomas/db";
+import { inList } from "@poomas/db";
 import { agents, auditLogs, bookings, commissions, walletAccounts, walletTransactions, users } from "@poomas/db/schema";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Env } from "../types.js";
@@ -110,7 +111,7 @@ export async function descendantIds(db: Db, tenantId: string, agentId: string): 
   let frontier = [agentId];
   for (let depth = 0; depth < 5 && frontier.length; depth++) {
     const rows = await db.select({ id: agents.id }).from(agents)
-      .where(and(eq(agents.tenantId, tenantId), inArray(agents.parentAgentId, frontier)));
+      .where(and(eq(agents.tenantId, tenantId), inList(agents.parentAgentId, frontier)));
     frontier = rows.map((r) => r.id).filter((x) => !all.includes(x));
     all.push(...frontier);
   }
@@ -178,8 +179,8 @@ export async function debitAgentWallet(db: Db, walletId: string, amount: number,
   const amt = roundMoney(amount);
   if (!(amt > 0)) throw new Error("Debit amount must be positive");
   const [row] = await db.update(walletAccounts)
-    .set({ balance: sql`${walletAccounts.balance} - ${amt}`, updatedAt: new Date() })
-    .where(and(eq(walletAccounts.id, walletId), sql`${walletAccounts.balance} + ${walletAccounts.creditLimit} >= ${amt}`))
+    .set({ balance: sql`round(${walletAccounts.balance} - ${amt}, 2)`, updatedAt: new Date() })
+    .where(and(eq(walletAccounts.id, walletId), sql`${walletAccounts.balance} + ${walletAccounts.creditLimit} >= cast(${amt} as real)`))
     .returning({ balance: walletAccounts.balance, agentId: walletAccounts.agentId });
   if (!row) return null;
   const after = Number(row.balance);
@@ -237,7 +238,7 @@ export async function assertAgentCanBook(env: Env, db: Db, tenantId: string, age
   if (credit.overdue) throw new AgentBlocked(`Your credit of ${money(credit.creditUsed, "INR")} was due on ${new Date(credit.dueAt!).toLocaleDateString("en-IN")}. Please top up to continue booking.`, "CREDIT_OVERDUE");
 
   const hourAgo = new Date(Date.now() - 3600_000);
-  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(bookings)
+  const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(bookings)
     .where(and(eq(bookings.agentId, agentId), gte(bookings.createdAt, hourAgo)));
   if (n >= program.maxBookingsPerHour) throw new AgentBlocked(`Booking limit reached (${program.maxBookingsPerHour} per hour). Please try again later or contact support.`, "VELOCITY_LIMIT");
 
@@ -245,12 +246,12 @@ export async function assertAgentCanBook(env: Env, db: Db, tenantId: string, age
     const dayAgo = new Date(Date.now() - 86_400_000);
     const recent = await db.select({ id: bookings.id, status: bookings.status }).from(bookings)
       .where(and(eq(bookings.agentId, agentId), eq(bookings.origin, trip.origin), eq(bookings.destination, trip.destination),
-        sql`${bookings.departureDate}::date = ${trip.departureDate}::date`, gte(bookings.createdAt, dayAgo),
+        sql`substr(${bookings.departureDate}, 1, 10) = substr(${trip.departureDate}, 1, 10)`, gte(bookings.createdAt, dayAgo),
         inArray(bookings.status, ["HELD", "PAYMENT_PENDING", "CONFIRMED", "TICKETED"])));
     if (recent.length) {
       const { bookingPassengers } = await import("@poomas/db/schema");
       const pax = await db.select({ first: bookingPassengers.firstName, last: bookingPassengers.lastName }).from(bookingPassengers)
-        .where(inArray(bookingPassengers.bookingId, recent.map((r) => r.id)));
+        .where(inList(bookingPassengers.bookingId, recent.map((r) => r.id)));
       const seen = new Set(pax.map((p) => `${p.first} ${p.last}`.toLowerCase().replace(/\s+/g, " ").trim()));
       const dup = trip.names.find((nm) => seen.has(nm.toLowerCase().replace(/\s+/g, " ").trim()));
       if (dup) throw new AgentBlocked(`${dup} already has a booking on this flight date (last 24 hours). Check your bookings to avoid a duplicate.`, "DUPLICATE_BOOKING");
@@ -293,7 +294,7 @@ export async function settleAgentBooking(env: Env, db: Db, booking: { id: string
 
 export async function monthlySales(db: Db, agentId: string, now = new Date()) {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const [row] = await db.select({ total: sql<string>`coalesce(sum(${bookings.totalAmount}), 0)` }).from(bookings)
+  const [row] = await db.select({ total: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` }).from(bookings)
     .where(and(eq(bookings.agentId, agentId), gte(bookings.createdAt, start), inArray(bookings.status, ["CONFIRMED", "TICKETED"])));
   return Number(row?.total ?? 0);
 }

@@ -1,4 +1,4 @@
-import type { KVNamespace, R2Bucket, Queue, Hyperdrive, DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { KVNamespace, R2Bucket, Queue, D1Database, DurableObjectNamespace } from "@cloudflare/workers-types";
 import type { Db } from "@poomas/db";
 
 export interface Env {
@@ -11,9 +11,8 @@ export interface Env {
   PUBLIC_ASSETS_R2: R2Bucket;
   BOOKING_QUEUE:    Queue;
   NOTIFY_QUEUE:     Queue;
-  HYPERDRIVE:       Hyperdrive;
+  DB:               D1Database;   // Cloudflare D1 (main database)
   TENANT_RATE_LIMITER: DurableObjectNamespace;
-  DATABASE_URL:           string;
   JWT_SECRET:             string;
   GOOGLE_CLIENT_ID?:      string;
   APPLE_CLIENT_ID?:       string;

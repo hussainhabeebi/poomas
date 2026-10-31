@@ -10,6 +10,7 @@
 // request / response files) linked to the reference or the TripJack searchId,
 // and summarised in Admin → Supplier logs.
 
+import { inList } from "@poomas/db";
 import {
   TripjackInsuranceClient, parseTripsafeBooking, tripsafeSearchBody, normalizeTripsafeProduct,
   type TripsafeTripInput, type TripsafeTraveller, type TripsafeBookResult, type TripsafeBookingDetails,
@@ -290,7 +291,7 @@ export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, fol
     eq(supplierExchanges.tenantId, record.tenantId),
     like(supplierExchanges.endpoint, "/insurance/%"),
     record.searchIds.length
-      ? or(eq(supplierExchanges.bookingId, record.reference), inArray(supplierExchanges.searchId, record.searchIds))
+      ? or(eq(supplierExchanges.bookingId, record.reference), inList(supplierExchanges.searchId, record.searchIds))
       : eq(supplierExchanges.bookingId, record.reference),
   )).orderBy(asc(supplierExchanges.startedAt));
   // One Search (the one the booking used), the Booking, every amendment, and
@@ -330,7 +331,7 @@ export async function tripsafePack(env: Env, db: Db, record: TripsafeRecord, fol
 export async function exchangesPack(env: Env, db: Db, tenantId: string, ids: string[], environment: "UAT" | "PRODUCTION"): Promise<PackFile[]> {
   if (!ids.length) return [];
   const rows = await db.select().from(supplierExchanges).where(and(
-    eq(supplierExchanges.tenantId, tenantId), like(supplierExchanges.endpoint, "/insurance/%"), inArray(supplierExchanges.id, ids),
+    eq(supplierExchanges.tenantId, tenantId), like(supplierExchanges.endpoint, "/insurance/%"), inList(supplierExchanges.id, ids),
   )).orderBy(asc(supplierExchanges.startedAt));
   return exchangeFiles(env, rows, tripjackHost(environment), "");
 }

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { inList } from "@poomas/db";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
@@ -187,7 +188,7 @@ agentRoutes.get("/sub-agents", async (c) => {
   // Each sub-account's own wallet and selling markup (set by this agent).
   const wallets = rows.length
     ? await db.select({ agentId: walletAccounts.agentId, balance: walletAccounts.balance, currency: walletAccounts.currency })
-      .from(walletAccounts).where(inArray(walletAccounts.agentId, rows.map((r) => r.id)))
+      .from(walletAccounts).where(inList(walletAccounts.agentId, rows.map((r) => r.id)))
     : [];
   const enriched = await Promise.all(rows.map(async (r) => {
     const w = wallets.find((x) => x.agentId === r.id);

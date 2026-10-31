@@ -280,9 +280,9 @@ settingsAdminRoutes.get("/email", async (c) => {
   const s = await getEmailSettings(c.env, tenantId);
   const since = new Date(Date.now() - 7 * 86_400_000);
   const [stats] = await c.get("db").select({
-    sent: sql<number>`count(*) filter (where ${emailLogs.status} = 'SENT')::int`,
-    failed: sql<number>`count(*) filter (where ${emailLogs.status} = 'FAILED')::int`,
-    skipped: sql<number>`count(*) filter (where ${emailLogs.status} = 'SKIPPED')::int`,
+    sent: sql<number>`count(*) filter (where ${emailLogs.status} = 'SENT')`,
+    failed: sql<number>`count(*) filter (where ${emailLogs.status} = 'FAILED')`,
+    skipped: sql<number>`count(*) filter (where ${emailLogs.status} = 'SKIPPED')`,
   }).from(emailLogs).where(and(eq(emailLogs.tenantId, tenantId), gte(emailLogs.createdAt, since))).catch(() => [{ sent: 0, failed: 0, skipped: 0 }]);
   return c.json({
     settings: { ...s, apiKey: "" },

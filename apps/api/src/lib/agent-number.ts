@@ -36,8 +36,8 @@ export function agentCurrency(a: { currency: string; settings?: unknown }): stri
 // Gives the agency the next free number (no-op if it already has one).
 export async function assignAgentNumber(db: Db, tenantId: string, agentId: string): Promise<string | null> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const [{ top }] = await db.select({ top: sql<number>`coalesce(max(substring(${agents.agentNumber} from 4)::int), 10000)` })
-      .from(agents).where(and(eq(agents.tenantId, tenantId), sql`${agents.agentNumber} ~ '^FPA[0-9]+$'`));
+    const [{ top }] = await db.select({ top: sql<number>`coalesce(max(cast(substr(${agents.agentNumber}, 4) as integer)), 10000)` })
+      .from(agents).where(and(eq(agents.tenantId, tenantId), sql`${agents.agentNumber} GLOB 'FPA[0-9]*' AND substr(${agents.agentNumber}, 4) NOT GLOB '*[^0-9]*'`));
     const next = `FPA${Number(top) + 1 + attempt}`;
     try {
       const [row] = await db.update(agents).set({ agentNumber: next })

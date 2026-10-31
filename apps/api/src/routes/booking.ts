@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { insertMany } from "@poomas/db";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
@@ -185,7 +186,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
         contactPhone:       body.contactPhone,
       }).returning();
 
-      await db.insert(bookingPassengers).values(
+      await insertMany(db, bookingPassengers, 
         paxValues.map((p) => ({ ...p, bookingId: booking!.id })),
       );
     } catch (err: unknown) {
@@ -246,7 +247,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
   }).returning();
 
   // Insert passengers
-  await db.insert(bookingPassengers).values(
+  await insertMany(db, bookingPassengers, 
     body.passengers.map((p) => ({
       bookingId:     booking.id,
       passengerType: p.type,

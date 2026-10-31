@@ -27,9 +27,9 @@ tenantsAdminRoutes.get("/:id", async (c) => {
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
   if (!tenant) throw new HTTPException(404, { message: "Tenant not found" });
   const [[bookingStats], [agentStats], suppliers] = await Promise.all([
-    db.select({ total: sql<number>`count(*)::int`, ticketed: sql<number>`count(*) filter (where ${bookings.status} = 'TICKETED')::int` })
+    db.select({ total: sql<number>`count(*)`, ticketed: sql<number>`count(*) filter (where ${bookings.status} = 'TICKETED')` })
       .from(bookings).where(eq(bookings.tenantId, id)),
-    db.select({ total: sql<number>`count(*)::int` }).from(agents).where(eq(agents.tenantId, id)),
+    db.select({ total: sql<number>`count(*)` }).from(agents).where(eq(agents.tenantId, id)),
     db.select({ supplier: tenantSupplierConfigs.supplier, isEnabled: tenantSupplierConfigs.isEnabled, priority: tenantSupplierConfigs.priority })
       .from(tenantSupplierConfigs).where(eq(tenantSupplierConfigs.tenantId, id)),
   ]);

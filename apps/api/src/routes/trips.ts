@@ -14,6 +14,7 @@
 //   GET  /itinerary            X-Trip-Token → itinerary HTML download
 
 import { emailCancellation } from "../lib/transactional-emails.js";
+import { inList } from "@poomas/db";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -69,7 +70,7 @@ customerTripRoutes.get("/", async (c) => {
   })
     .from(bookings)
     .where(and(eq(bookings.tenantId, c.get("tenantId")),
-      (c as any).get("agentScope") ? inArray(bookings.agentId, (c as any).get("agentScope") as string[]) : eq(bookings.userId, c.get("userId")!)))
+      (c as any).get("agentScope") ? inList(bookings.agentId, (c as any).get("agentScope") as string[]) : eq(bookings.userId, c.get("userId")!)))
     .orderBy(desc(bookings.createdAt))
     .limit(200);
   return c.json({ trips: rows.map((r) => ({ ...r, totalAmount: Number(r.totalAmount) })) });

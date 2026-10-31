@@ -1,11 +1,9 @@
-import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema/index.js";
 
-// Edge-compatible Neon client (used inside CF Workers via Hyperdrive)
-export function createDb(connectionString: string) {
-  const sql = neon(connectionString);
-  return drizzle(sql, { schema, logger: process.env.NODE_ENV !== "production" });
+// Cloudflare D1 (SQLite at the edge). Pass the Worker's D1 binding (env.DB).
+export function createDb(d1: D1Database) {
+  return drizzle(d1, { schema });
 }
 
 export type Db = ReturnType<typeof createDb>;

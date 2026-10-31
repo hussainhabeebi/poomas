@@ -2,6 +2,7 @@
 // TripJack and Riya support direct booking without an explicit hold step.
 
 import { Hono } from "hono";
+import { insertMany } from "@poomas/db";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
@@ -501,7 +502,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
       }).returning();
       (c as any).set("exchangeBookingId", pendingBooking?.id);
 
-      await db.insert(bookingPassengers).values(
+      await insertMany(db, bookingPassengers, 
         body.passengers.map((p) => ({
           bookingId:       pendingBooking!.id,
           passengerType:   p.type,
@@ -658,7 +659,7 @@ bookDirectRoutes.post("/", zValidator("json", directBookSchema, (result, c) => {
   (c as any).set("exchangeBookingId", booking?.id);
 
   const bookingId = booking.id;
-  await db.insert(bookingPassengers).values(
+  await insertMany(db, bookingPassengers, 
     body.passengers.map((p) => ({
       bookingId,
       passengerType:   p.type,

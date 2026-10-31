@@ -19,31 +19,31 @@ financeAdminRoutes.get("/summary", async (c) => {
 
   // Total revenue from all TICKETED/CONFIRMED bookings
   const [revRow] = await db
-    .select({ total: sql<string>`COALESCE(SUM(total_amount::numeric), 0)` })
+    .select({ total: sql<string>`printf('%.2f', COALESCE(SUM(total_amount), 0))` })
     .from(bookings)
     .where(sql`status IN ('TICKETED', 'CONFIRMED')`);
 
   // Markup collected
   const [markupRow] = await db
-    .select({ total: sql<string>`COALESCE(SUM(markup::numeric), 0)` })
+    .select({ total: sql<string>`printf('%.2f', COALESCE(SUM(markup), 0))` })
     .from(bookings)
     .where(sql`status IN ('TICKETED', 'CONFIRMED')`);
 
   // Platform fees
   const [pfRow] = await db
-    .select({ total: sql<string>`COALESCE(SUM(platform_fee::numeric), 0)` })
+    .select({ total: sql<string>`printf('%.2f', COALESCE(SUM(platform_fee), 0))` })
     .from(bookings)
     .where(sql`status IN ('TICKETED', 'CONFIRMED')`);
 
   // Refunds issued
   const [refRow] = await db
-    .select({ total: sql<string>`COALESCE(SUM(refund_amount::numeric), 0)` })
+    .select({ total: sql<string>`printf('%.2f', COALESCE(SUM(refund_amount), 0))` })
     .from(cancellationRequests)
     .where(eq(cancellationRequests.status, "PROCESSED"));
 
   // Pending refunds
   const [pendRow] = await db
-    .select({ total: sql<string>`COALESCE(SUM(refund_amount::numeric), 0)` })
+    .select({ total: sql<string>`printf('%.2f', COALESCE(SUM(refund_amount), 0))` })
     .from(cancellationRequests)
     .where(eq(cancellationRequests.status, "APPROVED"));
 
@@ -58,7 +58,7 @@ financeAdminRoutes.get("/summary", async (c) => {
 
   // Avg booking value
   const [avgRow] = await db
-    .select({ avg: sql<string>`COALESCE(AVG(total_amount::numeric), 0)` })
+    .select({ avg: sql<string>`printf('%.2f', COALESCE(AVG(total_amount), 0))` })
     .from(bookings)
     .where(sql`status IN ('TICKETED', 'CONFIRMED')`);
 

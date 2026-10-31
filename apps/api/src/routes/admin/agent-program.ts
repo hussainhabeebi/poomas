@@ -173,7 +173,7 @@ agentProgramAdminRoutes.get("/recharges", async (c) => {
     .from(agentRequests).innerJoin(agents, eq(agents.id, agentRequests.agentId))
     .where(and(eq(agentRequests.tenantId, c.get("tenantId")), eq(agentRequests.type, "DEPOSIT"), ...(statuses ? [inArray(agentRequests.status, statuses)] : [])))
     .orderBy(status === "PENDING" ? asc(agentRequests.createdAt) : desc(agentRequests.updatedAt)).limit(200);
-  const [counts] = await db.select({ pending: sql<number>`count(*) filter (where ${agentRequests.status} in ('OPEN','IN_PROGRESS'))::int` })
+  const [counts] = await db.select({ pending: sql<number>`count(*) filter (where ${agentRequests.status} in ('OPEN','IN_PROGRESS'))` })
     .from(agentRequests).where(and(eq(agentRequests.tenantId, c.get("tenantId")), eq(agentRequests.type, "DEPOSIT")));
   const wallets = new Map<string, { balance: number; currency: string }>();
   for (const id of [...new Set(rows.map((x: { r: { agentId: string } }) => x.r.agentId))]) {
@@ -417,16 +417,16 @@ agentProgramAdminRoutes.get("/analytics", async (c) => {
   const to = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query("to") ?? "") ? new Date(`${c.req.query("to")}T23:59:59Z`) : now;
   const rows = await db.select({
     agentId: bookings.agentId, name: agents.businessName, status: agents.status,
-    bookings: sql<number>`count(*) filter (where ${bookings.status} in ('CONFIRMED','TICKETED','CANCELLED','REFUNDED'))::int`,
-    sales: sql<string>`coalesce(sum(${bookings.totalAmount}) filter (where ${bookings.status} in ('CONFIRMED','TICKETED')), 0)`,
-    margin: sql<string>`coalesce(sum(${bookings.markup}) filter (where ${bookings.status} in ('CONFIRMED','TICKETED')), 0)`,
-    cancelled: sql<number>`count(*) filter (where ${bookings.status} in ('CANCELLED','REFUNDED'))::int`,
-    failed: sql<number>`count(*) filter (where ${bookings.status} = 'PAYMENT_FAILED')::int`,
+    bookings: sql<number>`count(*) filter (where ${bookings.status} in ('CONFIRMED','TICKETED','CANCELLED','REFUNDED'))`,
+    sales: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}) filter (where ${bookings.status} in ('CONFIRMED','TICKETED')), 0))`,
+    margin: sql<string>`printf('%.2f', coalesce(sum(${bookings.markup}) filter (where ${bookings.status} in ('CONFIRMED','TICKETED')), 0))`,
+    cancelled: sql<number>`count(*) filter (where ${bookings.status} in ('CANCELLED','REFUNDED'))`,
+    failed: sql<number>`count(*) filter (where ${bookings.status} = 'PAYMENT_FAILED')`,
   }).from(bookings).innerJoin(agents, eq(agents.id, bookings.agentId))
     .where(and(eq(bookings.tenantId, c.get("tenantId")), gte(bookings.createdAt, from), lte(bookings.createdAt, to)))
     .groupBy(bookings.agentId, agents.businessName, agents.status)
     .orderBy(desc(sql`coalesce(sum(${bookings.totalAmount}) filter (where ${bookings.status} in ('CONFIRMED','TICKETED')), 0)`)).limit(200);
-  const routes = await db.select({ origin: bookings.origin, destination: bookings.destination, n: sql<number>`count(*)::int`, sales: sql<string>`coalesce(sum(${bookings.totalAmount}),0)` })
+  const routes = await db.select({ origin: bookings.origin, destination: bookings.destination, n: sql<number>`count(*)`, sales: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` })
     .from(bookings).where(and(eq(bookings.tenantId, c.get("tenantId")), sql`${bookings.agentId} IS NOT NULL`, gte(bookings.createdAt, from), lte(bookings.createdAt, to), inArray(bookings.status, ["CONFIRMED", "TICKETED"])))
     .groupBy(bookings.origin, bookings.destination).orderBy(desc(sql`count(*)`)).limit(10);
   return c.json({
