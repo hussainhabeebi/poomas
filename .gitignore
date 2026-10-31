@@ -15,3 +15,5 @@ prisma/generated/
 .wrangler/
 packages/db/neon-export/
 packages/db/neon-import.sql
+.open-next/
+.next/
