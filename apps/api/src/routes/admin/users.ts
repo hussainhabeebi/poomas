@@ -51,7 +51,7 @@ adminUsersRoutes.get("/", async (c) => {
   requireFullAdmin(c);
   const rows = await c.get("db").select({
     id: users.id, name: users.name, email: users.email, phone: users.phone, role: users.role, isActive: users.isActive,
-    permissions: users.adminPermissions, lastLoginAt: users.lastLoginAt, createdAt: users.createdAt, hasPassword: sql<boolean>`${users.passwordHash} IS NOT NULL`,
+    permissions: users.adminPermissions, lastLoginAt: users.lastLoginAt, createdAt: users.createdAt, hasPassword: sql<boolean>`${users.passwordHash} IS NOT NULL`.mapWith(Boolean),
   }).from(users).where(and(eq(users.tenantId, c.get("tenantId")), inArray(users.role, [...ADMIN_ROLES]))).orderBy(asc(users.createdAt));
   return c.json({ users: rows, sections: STAFF_SECTIONS.map(({ key, label }) => ({ key, label })), me: c.get("userId") ?? null });
 });
@@ -125,7 +125,7 @@ adminUsersRoutes.patch("/:id", zValidator("json", z.object({
   if (nextRole === "STAFF" && !nextPerms.length) return c.json({ error: "Tick at least one section for staff" }, 400);
   // Keep at least one active full admin.
   if (u.role === "SUPER_ADMIN" && u.isActive && (nextRole !== "SUPER_ADMIN" || !nextActive)) {
-    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(users)
+    const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(users)
       .where(and(eq(users.tenantId, tenantId), eq(users.role, "SUPER_ADMIN"), eq(users.isActive, true)));
     if (n <= 1) return c.json({ error: "There must be at least one active full admin." }, 400);
   }

@@ -17,7 +17,7 @@ export const STAFF_SECTIONS = [
   { key: "bookings",         label: "Bookings, cancellations & TripSafe", paths: ["/bookings", "/cancellations", "/tripsafe"] },
   { key: "agents",           label: "Agencies & Leadvyne agencies",       paths: ["/agents", "/leadvyne-agents", "/agent-program/agents", "/agent-program/documents", "/agent-program/analytics", "/agent-program/audit"] },
   { key: "agent_requests",   label: "Agent requests",                      paths: ["/agent-program/requests"] },
-  { key: "wallet_recharges", label: "Wallet recharges (approve deposits)", paths: ["/agent-program/recharges"] },
+  { key: "wallet_recharges", label: "Wallet recharges (approve deposits)", paths: ["/agent-program/recharges", "/customer-deposits"] },
   { key: "customer_wallets", label: "Customer wallets",                    paths: ["/customer-wallets"] },
   { key: "support",          label: "Customer support",                    paths: ["/support-requests"] },
   { key: "finance",          label: "Finance reports",                     paths: ["/finance"] },

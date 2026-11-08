@@ -49,7 +49,7 @@ agentsAdminRoutes.get("/:id", async (c) => {
   if (!row) throw new HTTPException(404, { message: "Agent not found" });
   const [documents, [stats]] = await Promise.all([
     db.select().from(agentDocuments).where(eq(agentDocuments.agentId, id)),
-    db.select({ total: sql<number>`count(*)::int`, value: sql<string>`coalesce(sum(${bookings.totalAmount}), 0)::text` })
+    db.select({ total: sql<number>`count(*)`, value: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` })
       .from(bookings).where(eq(bookings.agentId, id)),
   ]);
   return c.json({ ...row.agent, tenantSlug: row.tenantSlug, tenantName: row.tenantName, plan: row.plan, documents, stats: { bookings: stats?.total ?? 0, bookingValue: stats?.value ?? "0" } });

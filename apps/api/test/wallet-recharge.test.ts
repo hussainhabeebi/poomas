@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
-import { bankAccountSchema, visibleAccounts, type BankAccount } from "../src/lib/bank-accounts.js";
+import { bankAccountSchema, getBankAccounts, visibleAccounts, type BankAccount } from "../src/lib/bank-accounts.js";
 import { agentPortalRoutes } from "../src/routes/agent-portal.js";
+import { customerWalletRoutes } from "../src/routes/customer-wallet.js";
 
 const acct = (over: Partial<BankAccount>): BankAccount => ({
   ...bankAccountSchema.parse({ label: "ENBD · AED", bankName: "Emirates NBD", accountName: "Poomas Travel LLC", accountNumber: "1015123456789", currency: "AED" }),
@@ -48,4 +49,47 @@ test("bank-transfer recharge needs a screenshot and one of the listed accounts",
 
   res = await post({ amount: "0", method: "BANK_TRANSFER", bankAccountId: "aed" }, png);
   assert.match((await res.json() as any).error, /amount/);
+});
+
+test("the platform tenant shows the Poomas Mashreq account until Admin saves its own list", async () => {
+  const kv = new Map<string, string>();
+  const env: any = { PLATFORM_TENANT_SLUG: "poomas", TENANT_CACHE_KV: { get: async (k: string) => { const v = kv.get(k); return v == null ? null : JSON.parse(v); } } };
+  const [def] = await getBankAccounts(env, "t1", "poomas");
+  assert.equal(def.accountName, "Poomas FZE LLC");
+  assert.equal(def.accountNumber, "019101696733");
+  assert.equal(def.iban, "AE270330000019101696733");
+  assert.equal(def.currency, "AED");
+  assert.deepEqual(await getBankAccounts(env, "t2", "other-agency"), []);
+  assert.deepEqual(await getBankAccounts(env, "t2"), []);
+  kv.set("admin_settings:t1:bank_accounts", "[]");
+  assert.deepEqual(await getBankAccounts(env, "t1", "poomas"), []);
+});
+
+test("customer bank-transfer recharge needs a screenshot and a listed account", async () => {
+  const kv = new Map<string, string>([["admin_settings:t1:bank_accounts", JSON.stringify([acct({ id: "aed" })])]]);
+  const env = { TENANT_CACHE_KV: { get: async (k: string, t?: string) => { const v = kv.get(k); return v == null ? null : t === "json" ? JSON.parse(v) : v; } } };
+  const app = new Hono<any>();
+  app.use("*", async (c, n) => { c.set("tenantId", "t1"); c.set("userId", "u1"); c.set("userRole", "CUSTOMER"); await n(); });
+  app.route("/api/profile/wallet", customerWalletRoutes);
+  app.onError((err: any, c) => c.json({ error: err.message }, err.status ?? 500));
+  const post = (fields: Record<string, string>, file?: File) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    if (file) form.append("receipt", file);
+    return app.fetch(new Request("http://x/api/profile/wallet/deposits", { method: "POST", body: form }), env, { waitUntil() {}, passThroughOnException() {} } as any);
+  };
+  const png = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+
+  let res = await post({ amount: "500", bankAccountId: "aed" });
+  assert.equal(res.status, 400);
+  assert.match((await res.json() as any).error, /screenshot/);
+  res = await post({ amount: "500", bankAccountId: "aed" }, new File(["x"], "a.exe", { type: "application/x-msdownload" }));
+  assert.match((await res.json() as any).error, /photo, screenshot or PDF/);
+  res = await post({ amount: "500" }, png);
+  assert.match((await res.json() as any).error, /bank account you paid into/);
+  res = await post({ amount: "0", bankAccountId: "aed" }, png);
+  assert.match((await res.json() as any).error, /amount/);
+
+  const list = await app.fetch(new Request("http://x/api/profile/wallet/bank-accounts"), env, {} as any);
+  assert.deepEqual((await list.json() as any).accounts.map((a: any) => a.id), ["aed"]);
 });

@@ -4,8 +4,8 @@ import { API, apiHeaders } from "../../../lib/api";
 import { adminApi, openAdminFile } from "../../../lib/files";
 import { money, ui } from "../../../lib/ui";
 
-// Agency wallet recharges: approve bank-transfer deposits once after checking
-// the uploaded screenshot, and manage the bank accounts agencies pay into.
+// Wallet recharges (agencies and customers): approve bank-transfer deposits once
+// after checking the uploaded screenshot, and manage the bank accounts people pay into.
 // (Card top-ups through Nomod are credited automatically and don't appear here.)
 
 type Attachment = { key: string; name: string; type: string; size: number };
@@ -15,6 +15,12 @@ type Recharge = {
   attachments: Attachment[];
   agent: { id: string; name: string; number: string | null; email: string; wallet: { balance: number; currency: string } | null };
 };
+type CustomerDeposit = {
+  id: string; status: string; amount: number; currency: string; creditAmount: number | null; suggestedCredit: number | null;
+  reference: string | null; paidOn: string | null; adminNote: string | null; createdAt: string;
+  bankAccount: { label: string; accountNumber: string } | null; attachments: Attachment[];
+  customer: { id: string; name: string | null; email: string | null; phone: string | null; wallet: { balance: number; currency: string } };
+};
 type Bank = {
   id: string; label: string; bankName: string; accountName: string; accountNumber: string; iban: string; swift: string; ifsc: string;
   branch: string; currency: string; country: string; instructions: string; active: boolean;
@@ -22,12 +28,15 @@ type Bank = {
 
 const CURRENCIES = ["AED", "INR", "USD", "SAR", "QAR", "OMR", "KWD", "BHD"];
 const blankBank = { label: "", bankName: "", accountName: "", accountNumber: "", iban: "", swift: "", ifsc: "", branch: "", currency: "AED", country: "AE", instructions: "", active: true };
-const STATUS_LABEL: Record<string, string> = { OPEN: "Waiting", IN_PROGRESS: "Waiting", APPROVED: "Credited", REJECTED: "Rejected" };
+const STATUS_LABEL: Record<string, string> = { OPEN: "Waiting", IN_PROGRESS: "Waiting", PENDING: "Waiting", APPROVED: "Credited", REJECTED: "Rejected" };
 
 export default function WalletRechargesPage() {
+  const [who, setWho] = useState<"AGENTS" | "CUSTOMERS">("AGENTS");
   const [tab, setTab] = useState<"PENDING" | "APPROVED" | "REJECTED" | "ALL" | "BANKS">("PENDING");
   const [rows, setRows] = useState<Recharge[] | null>(null);
+  const [customerRows, setCustomerRows] = useState<CustomerDeposit[] | null>(null);
   const [pending, setPending] = useState(0);
+  const [customerPending, setCustomerPending] = useState(0);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -38,10 +47,13 @@ export default function WalletRechargesPage() {
       adminApi<{ accounts: Bank[] }>("/api/admin/agent-program/bank-accounts").then((d) => setBanks(d.accounts)).catch((e) => setError(e.message));
       return;
     }
-    setRows(null);
+    setRows(null); setCustomerRows(null);
+    // Both queues load so each toggle shows its waiting count; staff may only have one of them.
     adminApi<{ recharges: Recharge[]; pending: number }>(`/api/admin/agent-program/recharges?status=${tab}`)
-      .then((d) => { setRows(d.recharges); setPending(d.pending); }).catch((e) => setError(e.message));
-  }, [tab]);
+      .then((d) => { setRows(d.recharges); setPending(d.pending); }).catch((e) => { if (who === "AGENTS") setError(e.message); });
+    adminApi<{ deposits: CustomerDeposit[]; pending: number }>(`/api/admin/customer-deposits?status=${tab}`)
+      .then((d) => { setCustomerRows(d.deposits); setCustomerPending(d.pending); }).catch((e) => { if (who === "CUSTOMERS") setError(e.message); });
+  }, [tab, who]);
   useEffect(() => { load(); }, [load]);
 
   async function act(fn: () => Promise<unknown>, done: string) {
@@ -53,11 +65,15 @@ export default function WalletRechargesPage() {
     <div>
       <h1 style={ui.h1}>Wallet recharges</h1>
       <p style={ui.sub}>
-        Agencies recharge by card (Nomod — credited automatically) or by bank transfer with a payment screenshot. Check each screenshot
-        against your bank statement, then credit the wallet. Each deposit can be credited only once.
+        Agencies recharge by card (Nomod — credited automatically) or by bank transfer with a payment screenshot; customers recharge
+        their FlyPoomas wallet by bank transfer. Check each screenshot against your bank statement, then credit the wallet. Each deposit can be credited only once.
       </p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <button style={ui.chip(who === "AGENTS")} onClick={() => setWho("AGENTS")}>Agencies{pending ? ` (${pending})` : ""}</button>
+        <button style={ui.chip(who === "CUSTOMERS")} onClick={() => setWho("CUSTOMERS")}>Customers{customerPending ? ` (${customerPending})` : ""}</button>
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-        <button style={ui.chip(tab === "PENDING")} onClick={() => setTab("PENDING")}>Waiting{pending ? ` (${pending})` : ""}</button>
+        <button style={ui.chip(tab === "PENDING")} onClick={() => setTab("PENDING")}>Waiting{(who === "AGENTS" ? pending : customerPending) ? ` (${who === "AGENTS" ? pending : customerPending})` : ""}</button>
         <button style={ui.chip(tab === "APPROVED")} onClick={() => setTab("APPROVED")}>Credited</button>
         <button style={ui.chip(tab === "REJECTED")} onClick={() => setTab("REJECTED")}>Rejected</button>
         <button style={ui.chip(tab === "ALL")} onClick={() => setTab("ALL")}>All</button>
@@ -66,7 +82,13 @@ export default function WalletRechargesPage() {
       {error && <div style={ui.err}>{error}</div>}
       {msg && <div style={ui.ok}>{msg}</div>}
 
-      {tab === "BANKS" ? <BankAccounts banks={banks} act={act} /> : (
+      {tab === "BANKS" ? <BankAccounts banks={banks} act={act} /> : who === "CUSTOMERS" ? (
+        <>
+          {!customerRows && <div style={ui.card}>Loading…</div>}
+          {customerRows && customerRows.length === 0 && <div style={{ ...ui.card, ...ui.text }}>{tab === "PENDING" ? "No customer recharges waiting for approval." : "Nothing here yet."}</div>}
+          {customerRows?.map((r) => <CustomerDepositCard key={r.id} r={r} act={act} />)}
+        </>
+      ) : (
         <>
           {!rows && <div style={ui.card}>Loading…</div>}
           {rows && rows.length === 0 && <div style={{ ...ui.card, ...ui.text }}>{tab === "PENDING" ? "No recharges waiting for approval." : "Nothing here yet."}</div>}
@@ -81,23 +103,9 @@ function RechargeCard({ r, act }: { r: Recharge; act: (fn: () => Promise<unknown
   const [amount, setAmount] = useState(String(r.amount ?? ""));
   const [reason, setReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
-  const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const open = ["OPEN", "IN_PROGRESS"].includes(r.status);
   const cur = r.agent.wallet?.currency ?? r.currency ?? "INR";
   const fileUrl = (a: Attachment) => `/api/admin/agent-program/requests/${r.id}/file?key=${encodeURIComponent(a.key)}`;
-
-  useEffect(() => {
-    let alive = true;
-    const urls: string[] = [];
-    for (const a of r.attachments.filter((x) => x.type.startsWith("image/"))) {
-      fetch(`${API}${fileUrl(a)}`, { headers: apiHeaders() }).then((res) => (res.ok ? res.blob() : null)).then((b) => {
-        if (!b || !alive) return;
-        const u = URL.createObjectURL(b); urls.push(u);
-        setThumbs((t) => ({ ...t, [a.key]: u }));
-      }).catch(() => {});
-    }
-    return () => { alive = false; urls.forEach((u) => URL.revokeObjectURL(u)); };
-  }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const d = r.details ?? {};
   return (
@@ -142,17 +150,88 @@ function RechargeCard({ r, act }: { r: Recharge; act: (fn: () => Promise<unknown
           </div>
         )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {r.attachments.length === 0 && <div style={ui.muted}>No screenshot</div>}
-        {r.attachments.map((a) => (
-          <button key={a.key} onClick={() => openAdminFile(fileUrl(a)).catch(() => {})} title="Open full size"
-            style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: 4, cursor: "zoom-in", color: "#e2e8f0", fontSize: 12 }}>
-            {thumbs[a.key]
-              ? <img src={thumbs[a.key]} alt={a.name} style={{ width: "100%", maxHeight: 220, objectFit: "contain", display: "block" }} />
-              : <span style={{ display: "block", padding: 18 }}>📄 {a.name}</span>}
-          </button>
-        ))}
+      <Receipts attachments={r.attachments} fileUrl={fileUrl} />
+    </div>
+  );
+}
+
+function Receipts({ attachments, fileUrl }: { attachments: Attachment[]; fileUrl: (a: Attachment) => string }) {
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    const urls: string[] = [];
+    for (const a of attachments.filter((x) => x.type.startsWith("image/"))) {
+      fetch(`${API}${fileUrl(a)}`, { headers: apiHeaders() }).then((res) => (res.ok ? res.blob() : null)).then((b) => {
+        if (!b || !alive) return;
+        const u = URL.createObjectURL(b); urls.push(u);
+        setThumbs((t) => ({ ...t, [a.key]: u }));
+      }).catch(() => {});
+    }
+    return () => { alive = false; urls.forEach((u) => URL.revokeObjectURL(u)); };
+  }, [attachments]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {attachments.length === 0 && <div style={ui.muted}>No screenshot</div>}
+      {attachments.map((a) => (
+        <button key={a.key} onClick={() => openAdminFile(fileUrl(a)).catch(() => {})} title="Open full size"
+          style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: 4, cursor: "zoom-in", color: "#e2e8f0", fontSize: 12 }}>
+          {thumbs[a.key]
+            ? <img src={thumbs[a.key]} alt={a.name} style={{ width: "100%", maxHeight: 220, objectFit: "contain", display: "block" }} />
+            : <span style={{ display: "block", padding: 18 }}>📄 {a.name}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CustomerDepositCard({ r, act }: { r: CustomerDeposit; act: (fn: () => Promise<unknown>, done: string) => Promise<void> }) {
+  const cur = r.customer.wallet.currency;
+  const [amount, setAmount] = useState(r.suggestedCredit === null ? "" : String(r.suggestedCredit));
+  const [reason, setReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const who = r.customer.name || r.customer.email || r.customer.phone || "Customer";
+  return (
+    <div style={{ ...ui.card, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 220px", gap: 16 }}>
+      <div>
+        <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+          <b style={{ color: "#f1f5f9", fontSize: 20 }}>{money(r.amount, r.currency)}</b>
+          <span style={{ ...ui.text, fontWeight: 700 }}>{who}</span>
+          {r.customer.email && <span style={ui.muted}>{r.customer.email}</span>}
+          <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+            background: r.status === "APPROVED" ? "rgba(34,197,94,.15)" : r.status === "REJECTED" ? "rgba(239,68,68,.15)" : "rgba(251,191,36,.15)",
+            color: r.status === "APPROVED" ? "#4ade80" : r.status === "REJECTED" ? "#f87171" : "#fbbf24" }}>{STATUS_LABEL[r.status] ?? r.status}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "6px 16px", marginTop: 10, ...ui.text }}>
+          <div><span style={ui.muted}>Paid into</span><br />{r.bankAccount ? `${r.bankAccount.label} · …${r.bankAccount.accountNumber.slice(-4)}` : "—"}</div>
+          <div><span style={ui.muted}>Reference</span><br />{r.reference || "—"}</div>
+          <div><span style={ui.muted}>Paid on</span><br />{r.paidOn ?? "—"}</div>
+          <div><span style={ui.muted}>Submitted</span><br />{new Date(r.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</div>
+          <div><span style={ui.muted}>Wallet now</span><br />{money(r.customer.wallet.balance, cur)}</div>
+          {r.creditAmount !== null && <div><span style={ui.muted}>Credited</span><br />{money(r.creditAmount, cur)}</div>}
+        </div>
+        {r.adminNote && <div style={{ ...ui.muted, marginTop: 8 }}>Note: {r.adminNote}</div>}
+        {r.status === "PENDING" && (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginTop: 14 }}>
+            <label style={ui.label}>Amount to credit ({cur}){r.currency !== cur && r.suggestedCredit !== null ? " · at today's rate" : ""}
+              <input style={{ ...ui.input, width: 150 }} type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </label>
+            <button style={ui.btn} disabled={!(Number(amount) > 0)} onClick={() => {
+              if (confirm(`Credit ${money(Number(amount), cur)} to ${who}'s wallet? This can't be undone.`)) {
+                void act(() => adminApi(`/api/admin/customer-deposits/${r.id}/approve`, { method: "POST", body: JSON.stringify({ amount: Number(amount) }) }), `${money(Number(amount), cur)} credited to ${who}.`);
+              }
+            }}>✓ Approve &amp; credit</button>
+            {!rejecting ? <button style={ui.ghost} onClick={() => setRejecting(true)}>Reject…</button> : (
+              <>
+                <input style={{ ...ui.input, flex: 1, minWidth: 200 }} placeholder="Reason shown to the customer (e.g. payment not received)" value={reason} onChange={(e) => setReason(e.target.value)} />
+                <button style={{ ...ui.ghost, borderColor: "#7f1d1d", color: "#fca5a5" }} disabled={reason.trim().length < 3}
+                  onClick={() => act(() => adminApi(`/api/admin/customer-deposits/${r.id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }), "Recharge rejected; the customer was told why.")}>Reject</button>
+                <button style={ui.ghost} onClick={() => setRejecting(false)}>Cancel</button>
+              </>
+            )}
+          </div>
+        )}
       </div>
+      <Receipts attachments={r.attachments} fileUrl={(a) => `/api/admin/customer-deposits/${r.id}/file?key=${encodeURIComponent(a.key)}`} />
     </div>
   );
 }
@@ -172,7 +251,7 @@ function BankAccounts({ banks, act }: { banks: Bank[]; act: (fn: () => Promise<u
     await act(() => editing
       ? adminApi(`/api/admin/agent-program/bank-accounts/${editing}`, { method: "PATCH", body: JSON.stringify(form) })
       : adminApi("/api/admin/agent-program/bank-accounts", { method: "POST", body: JSON.stringify(form) }),
-      editing ? "Bank account updated." : "Bank account added — agencies see it on their wallet page.");
+      editing ? "Bank account updated." : "Bank account added — agencies and customers see it on their wallet page.");
     setForm(blankBank); setEditing(null); setShowForm(false);
   }
   const input = (k: keyof typeof blankBank, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
@@ -182,7 +261,7 @@ function BankAccounts({ banks, act }: { banks: Bank[]; act: (fn: () => Promise<u
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <span style={ui.muted}>Active accounts are shown to agencies on their wallet page, matching their wallet currency first.</span>
+        <span style={ui.muted}>Active accounts are shown to agencies and customers on their wallet page, matching their wallet currency first.</span>
         <button style={ui.btn} onClick={() => { setShowForm((v) => !v); setForm(blankBank); setEditing(null); }}>{showForm ? "Close" : "+ Add bank account"}</button>
       </div>
       {showForm && (
@@ -206,7 +285,7 @@ function BankAccounts({ banks, act }: { banks: Bank[]; act: (fn: () => Promise<u
             <input style={ui.input} placeholder="e.g. Use your agent number as the transfer reference" value={form.instructions} onChange={(e) => set("instructions", e.target.value)} />
           </label>
           <label style={{ ...ui.text, display: "flex", gap: 8, alignItems: "center", margin: "12px 0" }}>
-            <input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)} /> Show to agencies
+            <input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)} /> Show on wallet pages
           </label>
           <button style={ui.btn}>{editing ? "Save changes" : "Add account"}</button>
         </form>

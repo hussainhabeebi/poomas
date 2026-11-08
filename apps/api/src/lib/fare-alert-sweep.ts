@@ -21,7 +21,7 @@ export async function sweepFareAlerts(env: Env) {
   await kv.put(CURSOR_KEY, page.list_complete ? "" : page.cursor, { expirationTtl: 7 * 86_400 }).catch(() => {});
   if (!page.keys.length) return { checked: 0 };
 
-  const db = createDb(env.DATABASE_URL);
+  const db = createDb(env.DB);
   const today = new Date().toISOString().slice(0, 10);
   const tenantCache = new Map<string, Awaited<ReturnType<typeof tenantSearchSetup>>>();
   let checked = 0;

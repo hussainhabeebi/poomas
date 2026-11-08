@@ -6,7 +6,8 @@
 // searches, checkout links and bookings.
 
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { agentActivityDaily, agents } from "@poomas/db/schema";
+import { agents } from "@poomas/db/schema";
+import { agentActivityDaily, type LogsDb } from "@poomas/db/logs";
 import type { Env, Variables } from "../types.js";
 import type { DisplayCurrency } from "./fx.js";
 
@@ -36,8 +37,8 @@ export function agentCurrency(a: { currency: string; settings?: unknown }): stri
 // Gives the agency the next free number (no-op if it already has one).
 export async function assignAgentNumber(db: Db, tenantId: string, agentId: string): Promise<string | null> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const [{ top }] = await db.select({ top: sql<number>`coalesce(max(substring(${agents.agentNumber} from 4)::int), 10000)` })
-      .from(agents).where(and(eq(agents.tenantId, tenantId), sql`${agents.agentNumber} ~ '^FPA[0-9]+$'`));
+    const [{ top }] = await db.select({ top: sql<number>`coalesce(max(cast(substr(${agents.agentNumber}, 4) as integer)), 10000)` })
+      .from(agents).where(and(eq(agents.tenantId, tenantId), sql`${agents.agentNumber} GLOB 'FPA[0-9]*' AND substr(${agents.agentNumber}, 4) NOT GLOB '*[^0-9]*'`));
     const next = `FPA${Number(top) + 1 + attempt}`;
     try {
       const [row] = await db.update(agents).set({ agentNumber: next })
@@ -80,10 +81,11 @@ export function agentNumberFrom(c: { req: { header(n: string): string | undefine
   return normalizeAgentNumber(c.req.header("X-FP-Agent") ?? b.agentNumber ?? b.agent_number ?? null);
 }
 
-// +1 search or checkout link for today (UTC).
-export async function trackAgentActivity(db: Db, tenantId: string, agentId: string, field: "searches" | "checkouts") {
+// +1 search or checkout link for today (UTC), in the D1 logs database.
+export async function trackAgentActivity(logs: LogsDb | null, tenantId: string, agentId: string, field: "searches" | "checkouts") {
+  if (!logs) return;
   const day = new Date().toISOString().slice(0, 10);
-  await db.insert(agentActivityDaily).values({ agentId, tenantId, day, searches: field === "searches" ? 1 : 0, checkouts: field === "checkouts" ? 1 : 0 })
+  await logs.insert(agentActivityDaily).values({ agentId, tenantId, day, searches: field === "searches" ? 1 : 0, checkouts: field === "checkouts" ? 1 : 0 })
     .onConflictDoUpdate({
       target: [agentActivityDaily.agentId, agentActivityDaily.day],
       set: field === "searches" ? { searches: sql`${agentActivityDaily.searches} + 1` } : { checkouts: sql`${agentActivityDaily.checkouts} + 1` },

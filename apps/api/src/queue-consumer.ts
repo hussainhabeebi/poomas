@@ -63,12 +63,9 @@ type NotifyQueueMsg    = NotifyBookingMsg | NotifyOtpMsg;
 
 // ── Booking Queue consumer ────────────────────────────────────────
 
-// Same connection as the HTTP API (tenant middleware). The Neon HTTP driver
-// cannot use the Hyperdrive connection string: its host only resolves over
-// Hyperdrive's TCP socket, so HTTP queries fail with 530 / error 1016 and paid
-// bookings never reached TripJack.
+// Same D1 database as the HTTP API (tenant middleware).
 function queueDb(env: Env) {
-  return createDb(env.DATABASE_URL);
+  return createDb(env.DB);
 }
 
 // Matches max_retries = 3 on the poomas-bookings consumer (1 try + 3 retries).
@@ -487,7 +484,7 @@ async function bookPaidBooking(
   // Raw TripJack exchanges (review / book / booking-details) for certification logs.
   const collector = collectExchanges();
   const flightMeta = (booking.flightData ?? {}) as Record<string, unknown>;
-  const saveLogs = () => persistExchanges(env, db, booking.tenantId, collector.exchanges.splice(0), {
+  const saveLogs = () => persistExchanges(env, booking.tenantId, collector.exchanges.splice(0), {
     bookingId: booking.id, searchId: typeof flightMeta.searchId === "string" ? flightMeta.searchId : null,
   });
   for (const cfg of supplierConfigs) {

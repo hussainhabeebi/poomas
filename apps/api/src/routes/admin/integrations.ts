@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import type { Env, Variables } from "../../types.js";
+import { forgetTenantCache } from "../../middleware/tenant.js";
 
 export const integrationsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -67,7 +68,7 @@ integrationsAdminRoutes.post("/riya", zValidator("json", riyaSchema), async (c) 
   await save(c.env, tenantId, "riya", merged);
   // Invalidate tenant cache so next search picks up new credentials
   const tenant = c.get("tenant");
-  c.executionCtx.waitUntil(c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.flypoomas.com`));
+  c.executionCtx.waitUntil(forgetTenantCache(c.env, tenant));
   return c.json({ ok: true });
 });
 
@@ -115,7 +116,7 @@ integrationsAdminRoutes.post("/tripjack", zValidator("json", tripjackSchema), as
   };
   await save(c.env, tenantId, "tripjack", merged);
   const tenant = c.get("tenant");
-  c.executionCtx.waitUntil(c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.flypoomas.com`));
+  c.executionCtx.waitUntil(forgetTenantCache(c.env, tenant));
   return c.json({ ok: true });
 });
 
@@ -150,7 +151,7 @@ integrationsAdminRoutes.post("/duffel", zValidator("json", duffelSchema), async 
   };
   await save(c.env, tenantId, "duffel", merged);
   const tenant = c.get("tenant");
-  c.executionCtx.waitUntil(c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.flypoomas.com`));
+  c.executionCtx.waitUntil(forgetTenantCache(c.env, tenant));
   return c.json({ ok: true });
 });
 

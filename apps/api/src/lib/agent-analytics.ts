@@ -1,9 +1,12 @@
 // Agency analytics: searches and checkout links (daily tally) and bookings —
+// searches / checkout links come from the D1 logs database (empty without it);
 // both agency-portal bookings (bookings.agent_id) and Leadvyne customer
 // bookings tagged with the agency (flight_data.leadAgent.id).
 
+import { inList } from "@poomas/db";
 import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
-import { agentActivityDaily, bookings } from "@poomas/db/schema";
+import { bookings } from "@poomas/db/schema";
+import { agentActivityDaily, type LogsDb } from "@poomas/db/logs";
 import type { Variables } from "../types.js";
 
 type Db = Variables["db"];
@@ -27,35 +30,35 @@ const empty = (): AgentStats => ({
 
 const attributedTo = sql<string>`coalesce(${bookings.agentId}, ${bookings.flightData}->'leadAgent'->>'id')`;
 
-export async function agentStats(db: Db, tenantId: string, agentIds: string[], days = 30): Promise<Map<string, AgentStats>> {
+export async function agentStats(db: Db, logs: LogsDb | null, tenantId: string, agentIds: string[], days = 30): Promise<Map<string, AgentStats>> {
   const out = new Map(agentIds.map((id) => [id, empty()]));
   if (!agentIds.length) return out;
   const since = new Date(Date.now() - days * 86_400_000);
   const sinceDay = since.toISOString().slice(0, 10);
 
   const [activity, booked] = await Promise.all([
-    db.select({
+    logs ? logs.select({
       agentId: agentActivityDaily.agentId,
-      searches: sql<number>`sum(${agentActivityDaily.searches})::int`,
-      searchesPeriod: sql<number>`coalesce(sum(${agentActivityDaily.searches}) filter (where ${agentActivityDaily.day} >= ${sinceDay}), 0)::int`,
-      checkouts: sql<number>`sum(${agentActivityDaily.checkouts})::int`,
-      checkoutsPeriod: sql<number>`coalesce(sum(${agentActivityDaily.checkouts}) filter (where ${agentActivityDaily.day} >= ${sinceDay}), 0)::int`,
-      last: sql<string>`max(${agentActivityDaily.day})::text`,
+      searches: sql<number>`sum(${agentActivityDaily.searches})`,
+      searchesPeriod: sql<number>`coalesce(sum(case when ${agentActivityDaily.day} >= ${sinceDay} then ${agentActivityDaily.searches} else 0 end), 0)`,
+      checkouts: sql<number>`sum(${agentActivityDaily.checkouts})`,
+      checkoutsPeriod: sql<number>`coalesce(sum(case when ${agentActivityDaily.day} >= ${sinceDay} then ${agentActivityDaily.checkouts} else 0 end), 0)`,
+      last: sql<string>`max(${agentActivityDaily.day})`,
     }).from(agentActivityDaily)
-      .where(and(eq(agentActivityDaily.tenantId, tenantId), inArray(agentActivityDaily.agentId, agentIds)))
-      .groupBy(agentActivityDaily.agentId),
+      .where(and(eq(agentActivityDaily.tenantId, tenantId), inList(agentActivityDaily.agentId, agentIds)))
+      .groupBy(agentActivityDaily.agentId) : Promise.resolve([]),
     db.select({
       agentId: attributedTo,
-      attempts: sql<number>`count(*)::int`,
-      bookings: sql<number>`(count(*) filter (where ${inArray(bookings.status, [...BOOKED])}))::int`,
-      bookingsPeriod: sql<number>`(count(*) filter (where ${inArray(bookings.status, [...BOOKED])} and ${bookings.createdAt} >= ${since.toISOString()}::timestamptz))::int`,
-      value: sql<string>`coalesce(sum(${bookings.totalAmount}) filter (where ${inArray(bookings.status, [...BOOKED])}), 0)::text`,
-      valuePeriod: sql<string>`coalesce(sum(${bookings.totalAmount}) filter (where ${inArray(bookings.status, [...BOOKED])} and ${bookings.createdAt} >= ${since.toISOString()}::timestamptz), 0)::text`,
-      last: sql<string>`max(${bookings.createdAt})::text`,
+      attempts: sql<number>`count(*)`,
+      bookings: sql<number>`(count(*) filter (where ${inArray(bookings.status, [...BOOKED])}))`,
+      bookingsPeriod: sql<number>`(count(*) filter (where ${inArray(bookings.status, [...BOOKED])} and ${bookings.createdAt} >= ${since.toISOString()}))`,
+      value: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}) filter (where ${inArray(bookings.status, [...BOOKED])}), 0))`,
+      valuePeriod: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}) filter (where ${inArray(bookings.status, [...BOOKED])} and ${bookings.createdAt} >= ${since.toISOString()}), 0))`,
+      last: sql<string>`max(${bookings.createdAt})`,
     }).from(bookings)
       .where(and(eq(bookings.tenantId, tenantId), or(
-        inArray(bookings.agentId, agentIds),
-        inArray(sql`${bookings.flightData}->'leadAgent'->>'id'`, agentIds),
+        inList(bookings.agentId, agentIds),
+        inList(sql`${bookings.flightData}->'leadAgent'->>'id'`, agentIds),
       )))
       .groupBy(attributedTo),
   ]);
@@ -75,15 +78,15 @@ export async function agentStats(db: Db, tenantId: string, agentIds: string[], d
 }
 
 // Day-by-day series for one agency (searches, checkout links, confirmed bookings).
-export async function agentDaily(db: Db, tenantId: string, agentId: string, days = 30) {
+export async function agentDaily(db: Db, logs: LogsDb | null, tenantId: string, agentId: string, days = 30) {
   const sinceDay = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
   const [act, bk] = await Promise.all([
-    db.select({ day: sql<string>`${agentActivityDaily.day}::text`, searches: agentActivityDaily.searches, checkouts: agentActivityDaily.checkouts })
+    logs ? logs.select({ day: agentActivityDaily.day, searches: agentActivityDaily.searches, checkouts: agentActivityDaily.checkouts })
       .from(agentActivityDaily)
-      .where(and(eq(agentActivityDaily.tenantId, tenantId), eq(agentActivityDaily.agentId, agentId), gte(agentActivityDaily.day, sinceDay))),
-    db.select({ day: sql<string>`(${bookings.createdAt} at time zone 'UTC')::date::text`, n: sql<number>`count(*)::int`, value: sql<string>`sum(${bookings.totalAmount})::text` })
+      .where(and(eq(agentActivityDaily.tenantId, tenantId), eq(agentActivityDaily.agentId, agentId), gte(agentActivityDaily.day, sinceDay))) : Promise.resolve([]),
+    db.select({ day: sql<string>`substr(${bookings.createdAt}, 1, 10)`, n: sql<number>`count(*)`, value: sql<string>`printf('%.2f', coalesce(sum(${bookings.totalAmount}), 0))` })
       .from(bookings)
-      .where(and(eq(bookings.tenantId, tenantId), inArray(bookings.status, [...BOOKED]), sql`${bookings.createdAt} >= ${sinceDay}::date`,
+      .where(and(eq(bookings.tenantId, tenantId), inArray(bookings.status, [...BOOKED]), sql`${bookings.createdAt} >= ${sinceDay}`,
         or(eq(bookings.agentId, agentId), sql`${bookings.flightData}->'leadAgent'->>'id' = ${agentId}`)))
       .groupBy(sql`1`),
   ]);

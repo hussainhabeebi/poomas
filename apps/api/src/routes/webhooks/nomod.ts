@@ -1,4 +1,5 @@
 import type { Handler } from "hono";
+import { inList } from "@poomas/db";
 import { emailAgentTopup } from "../../lib/transactional-emails.js";
 import { payments, bookings, walletTransactions } from "@poomas/db/schema";
 import { creditAgentWallet } from "../../lib/agent-program.js";
@@ -46,7 +47,7 @@ export const nomodWebhook: Handler<{ Bindings: Env; Variables: Variables }> = as
     ? await db
         .select({ id: payments.id, bookingId: payments.bookingId, status: payments.status, gatewayOrderId: payments.gatewayOrderId, amount: payments.amount })
         .from(payments)
-        .where(and(eq(payments.gateway, "NOMOD"), inArray(payments.gatewayOrderId, candidates)))
+        .where(and(eq(payments.gateway, "NOMOD"), inList(payments.gatewayOrderId, candidates)))
         .limit(1)
     : [];
 

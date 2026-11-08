@@ -10,6 +10,7 @@ import { collectExchanges, persistExchanges, persistInBackground } from "../lib/
 import { recordFareObservation, sendFareAlerts } from "../lib/fare-insights.js";
 import { optionalAgentId } from "../lib/agent-markup.js";
 import { agentPricing, rulesFor } from "../lib/agent-program.js";
+import { tenantMarkupRules } from "../lib/markup-rules.js";
 
 const searchSchema = z.object({
   origin:        z.string().length(3).toUpperCase(),
@@ -201,7 +202,7 @@ function logSearchOutcome(
   const writes: Promise<void>[] = [];
 
   if (enabledSuppliers.length === 0) {
-    writes.push(logSupplierCall(db, {
+    writes.push(logSupplierCall(c.get("logs"), {
       tenantId, supplier: "TRIPJACK", endpoint: "flight-search", level: "ERROR", requestId: searchId,
       requestSummary, errorCode: "NO_SUPPLIER_ENABLED",
       errorMessage: "No flight supplier is enabled for this tenant (check Admin → Integrations TripJack toggle and TRIPJACK_API_BASE_URL / API key / proxy key secrets).",
@@ -210,7 +211,7 @@ function logSearchOutcome(
 
   for (const [supplier, d] of Object.entries(diagnostics)) {
     if (d.ok && d.fareCount > 0) continue;
-    writes.push(logSupplierCall(db, {
+    writes.push(logSupplierCall(c.get("logs"), {
       tenantId,
       supplier:        supplier as LoggableSupplier,
       endpoint:        "flight-search",
@@ -242,7 +243,7 @@ searchRoutes.post("/", zValidator("json", searchSchema), async (c) => {
     // Unexpected crash (config/KV/DB/code bug) — surface it in Admin logs, not just Worker logs.
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[search] ${searchId} failed:`, err);
-    c.executionCtx.waitUntil(logSupplierCall(c.get("db"), {
+    c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), {
       tenantId, supplier: "TRIPJACK", endpoint: "flight-search", level: "ERROR", requestId: searchId,
       requestSummary: { origin: params.origin, destination: params.destination, departureDate: params.departureDate },
       errorCode: "SEARCH_CRASHED", errorMessage: message,
@@ -259,7 +260,7 @@ async function resolveLeadAgent(c: Context<{ Bindings: Env; Variables: Variables
   try {
     const agent = await resolveAgentNumber(c.env, c.get("db"), c.get("tenantId"), n);
     if (agent && agent.status === "APPROVED") {
-      c.executionCtx.waitUntil(trackAgentActivity(c.get("db"), c.get("tenantId"), agent.id, "searches").catch((err) => console.error("[agent-activity]", err)));
+      c.executionCtx.waitUntil(trackAgentActivity(c.get("logs"), c.get("tenantId"), agent.id, "searches").catch((err) => console.error("[agent-activity]", err)));
     }
     return agent;
   } catch (err) {
@@ -365,16 +366,14 @@ async function runSearch(
     supplierConfigs.map((s) => s.name === "TRIPJACK" && s.credentials ? { ...s, credentials: { ...s.credentials, recorder: collector.recorder } } : s),
     { platformCredentials: { ...platformCredentials, ...(platformCredentials.TRIPJACK ? { TRIPJACK: { ...platformCredentials.TRIPJACK, recorder: collector.recorder } as typeof platformCredentials.TRIPJACK } : {}) } },
   );
-  persistInBackground(c, persistExchanges(c.env, db, tenantId, collector.exchanges, { searchId }));
+  persistInBackground(c, persistExchanges(c.env, tenantId, collector.exchanges, { searchId }));
 
   // Markup is optional for availability. If DB/schema/rule loading fails, return the
   // supplier fare unchanged rather than converting a healthy flight search into HTTP 500.
   let pricedFares = result.fares.map((fare) => ({ ...fare, displayPrice: fare.totalFare, markup: undefined }));
   try {
     const { applyMarkup } = await import("../lib/markup.js");
-    const { markupRules } = await import("@poomas/db/schema");
-    const { eq } = await import("drizzle-orm");
-    const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+    const rules = await tenantMarkupRules(c.env, db, tenantId);
     pricedFares = result.fares.map((fare) => ({
       ...fare,
       // Company-wide rules only: agency rules apply to that agency's own searches.
@@ -440,9 +439,7 @@ async function agentFares(c: Context<{ Bindings: Env; Variables: Variables }>, t
   try {
     const db = c.get("db");
     const { applyMarkup } = await import("../lib/markup.js");
-    const { markupRules } = await import("@poomas/db/schema");
-    const { eq } = await import("drizzle-orm");
-    const rules = await db.select().from(markupRules).where(eq(markupRules.tenantId, tenantId));
+    const rules = await tenantMarkupRules(c.env, db, tenantId);
     const ownRules = rules.some((r) => r.agentId === agentId);
     const pricing = await agentPricing(c.env, db, tenantId, agentId);
     return fares.map((f) => {

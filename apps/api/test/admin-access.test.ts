@@ -14,6 +14,7 @@ test("admin API paths map to staff sections; settings stay admin-only", () => {
   assert.equal(sectionFor("/api/admin/agent-program/requests/9"), "agent_requests");
   assert.equal(sectionFor("/api/admin/agent-program/requests/9/approve-deposit"), "wallet_recharges");
   assert.equal(sectionFor("/api/admin/agent-program/recharges"), "wallet_recharges");
+  assert.equal(sectionFor("/api/admin/customer-deposits/9/approve"), "wallet_recharges");
   for (const p of ["/api/admin/settings/payments", "/api/admin/integrations/tripjack", "/api/admin/users", "/api/admin/api-keys",
     "/api/admin/agent-program/config", "/api/admin/agent-program/bank-accounts", "/api/admin/agent-program/onboarding", "/api/admin/tenants", "/api/admin/dashboard"]) {
     assert.equal(sectionFor(p), null, p);

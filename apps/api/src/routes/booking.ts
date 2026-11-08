@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { insertMany } from "@poomas/db";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
@@ -118,7 +119,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
       });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+      void logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
         level: "ERROR", requestId: body.sessionId,
         requestSummary: { fareId: body.fareId, sessionId: body.sessionId,
           origin: snap.origin, destination: snap.destination, paxCount: body.passengers.length },
@@ -128,7 +129,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
     }
 
     if (!bookResult.success) {
-      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+      void logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
         httpStatus: 200, level: "ERROR", requestId: body.sessionId,
         requestSummary: { fareId: body.fareId, sessionId: body.sessionId,
           origin: snap.origin, destination: snap.destination, paxCount: body.passengers.length },
@@ -137,7 +138,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
       throw new HTTPException(422, { message: "TripJack booking was not confirmed" });
     }
 
-    void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
+    void logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "/oms/v1/air/book",
       httpStatus: 200, level: "INFO", requestId: body.sessionId,
       requestSummary: { fareId: body.fareId, bookingRef: bookResult.bookingRef, pnr: bookResult.pnr,
         origin: snap.origin, destination: snap.destination, paxCount: body.passengers.length },
@@ -185,13 +186,13 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
         contactPhone:       body.contactPhone,
       }).returning();
 
-      await db.insert(bookingPassengers).values(
+      await insertMany(db, bookingPassengers, 
         paxValues.map((p) => ({ ...p, bookingId: booking!.id })),
       );
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error("[booking-save]", JSON.stringify({ sessionId: body.sessionId, bookingRef: bookResult.bookingRef, error: errMsg }));
-      void logSupplierCall(db, { tenantId, supplier: "TRIPJACK", endpoint: "db:bookings:insert",
+      void logSupplierCall(c.get("logs"), { tenantId, supplier: "TRIPJACK", endpoint: "db:bookings:insert",
         level: "ERROR", requestId: body.sessionId,
         requestSummary: { bookingRef: bookResult.bookingRef, pnr: bookResult.pnr },
         errorCode: "DB_WRITE_FAILED", errorMessage: errMsg });
@@ -246,7 +247,7 @@ bookingRoutes.post("/", zValidator("json", bookingCreateSchema), async (c) => {
   }).returning();
 
   // Insert passengers
-  await db.insert(bookingPassengers).values(
+  await insertMany(db, bookingPassengers, 
     body.passengers.map((p) => ({
       bookingId:     booking.id,
       passengerType: p.type,

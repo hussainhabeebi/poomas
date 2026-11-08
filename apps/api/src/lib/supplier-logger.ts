@@ -1,5 +1,4 @@
-import type { Db } from "@poomas/db";
-import { supplierApiLogs } from "@poomas/db/schema";
+import { supplierApiLogs, type LogsDb } from "@poomas/db/logs";
 
 export interface SupplierCallLog {
   tenantId:       string;
@@ -15,9 +14,11 @@ export interface SupplierCallLog {
   durationMs?:    number;
 }
 
-export async function logSupplierCall(db: Db, entry: SupplierCallLog): Promise<void> {
+// Written to the D1 logs database; skipped when the Worker has no LOGS_DB binding.
+export async function logSupplierCall(logs: LogsDb | null, entry: SupplierCallLog): Promise<void> {
+  if (!logs) return;
   try {
-    await db.insert(supplierApiLogs).values({
+    await logs.insert(supplierApiLogs).values({
       tenantId:        entry.tenantId,
       supplier:        entry.supplier,
       endpoint:        entry.endpoint,

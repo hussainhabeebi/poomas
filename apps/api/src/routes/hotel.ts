@@ -53,14 +53,14 @@ export async function logged<T>(
   const base = { tenantId: c.get("tenantId"), supplier: "TRIPJACK" as const, endpoint, requestId };
   try {
     const result = await call();
-    c.executionCtx.waitUntil(logSupplierCall(c.get("db"), {
+    c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), {
       ...base, level: "INFO", httpStatus: 200, durationMs: Date.now() - started,
       requestSummary: { ...requestSummary, ...summarize(result) },
     }));
     return result;
   } catch (err: any) {
     console.error(`[hotel] ${endpoint} failed`, err);
-    await logSupplierCall(c.get("db"), {
+    await logSupplierCall(c.get("logs"), {
       ...base, level: "ERROR",
       httpStatus: typeof err?.statusCode === "number" ? err.statusCode : undefined,
       errorCode: errorCodeOf(err),
@@ -157,7 +157,7 @@ function validJson<T extends z.ZodTypeAny>(schema: T, endpoint: string) {
   return zValidator("json", schema, (result, c: any) => {
     if (result.success) return;
     const issues = result.error.issues.slice(0, 5).map((i) => `${i.path.join(".") || "body"}: ${i.message}`);
-    c.executionCtx.waitUntil(logSupplierCall(c.get("db"), {
+    c.executionCtx.waitUntil(logSupplierCall(c.get("logs"), {
       tenantId: c.get("tenantId"), supplier: "TRIPJACK", endpoint: `hotel ${endpoint}`, level: "WARN",
       errorCode: "INVALID_REQUEST", errorMessage: `Hotel ${endpoint} request rejected before calling TripJack — ${issues.join("; ")}`,
       requestSummary: { issues, body: (result as any).data },

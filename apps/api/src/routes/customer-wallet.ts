@@ -6,13 +6,16 @@
 // POST /coupons               move part of the balance into a shareable coupon code
 // POST /coupons/:id/cancel    cancel an unredeemed coupon (amount returns to wallet)
 // POST /redeem                redeem someone else's coupon code into this wallet
+// GET  /bank-accounts         company accounts to recharge by bank transfer
+// GET  /deposits              this customer's bank-transfer recharges
+// POST /deposits              submit a recharge with the payment screenshot (multipart)
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
-import { bookings, payments, walletCoupons, walletTransactions, users } from "@poomas/db/schema";
-import { and, desc, eq, gt, ne } from "drizzle-orm";
+import { bookings, customerWalletDeposits, payments, walletCoupons, walletTransactions, users } from "@poomas/db/schema";
+import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Env, Variables } from "../types.js";
 import {
   CUSTOMER_WALLET_CURRENCY, COUPON_MIN_AMOUNT, COUPON_TTL_DAYS,
@@ -20,6 +23,8 @@ import {
   getOrCreateCustomerWallet, roundMoney,
 } from "../lib/customer-wallet.js";
 import { applyReferral, myReferral, ReferralError } from "../lib/referral.js";
+import { getBankAccounts, visibleAccounts } from "../lib/bank-accounts.js";
+import { saveUpload } from "./agent-portal.js";
 
 export const customerWalletRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -219,4 +224,68 @@ customerWalletRoutes.post("/referral/apply", zValidator("json", z.object({ code:
     if (err instanceof ReferralError) return c.json({ error: err.message }, err.status);
     throw err;
   }
+});
+
+// ── Recharge by bank transfer (credited once staff check the screenshot) ─────
+
+const MAX_PENDING_DEPOSITS = 5;
+
+customerWalletRoutes.get("/bank-accounts", async (c) => {
+  const accounts = visibleAccounts(await getBankAccounts(c.env, c.get("tenantId"), c.get("tenant")?.slug), CUSTOMER_WALLET_CURRENCY);
+  return c.json({ walletCurrency: CUSTOMER_WALLET_CURRENCY, accounts });
+});
+
+customerWalletRoutes.get("/deposits", async (c) => {
+  const rows = await c.get("db").select({
+    id: customerWalletDeposits.id, amount: customerWalletDeposits.amount, currency: customerWalletDeposits.currency,
+    creditAmount: customerWalletDeposits.creditAmount, reference: customerWalletDeposits.reference, bankAccount: customerWalletDeposits.bankAccount,
+    status: customerWalletDeposits.status, adminNote: customerWalletDeposits.adminNote, createdAt: customerWalletDeposits.createdAt,
+  })
+    .from(customerWalletDeposits)
+    .where(eq(customerWalletDeposits.userId, c.get("userId")!))
+    .orderBy(desc(customerWalletDeposits.createdAt))
+    .limit(30);
+  return c.json({ deposits: rows.map((r) => ({ ...r, amount: Number(r.amount), creditAmount: r.creditAmount === null ? null : Number(r.creditAmount) })) });
+});
+
+customerWalletRoutes.post("/deposits", async (c) => {
+  const db = c.get("db");
+  const tenantId = c.get("tenantId");
+  const userId = c.get("userId")!;
+  const form = await c.req.formData().catch(() => null);
+  if (!form) return c.json({ error: "Send the deposit as a form with the screenshot" }, 400);
+  const files = form.getAll("receipt").filter((f): f is File => f instanceof File && f.size > 0).slice(0, 3);
+  const amount = roundMoney(Number(form.get("amount")));
+  const reference = String(form.get("reference") ?? "").trim().slice(0, 80);
+  const paidOn = String(form.get("paidOn") ?? "").slice(0, 10) || null;
+  const bankAccountId = String(form.get("bankAccountId") ?? "").trim();
+
+  if (!(amount > 0) || amount > 10_000_000) return c.json({ error: "Enter the amount you paid" }, 400);
+  if (!files.length) return c.json({ error: "Upload the payment screenshot or receipt" }, 400);
+  const bad = files.find((f) => !/^(image\/|application\/pdf$)/.test(f.type) || f.size > 8 * 1024 * 1024);
+  if (bad) return c.json({ error: "The receipt must be a photo, screenshot or PDF under 8 MB" }, 400);
+  const accounts = (await getBankAccounts(c.env, tenantId, c.get("tenant")?.slug)).filter((a) => a.active);
+  const bank = accounts.find((a) => a.id === bankAccountId);
+  if (!bank) return c.json({ error: "Choose the bank account you paid into" }, 400);
+
+  const [open] = await db.select({ n: sql<number>`count(*)` }).from(customerWalletDeposits)
+    .where(and(eq(customerWalletDeposits.userId, userId), eq(customerWalletDeposits.status, "PENDING")));
+  if ((open?.n ?? 0) >= MAX_PENDING_DEPOSITS) return c.json({ error: "You already have several recharges waiting for approval. Please wait until they're checked." }, 429);
+  // The same transfer reference can't be credited twice.
+  if (reference) {
+    const [dup] = await db.select({ status: customerWalletDeposits.status }).from(customerWalletDeposits)
+      .where(and(eq(customerWalletDeposits.tenantId, tenantId), sql`lower(${customerWalletDeposits.reference}) = ${reference.toLowerCase()}`,
+        inArray(customerWalletDeposits.status, ["PENDING", "APPROVED"]))).limit(1);
+    if (dup) return c.json({ error: `A recharge with reference ${reference} was already submitted.` }, 409);
+  }
+
+  const wallet = await getOrCreateCustomerWallet(db, tenantId, userId);
+  const attachments = [];
+  for (const f of files) attachments.push(await saveUpload(c.env, `customer-deposits/${userId}`, f));
+  const [deposit] = await db.insert(customerWalletDeposits).values({
+    tenantId, userId, walletAccountId: wallet.id, amount: amount.toFixed(2), currency: bank.currency,
+    reference: reference || null, paidOn, attachments,
+    bankAccount: { id: bank.id, label: bank.label, bankName: bank.bankName, accountNumber: bank.accountNumber, currency: bank.currency },
+  }).returning({ id: customerWalletDeposits.id, status: customerWalletDeposits.status });
+  return c.json({ deposit, message: "Recharge submitted. We'll add it to your wallet once our team checks the payment." }, 201);
 });

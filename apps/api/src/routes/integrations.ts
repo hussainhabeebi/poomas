@@ -58,7 +58,7 @@ integrationRoutes.post("/checkout-sessions",async(c)=>{
   clientId:cleanText(body.clientId??body.client_id,50),expiresAt,
   ...(agent?{agentNumber:agent.number,agentCurrency:agent.currency}:{})
  }),{expirationTtl:PREFILL_TTL_SECONDS});
- if(agent)c.executionCtx.waitUntil(trackAgentActivity(c.get("db"),tenantId,agent.id,"checkouts").catch((err)=>console.error("[agent-activity]",err)));
+ if(agent)c.executionCtx.waitUntil(trackAgentActivity(c.get("logs"),tenantId,agent.id,"checkouts").catch((err)=>console.error("[agent-activity]",err)));
  const cur=agent?`&pc=${encodeURIComponent(agent.currency)}`:"";
  return c.json({sessionId:token,checkoutUrl:`https://flypoomas.com/book?session=${encodeURIComponent(token)}${cur}`,expiresAt,
   ...(agent?{agent:{number:agent.number,businessName:agent.businessName,currency:agent.currency}}:{}),...(warning?{warning}:{})},201);
@@ -103,6 +103,6 @@ integrationRoutes.get("/agents/:number/stats",async(c)=>{
  const agent=await resolveAgentNumber(c.env,c.get("db"),tenantId,c.req.param("number"));
  if(!agent)return c.json({error:"Agent number not found"},404);
  const days=Math.min(365,Math.max(1,Number(c.req.query("days"))||30));
- const stats=(await agentStats(c.get("db"),tenantId,[agent.id],days)).get(agent.id);
+ const stats=(await agentStats(c.get("db"),c.get("logs"),tenantId,[agent.id],days)).get(agent.id);
  return c.json({agentNumber:agent.number,businessName:agent.businessName,currency:agent.currency,days,stats});
 });

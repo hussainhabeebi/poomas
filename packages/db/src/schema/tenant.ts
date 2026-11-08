@@ -1,13 +1,11 @@
-import {
-  pgTable, text, boolean, integer, decimal, timestamp, jsonb, uniqueIndex, index,
-} from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { sqliteTable, text, integer, uniqueIndex, index, primaryKey } from "drizzle-orm/sqlite-core";
+import { uuidPk, timestamp, timestampNow, decimal, json, textArray, boolean, date } from "./columns.js";
 import {
   regionEnum, currencyEnum, tenantPlanEnum, tenantStatusEnum, userRoleEnum,
 } from "./enums.js";
 
-export const tenants = pgTable("tenants", {
-  id:             text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const tenants = sqliteTable("tenants", {
+  id:             uuidPk(),
   name:           text("name").notNull(),
   slug:           text("slug").notNull(),                 // skyjet → skyjet.poomas.com
   customDomain:   text("custom_domain"),                  // flights.skyjetagency.com (CNAME)
@@ -15,12 +13,12 @@ export const tenants = pgTable("tenants", {
   // Self-referential: a tenant can be a reseller with sub-tenants
   parentTenantId: text("parent_tenant_id"),
 
-  status:         tenantStatusEnum("status").notNull().default("ONBOARDING"),
-  plan:           tenantPlanEnum("plan").notNull().default("TRIAL"),
+  status:         text("status", { enum: tenantStatusEnum }).notNull().default("ONBOARDING"),
+  plan:           text("plan", { enum: tenantPlanEnum }).notNull().default("TRIAL"),
 
   // Region / locale defaults
-  region:         regionEnum("region").notNull().default("INDIA"),
-  defaultCurrency: currencyEnum("default_currency").notNull().default("INR"),
+  region:         text("region", { enum: regionEnum }).notNull().default("INDIA"),
+  defaultCurrency: text("default_currency", { enum: currencyEnum }).notNull().default("INR"),
   defaultLanguage: text("default_language").notNull().default("en"),     // en | ml | ar
 
   // ── White-label branding ──
@@ -44,9 +42,9 @@ export const tenants = pgTable("tenants", {
   whatsappSenderId: text("whatsapp_sender_id"),  // BSP number for outbound WA
 
   // ── Content ──
-  homeBannerConfig: jsonb("home_banner_config"),
-  footerConfig:     jsonb("footer_config"),
-  homepageRoutes:   jsonb("homepage_routes"),
+  homeBannerConfig: json("home_banner_config"),
+  footerConfig:     json("footer_config"),
+  homepageRoutes:   json("homepage_routes"),
 
   // ── Legal ──
   gstNumber:    text("gst_number"),
@@ -68,96 +66,96 @@ export const tenants = pgTable("tenants", {
   bookingRpmLimit: integer("booking_rpm_limit").notNull().default(20),
 
   // ── Payment gateway config (null = inherit platform defaults) ──
-  paymentConfig: jsonb("payment_config"),   // { razorpay: {...}, nomod: {...} }
+  paymentConfig: json("payment_config"),   // { razorpay: {...}, nomod: {...} }
 
   // ── Billing (Poomas charges this tenant/reseller) ──
   subscriptionFee:    decimal("subscription_fee", { precision: 14, scale: 2 }).notNull().default("0"),
   perBookingFee:      decimal("per_booking_fee",  { precision: 14, scale: 4 }).notNull().default("0"),
   perBookingFeeType:  text("per_booking_fee_type").notNull().default("PERCENTAGE"),
   billingCycleDay:    integer("billing_cycle_day").notNull().default(1),
-  trialEndsAt:        timestamp("trial_ends_at", { withTimezone: true }),
-  subscriptionEndsAt: timestamp("subscription_ends_at", { withTimezone: true }),
+  trialEndsAt:        timestamp("trial_ends_at"),
+  subscriptionEndsAt: timestamp("subscription_ends_at"),
 
   // ── Usage metering ── (reset monthly by a scheduled Worker)
-  usageCurrentMonth: jsonb("usage_current_month"),   // { searchCalls, bookings, waMessages }
-  usageResetAt:      timestamp("usage_reset_at", { withTimezone: true }),
+  usageCurrentMonth: json("usage_current_month"),   // { searchCalls, bookings, waMessages }
+  usageResetAt:      timestamp("usage_reset_at"),
 
   // ── Setup ──
   onboardingStep:  integer("onboarding_step").notNull().default(0),
   isSetupComplete: boolean("is_setup_complete").notNull().default(false),
 
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestampNow("created_at"),
+  updatedAt: timestampNow("updated_at"),
 }, (t) => ({
   slugIdx:         uniqueIndex("tenants_slug_idx").on(t.slug),
   customDomainIdx: uniqueIndex("tenants_custom_domain_idx").on(t.customDomain),
 }));
 
-export const tenantApiKeys = pgTable("tenant_api_keys", {
-  id:           text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const tenantApiKeys = sqliteTable("tenant_api_keys", {
+  id:           uuidPk(),
   tenantId:     text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
 
   name:         text("name").notNull(),
   keyHash:      text("key_hash").notNull(),    // argon2 hash — never stored in plain text
   keyPrefix:    text("key_prefix").notNull(),  // first 8 chars shown in UI ("pmsk_abc1...")
-  scopes:       text("scopes").array().notNull().default(sql`'{}'::text[]`),
+  scopes:       textArray("scopes"),
 
   isActive:     boolean("is_active").notNull().default(true),
-  lastUsedAt:   timestamp("last_used_at", { withTimezone: true }),
-  expiresAt:    timestamp("expires_at", { withTimezone: true }),
+  lastUsedAt:   timestamp("last_used_at"),
+  expiresAt:    timestamp("expires_at"),
 
-  createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  revokedAt:    timestamp("revoked_at", { withTimezone: true }),
+  createdAt:    timestampNow("created_at"),
+  revokedAt:    timestamp("revoked_at"),
   revokedById:  text("revoked_by_id"),
 }, (t) => ({
   keyHashIdx: uniqueIndex("tenant_api_keys_hash_idx").on(t.keyHash),
 }));
 
-export const announcements = pgTable("announcements", {
-  id:         text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const announcements = sqliteTable("announcements", {
+  id:         uuidPk(),
   tenantId:   text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
 
   title:      text("title").notNull(),
   content:    text("content").notNull(),
   type:       text("type").notNull().default("INFO"),     // INFO | WARNING | SUCCESS | ALERT
-  targetRole: userRoleEnum("target_role"),                // null = all roles
+  targetRole: text("target_role", { enum: userRoleEnum }),                // null = all roles
   isActive:   boolean("is_active").notNull().default(true),
 
-  createdAt:  timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  expiresAt:  timestamp("expires_at", { withTimezone: true }),
+  createdAt:  timestampNow("created_at"),
+  expiresAt:  timestamp("expires_at"),
 });
 
-export const subscriptionInvoices = pgTable("subscription_invoices", {
-  id:          text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const subscriptionInvoices = sqliteTable("subscription_invoices", {
+  id:          uuidPk(),
   tenantId:    text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
 
-  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
-  periodEnd:   timestamp("period_end",   { withTimezone: true }).notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd:   timestamp("period_end").notNull(),
 
   subscriptionFee: decimal("subscription_fee", { precision: 14, scale: 2 }).notNull(),
   transactionFees: decimal("transaction_fees", { precision: 14, scale: 2 }).notNull(),
   totalAmount:     decimal("total_amount",     { precision: 14, scale: 2 }).notNull(),
-  currency:        currencyEnum("currency").notNull(),
+  currency:        text("currency", { enum: currencyEnum }).notNull(),
 
   status:     text("status").notNull().default("DRAFT"),  // DRAFT|SENT|PAID|OVERDUE
-  paidAt:     timestamp("paid_at",      { withTimezone: true }),
+  paidAt:     timestamp("paid_at"),
   paymentRef: text("payment_ref"),
-  lineItems:  jsonb("line_items").notNull(),
+  lineItems:  json("line_items").notNull(),
 
-  createdAt:  timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt:  timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt:  timestampNow("created_at"),
+  updatedAt:  timestampNow("updated_at"),
 });
 
-export const webhookConfigs = pgTable("webhook_configs", {
-  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const webhookConfigs = sqliteTable("webhook_configs", {
+  id:        uuidPk(),
   tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
 
   name:      text("name").notNull(),
   url:       text("url").notNull(),
   secret:    text("secret"),     // Used to sign payloads (HMAC-SHA256)
-  events:    text("events").array().notNull(),
+  events:    textArray("events"),
   isActive:  boolean("is_active").notNull().default(true),
 
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestampNow("created_at"),
+  updatedAt: timestampNow("updated_at"),
 });

@@ -1,25 +1,25 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env, Variables, TenantContext } from "../types.js";
 import { createDb } from "@poomas/db";
+import { createLogsDb } from "@poomas/db/logs";
 import { tenants, tenantSupplierConfigs } from "@poomas/db/schema";
 import { eq, and } from "drizzle-orm";
 
-const TENANT_CACHE_TTL = 60;
+// Every cache miss is a Neon query (and keeps the Neon compute awake), so the tenant
+// record is cached for an hour; admin edits clear it via forgetTenantCache().
+const TENANT_CACHE_TTL = 3600;
 
 // Derives tenant_id from the request hostname (subdomain or custom domain).
 // Never trusts X-Tenant-ID header from clients — all tenant derivation is server-side.
 export const resolveTenant: MiddlewareHandler<{ Bindings: Env; Variables: Variables }> = async (c, next) => {
-  // @poomas/db currently uses drizzle-orm/neon-http. That driver must receive the
-  // actual Neon DATABASE_URL. A Cloudflare Hyperdrive connectionString is a Postgres
-  // proxy socket URL and is NOT compatible with neon-http; using it can result in
-  // Cloudflare origin/DNS failures before the route handler executes.
-  if (!c.env.DATABASE_URL) {
-    console.error("[tenant] DATABASE_URL Worker secret is not configured");
+  if (!c.env.DB) {
+    console.error("[tenant] D1 binding DB is not configured");
     return c.json({ error: "Database connection is not configured" }, 503);
   }
 
-  const db = createDb(c.env.DATABASE_URL);
+  const db = createDb(c.env.DB);
   c.set("db", db);
+  c.set("logs", createLogsDb(c.env.LOGS_DB));
 
   const host = new URL(c.req.url).hostname;
 
@@ -129,4 +129,16 @@ function extractSlug(host: string, platformSlug: string): string {
   }
 
   return host.split(".")[0];
+}
+
+// Clears every cached host → tenant entry for a tenant (after admin edits): its subdomain,
+// its custom domain and, for the platform tenant, the hosts extractSlug() maps to it.
+export async function forgetTenantCache(
+  env: Pick<Env, "TENANT_CACHE_KV" | "PLATFORM_TENANT_SLUG">,
+  tenant: { slug: string; customDomain?: string | null },
+) {
+  const hosts = [`${tenant.slug}.flypoomas.com`];
+  if (tenant.customDomain) hosts.push(tenant.customDomain);
+  if (tenant.slug === env.PLATFORM_TENANT_SLUG) hosts.push("api.flypoomas.com", "flypoomas.com");
+  await Promise.all(hosts.map((h) => env.TENANT_CACHE_KV.delete(`tenant:host:${h}`).catch(() => {})));
 }

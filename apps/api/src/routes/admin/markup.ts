@@ -14,6 +14,7 @@ import { z } from "zod";
 import { agents, markupRules } from "@poomas/db/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
+import { forgetMarkupRules } from "../../lib/markup-rules.js";
 
 export const markupAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -96,6 +97,7 @@ markupAdminRoutes.post("/", zValidator("json", ruleSchema), async (c) => {
 
   await assertAgentInTenant(db, tenantId, body.agentId);
   const [rule] = await db.insert(markupRules).values({ tenantId, ...toRow(body) }).returning();
+  await forgetMarkupRules(c.env, tenantId);
   return c.json({ rule }, 201);
 });
 
@@ -110,6 +112,7 @@ markupAdminRoutes.put("/:id", zValidator("json", ruleSchema), async (c) => {
     .where(and(eq(markupRules.id, c.req.param("id")), eq(markupRules.tenantId, tenantId)))
     .returning();
   if (!rule) throw new HTTPException(404, { message: "Markup rule not found" });
+  await forgetMarkupRules(c.env, tenantId);
   return c.json({ rule });
 });
 
@@ -121,5 +124,6 @@ markupAdminRoutes.delete("/:id", async (c) => {
     .where(and(eq(markupRules.id, c.req.param("id")), eq(markupRules.tenantId, tenantId)))
     .returning({ id: markupRules.id });
   if (!rule) throw new HTTPException(404, { message: "Markup rule not found" });
+  await forgetMarkupRules(c.env, tenantId);
   return c.json({ ok: true });
 });

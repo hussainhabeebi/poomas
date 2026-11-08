@@ -7,7 +7,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { users, walletAccounts, walletTransactions } from "@poomas/db/schema";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { creditWallet, getOrCreateCustomerWallet } from "../../lib/customer-wallet.js";
 
@@ -16,7 +16,7 @@ export const customerWalletsAdminRoutes = new Hono<{ Bindings: Env; Variables: V
 customerWalletsAdminRoutes.get("/", async (c) => {
   const db = c.get("db");
   const q = (c.req.query("q") ?? "").trim();
-  const like = `%${q.replace(/[%_]/g, "\\$&")}%`;
+  const pattern = `%${q.replace(/[%_]/g, "\\$&")}%`;
   const rows = await db.select({
     userId: users.id, name: users.name, email: users.email, phone: users.phone,
     createdAt: users.createdAt, balance: walletAccounts.balance,
@@ -26,7 +26,7 @@ customerWalletsAdminRoutes.get("/", async (c) => {
     .where(and(
       eq(users.tenantId, c.get("tenantId")),
       eq(users.role, "CUSTOMER"),
-      q ? or(ilike(users.name, like), ilike(users.email, like), ilike(users.phone, like)) : undefined,
+      q ? or(...[users.name, users.email, users.phone].map((col) => sql`${col} like ${pattern} escape '\\'`)) : undefined,
     ))
     .orderBy(desc(users.createdAt))
     .limit(50);

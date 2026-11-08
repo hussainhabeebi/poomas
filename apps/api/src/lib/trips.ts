@@ -32,7 +32,7 @@ export async function tripjackClientFor(c: Ctx, bookingId?: string) {
   const { platformCredentials, supplierConfigs } = await resolveFlightSuppliers(c.env, c.get("tenant"), c.get("tenantId"));
   const cfg = supplierConfigs.find((s) => s.name === "TRIPJACK");
   const recorder: ExchangeRecorder | undefined = bookingId
-    ? (x) => persistInBackground(c, persistExchanges(c.env, c.get("db"), c.get("tenantId"), [x], { bookingId }))
+    ? (x) => persistInBackground(c, persistExchanges(c.env, c.get("tenantId"), [x], { bookingId }))
     : undefined;
   return new TripjackClient({ ...(platformCredentials.TRIPJACK ?? {}), ...(cfg?.credentials ?? {}), recorder });
 }
@@ -359,7 +359,7 @@ export async function settleRefund(
 }
 
 export function logCancellationCall(c: Ctx, entry: { endpoint: string; level: "INFO" | "WARN" | "ERROR"; bookingId: string; summary?: Record<string, unknown>; snippet?: unknown; errorMessage?: string; errorCode?: string }) {
-  const work = logSupplierCall(c.get("db"), {
+  const work = logSupplierCall(c.get("logs"), {
     tenantId: c.get("tenantId"), supplier: "TRIPJACK", endpoint: entry.endpoint, level: entry.level,
     requestId: entry.bookingId, requestSummary: { bookingId: entry.bookingId, ...(entry.summary ?? {}) },
     responseSnippet: entry.snippet === undefined ? undefined : JSON.stringify(entry.snippet).slice(0, 800),

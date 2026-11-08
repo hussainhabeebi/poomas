@@ -1,0 +1,83 @@
+name: D1 admin tasks
+
+# Run by hand: Actions → "D1 admin tasks" → Run workflow.
+#   set-admin-password  creates/updates a SUPER_ADMIN on the platform tenant with the given
+#                       password hash (pbkdf2:sha256:… — never a plain password).
+#   restore-tenant-id   gives the platform tenant back the id its Admin settings in KV are
+#                       stored under (admin_settings:<id>:…), so saved TripJack / payment
+#                       settings are found again. Only applies when exactly one id is found.
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task to run
+        type: choice
+        options: [set-admin-password, restore-tenant-id]
+      email:
+        description: "set-admin-password: admin email"
+        default: ""
+      password_hash:
+        description: "set-admin-password: pbkdf2:sha256:<iterations>:<salt>:<hash>"
+        default: ""
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+      - name: Point wrangler.toml at the poomas-db database
+        run: |
+          set -euo pipefail
+          id="$(pnpm exec wrangler d1 list --json | jq -r '.[] | select(.name == "poomas-db") | .uuid' | head -n1)"
+          [ -n "$id" ] || { echo "poomas-db not found"; exit 1; }
+          sed -i "s/^database_id       = .*/database_id       = \"$id\"/" wrangler.toml
+
+      - name: Set admin password
+        if: inputs.task == 'set-admin-password'
+        env:
+          EMAIL: ${{ inputs.email }}
+          HASH: ${{ inputs.password_hash }}
+        run: |
+          set -euo pipefail
+          email="$(echo "$EMAIL" | tr '[:upper:]' '[:lower:]' | xargs)"
+          [[ "$email" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]+$ ]] || { echo "Invalid email"; exit 1; }
+          [[ "$HASH" =~ ^pbkdf2:sha256:[0-9]+:[0-9a-f]{32}:[0-9a-f]{64}$ ]] || { echo "Invalid password hash"; exit 1; }
+          pnpm exec wrangler d1 execute poomas-db --remote --command "INSERT INTO users (tenant_id, email, name, role, is_active, email_verified, password_hash) SELECT id, '$email', 'Admin', 'SUPER_ADMIN', 1, 1, '$HASH' FROM tenants WHERE slug = 'poomas' ON CONFLICT (tenant_id, email) DO UPDATE SET password_hash = excluded.password_hash, role = 'SUPER_ADMIN', is_active = 1;"
+          pnpm exec wrangler d1 execute poomas-db --remote --json --command "SELECT u.email, u.role, u.is_active, t.slug FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE lower(u.email) = '$email';" | jq -c '.[0].results'
+
+      - name: Restore platform tenant id
+        if: inputs.task == 'restore-tenant-id'
+        run: |
+          set -euo pipefail
+          ns="$(grep -A2 'binding *= *"TENANT_CACHE_KV"' wrangler.toml | grep '^id' | sed 's/.*"\(.*\)"/\1/')"
+          ids="$(pnpm exec wrangler kv key list --namespace-id "$ns" --remote --prefix "admin_settings:" | jq -r '.[].name' | cut -d: -f2 | sort -u)"
+          echo "Tenant ids found in KV admin settings:"; echo "$ids"
+          count="$(echo "$ids" | grep -c . || true)"
+          [ "$count" = "1" ] || { echo "Expected exactly one id, found $count — not changing anything."; exit 1; }
+          old="$ids"
+          [[ "$old" =~ ^[0-9a-f-]{36}$ ]] || { echo "Unexpected id format: $old"; exit 1; }
+          cur="$(pnpm exec wrangler d1 execute poomas-db --remote --json --command "SELECT id FROM tenants WHERE slug = 'poomas';" | jq -r '.[0].results[0].id')"
+          echo "Current platform tenant id: $cur"
+          [ "$cur" != "$old" ] || { echo "Already using $old — nothing to do."; exit 0; }
+          sql="PRAGMA defer_foreign_keys = true;"
+          for t in announcements subscription_invoices tenant_api_keys webhook_configs social_auth_challenges users agent_quotes agent_requests agents booking_amendments bookings support_requests customer_wallet_deposits wallet_accounts wallet_coupons leadvyne_configs markup_rules promo_codes tenant_supplier_configs audit_logs; do
+            sql="$sql UPDATE $t SET tenant_id = '$old' WHERE tenant_id = '$cur';"
+          done
+          sql="$sql UPDATE tenants SET parent_tenant_id = '$old' WHERE parent_tenant_id = '$cur'; UPDATE tenants SET id = '$old' WHERE id = '$cur';"
+          pnpm exec wrangler d1 execute poomas-db --remote --command "$sql"
+          pnpm exec wrangler kv key delete --namespace-id "$ns" --remote "tenant:host:api.flypoomas.com" || true
+          echo "Platform tenant id restored to $old"

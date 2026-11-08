@@ -5,6 +5,7 @@ import { HTTPException } from "hono/http-exception";
 import { tenants, tenantSupplierConfigs, bookings, agents } from "@poomas/db/schema";
 import { eq, sql } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
+import { forgetTenantCache } from "../../middleware/tenant.js";
 import { requireRole } from "../../middleware/auth.js";
 
 export const tenantsAdminRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -27,9 +28,9 @@ tenantsAdminRoutes.get("/:id", async (c) => {
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
   if (!tenant) throw new HTTPException(404, { message: "Tenant not found" });
   const [[bookingStats], [agentStats], suppliers] = await Promise.all([
-    db.select({ total: sql<number>`count(*)::int`, ticketed: sql<number>`count(*) filter (where ${bookings.status} = 'TICKETED')::int` })
+    db.select({ total: sql<number>`count(*)`, ticketed: sql<number>`count(*) filter (where ${bookings.status} = 'TICKETED')` })
       .from(bookings).where(eq(bookings.tenantId, id)),
-    db.select({ total: sql<number>`count(*)::int` }).from(agents).where(eq(agents.tenantId, id)),
+    db.select({ total: sql<number>`count(*)` }).from(agents).where(eq(agents.tenantId, id)),
     db.select({ supplier: tenantSupplierConfigs.supplier, isEnabled: tenantSupplierConfigs.isEnabled, priority: tenantSupplierConfigs.priority })
       .from(tenantSupplierConfigs).where(eq(tenantSupplierConfigs.tenantId, id)),
   ]);
@@ -69,7 +70,7 @@ tenantsAdminRoutes.post("/", zValidator("json", createTenantSchema), async (c) =
   ]);
 
   // Invalidate tenant cache for this slug/domain
-  await c.env.TENANT_CACHE_KV.delete(`tenant:host:${tenant.slug}.flypoomas.com`);
+  await forgetTenantCache(c.env, tenant);
 
   return c.json({ tenantId: tenant.id }, 201);
 });
@@ -87,9 +88,9 @@ tenantsAdminRoutes.patch("/:id/status", async (c) => {
     .where(eq(tenants.id, c.req.param("id")));
 
   // Evict from KV cache so next request reloads from DB
-  const [row] = await db.select({ slug: tenants.slug }).from(tenants).where(eq(tenants.id, c.req.param("id")));
+  const [row] = await db.select({ slug: tenants.slug, customDomain: tenants.customDomain }).from(tenants).where(eq(tenants.id, c.req.param("id")));
   if (row) {
-    await c.env.TENANT_CACHE_KV.delete(`tenant:host:${row.slug}.flypoomas.com`);
+    await forgetTenantCache(c.env, row);
   }
 
   return c.json({ ok: true });

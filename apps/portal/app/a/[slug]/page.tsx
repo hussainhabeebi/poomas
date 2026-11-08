@@ -7,6 +7,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, fmtDate, fmtTime, money } from "../../../lib/api";
+import { groupFareOptions } from "../../../lib/fare-options";
 
 interface Agency { name: string; logoUrl: string | null; color: string; phone: string; email: string; address: string | null; currency: string }
 type Fare = { id: string; airline: string; airlineName: string; flightNumber: string; origin: string; destination: string; departureTime: string; arrivalTime: string; duration: number; stops: number; totalFare: number; displayPrice?: number; supplier: string; currency: string; baggage?: { checked?: string }; isRefundable: boolean; isBookable?: boolean; tripKey?: string };
@@ -33,7 +34,8 @@ export default function AgencySitePage() {
     setSearching(true); setFares(null); setError("");
     try {
       const d = await api<{ fares: Fare[] }>("/api/search", { auth: false, json: { origin: q.origin.toUpperCase(), destination: q.destination.toUpperCase(), departureDate: q.date, adults: q.adults, children: 0, infants: 0, cabinClass: "ECONOMY", tripType: "ONEWAY", currency: agency?.currency ?? "INR" } });
-      const list = d.fares.filter((f) => f.isBookable !== false).sort((a, b) => (a.displayPrice ?? a.totalFare) - (b.displayPrice ?? b.totalFare)).slice(0, 30);
+      // One row per flight: its cheapest fare option.
+      const list = groupFareOptions(d.fares.filter((f) => f.isBookable !== false)).map((g) => g.lead).sort((a, b) => (a.displayPrice ?? a.totalFare) - (b.displayPrice ?? b.totalFare)).slice(0, 30);
       const p = await api<{ prices: { id: string; price: number }[] }>(`/api/agent-public/site/${slug}/prices`, { auth: false, json: { fares: list.map((f) => ({ id: f.id, totalFare: f.totalFare, displayPrice: f.displayPrice, airline: f.airline, origin: f.origin, destination: f.destination, supplier: f.supplier })) } });
       const map = new Map(p.prices.map((x) => [x.id, x.price]));
       setFares(list.map((f) => ({ ...f, sell: map.get(f.id) ?? f.displayPrice ?? f.totalFare })));

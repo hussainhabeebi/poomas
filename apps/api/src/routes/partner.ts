@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { insertMany } from "@poomas/db";
 import type { Context, MiddlewareHandler } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -384,7 +385,7 @@ partnerRoutes.post("/checkout-sessions", zValidator("json", checkoutSchema), asy
       .limit(1);
 
     if (!existingPassenger) {
-      await c.get("db").insert(bookingPassengers).values(body.passengers.map((passenger) => ({
+      await insertMany(c.get("db"), bookingPassengers, body.passengers.map((passenger) => ({
         bookingId: reservation.id,
         passengerType: passenger.type,
         title: passenger.title ?? null,

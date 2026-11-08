@@ -37,7 +37,7 @@ leadvyneAgentsAdminRoutes.get("/", async (c) => {
   }).from(agents)
     .where(and(eq(agents.tenantId, tenantId), onlyLeadvyne ? sql`${agents.settings}->>'source' = 'LEADVYNE'` : undefined))
     .orderBy(desc(agents.createdAt)).limit(500);
-  const stats = await agentStats(db, tenantId, rows.map((r) => r.id), days);
+  const stats = await agentStats(db, c.get("logs"), tenantId, rows.map((r) => r.id), days);
   const list = rows.map((r) => {
     const s = settingsOf(r.settings);
     return {
@@ -104,7 +104,7 @@ leadvyneAgentsAdminRoutes.post("/", zValidator("json", createSchema, (r, c) => {
 
 leadvyneAgentsAdminRoutes.get("/:id/daily", async (c) => {
   const days = Math.min(180, Math.max(7, Number(c.req.query("days")) || 30));
-  return c.json({ days, series: await agentDaily(c.get("db"), c.get("tenantId"), c.req.param("id"), days) });
+  return c.json({ days, series: await agentDaily(c.get("db"), c.get("logs"), c.get("tenantId"), c.req.param("id"), days) });
 });
 
 leadvyneAgentsAdminRoutes.patch("/:id", zValidator("json", z.object({

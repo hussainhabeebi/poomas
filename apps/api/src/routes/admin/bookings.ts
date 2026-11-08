@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import {
   bookings, bookingPassengers, payments, bookingAmendments, supportRequests,
-  walletTransactions, supplierExchanges, users,
+  walletTransactions, users,
 } from "@poomas/db/schema";
+import { supplierExchanges } from "@poomas/db/logs";
 import { eq, and, asc, desc, or } from "drizzle-orm";
 import type { Env, Variables } from "../../types.js";
 import { tripjackClientFor, parseBookingDetails } from "../../lib/trips.js";
@@ -104,6 +105,7 @@ bookingsAdminRoutes.get("/certification.zip", async (c) => {
 
 bookingsAdminRoutes.get("/:id", async (c) => {
   const db = c.get("db");
+  const logs = c.get("logs");
   const b = await loadBooking(c, c.req.param("id"));
   const [passengers, paymentRows, amendments, support, walletTx, exchanges, customer] = await Promise.all([
     db.select().from(bookingPassengers).where(eq(bookingPassengers.bookingId, b.id)),
@@ -111,7 +113,7 @@ bookingsAdminRoutes.get("/:id", async (c) => {
     db.select().from(bookingAmendments).where(eq(bookingAmendments.bookingId, b.id)).orderBy(desc(bookingAmendments.createdAt)),
     db.select().from(supportRequests).where(eq(supportRequests.bookingId, b.id)).orderBy(desc(supportRequests.createdAt)),
     db.select().from(walletTransactions).where(eq(walletTransactions.bookingId, b.id)).orderBy(asc(walletTransactions.createdAt)),
-    db.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt)),
+    logs ? logs.select().from(supplierExchanges).where(exchangeFilter(b)).orderBy(asc(supplierExchanges.startedAt)) : Promise.resolve([]),
     b.userId ? db.select({ id: users.id, name: users.name, email: users.email, phone: users.phone }).from(users).where(eq(users.id, b.userId)).limit(1) : Promise.resolve([]),
   ]);
   const waiting = ["PAYMENT_PENDING", "PAYMENT_FAILED"].includes(b.status);
@@ -123,7 +125,7 @@ bookingsAdminRoutes.get("/:id", async (c) => {
     booking: b, queueError, queueReceipt, paymentConfirmed, events: await readBookingEvents(c.env, b.id), customer: customer[0] ?? null, passengers, payments: paymentRows, cancellations: amendments,
     supportRequests: support, walletTransactions: walletTx,
     exchanges: exchanges.map((x) => ({ ...x, requestKey: undefined, responseKey: undefined, hasResponse: Boolean(x.responseKey) })),
-    ...(b.supplier === "TRIPJACK" ? { certification: await certificationCoverage(c.env, db, b, exchanges).catch(() => null) } : {}),
+    ...(b.supplier === "TRIPJACK" ? { certification: await certificationCoverage(c.env, b, exchanges).catch(() => null) } : {}),
   });
 });
 
@@ -133,8 +135,9 @@ bookingsAdminRoutes.get("/:id/exchanges/:exchangeId/:part", async (c) => {
   const b = await loadBooking(c, c.req.param("id"));
   const part = c.req.param("part");
   if (part !== "request" && part !== "response") throw new HTTPException(400, { message: "part must be request or response" });
-  const [x] = await db.select().from(supplierExchanges)
-    .where(and(eq(supplierExchanges.id, c.req.param("exchangeId")), exchangeFilter(b)!)).limit(1);
+  const logs = c.get("logs");
+  const [x] = logs ? await logs.select().from(supplierExchanges)
+    .where(and(eq(supplierExchanges.id, c.req.param("exchangeId")), exchangeFilter(b)!)).limit(1) : [];
   const key = part === "request" ? x?.requestKey : x?.responseKey;
   if (!x || !key) throw new HTTPException(404, { message: "Log file not found" });
   const obj = await c.env.DOCUMENTS_R2.get(key);

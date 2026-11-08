@@ -1,7 +1,6 @@
-import {
-  pgTable, text, boolean, integer, decimal, timestamp, jsonb, index,
-} from "drizzle-orm/pg-core";
+import { sqliteTable, text, integer, uniqueIndex, index, primaryKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+import { uuidPk, timestamp, timestampNow, decimal, json, textArray, boolean, date } from "./columns.js";
 import { tenants } from "./tenant.js";
 import { users } from "./user.js";
 import { agents } from "./agent.js";
@@ -10,27 +9,27 @@ import {
   cabinClassEnum, tripTypeEnum, currencyEnum,
 } from "./enums.js";
 
-export const bookings = pgTable("bookings", {
-  id:       text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const bookings = sqliteTable("bookings", {
+  id:       uuidPk(),
   tenantId: text("tenant_id").notNull().references(() => tenants.id),
 
   // Booker identity — one of these is set
   userId:  text("user_id").references(() => users.id),
   agentId: text("agent_id").references(() => agents.id),
 
-  channel: bookingChannelEnum("channel").notNull(),
-  status:  bookingStatusEnum("status").notNull().default("SEARCHED"),
+  channel: text("channel", { enum: bookingChannelEnum }).notNull(),
+  status:  text("status", { enum: bookingStatusEnum }).notNull().default("SEARCHED"),
 
   // Itinerary
-  tripType:      tripTypeEnum("trip_type").notNull(),
-  cabinClass:    cabinClassEnum("cabin_class").notNull().default("ECONOMY"),
+  tripType:      text("trip_type", { enum: tripTypeEnum }).notNull(),
+  cabinClass:    text("cabin_class", { enum: cabinClassEnum }).notNull().default("ECONOMY"),
   origin:        text("origin").notNull(),         // IATA airport code
   destination:   text("destination").notNull(),
-  departureDate: timestamp("departure_date", { withTimezone: true }).notNull(),
-  returnDate:    timestamp("return_date",    { withTimezone: true }),
+  departureDate: timestamp("departure_date").notNull(),
+  returnDate:    timestamp("return_date"),
 
   // Full normalized fare snapshot at time of booking (never changes after CONFIRMED)
-  flightData: jsonb("flight_data").notNull(),
+  flightData: json("flight_data").notNull(),
 
   // Passengers
   adultCount:  integer("adult_count").notNull().default(1),
@@ -45,28 +44,28 @@ export const bookings = pgTable("bookings", {
   promoDiscount:  decimal("promo_discount",  { precision: 14, scale: 2 }).notNull().default("0"),
   platformFee:    decimal("platform_fee",    { precision: 14, scale: 2 }).notNull().default("0"),
   totalAmount:    decimal("total_amount",    { precision: 14, scale: 2 }).notNull(),
-  currency:       currencyEnum("currency").notNull(),
+  currency:       text("currency", { enum: currencyEnum }).notNull(),
 
   // Supplier
-  supplier:          supplierNameEnum("supplier").notNull(),
+  supplier:          text("supplier", { enum: supplierNameEnum }).notNull(),
   supplierBookingRef: text("supplier_booking_ref"),
   supplierSessionId:  text("supplier_session_id"),  // For session-based auth flows
   pnr:               text("pnr"),
-  ticketNumbers:     text("ticket_numbers").array().notNull().default(sql`'{}'::text[]`),
+  ticketNumbers:     textArray("ticket_numbers"),
 
   // GST (India domestic)
   gstApplicable: boolean("gst_applicable").notNull().default(false),
   gstNumber:     text("gst_number"),
-  gstDetails:    jsonb("gst_details"),
+  gstDetails:    json("gst_details"),
 
   // Add-ons (Phase 2)
-  addOns: jsonb("add_ons"),
+  addOns: json("add_ons"),
 
   // Promo
   promoCodeId: text("promo_code_id"),  // FK to promo_codes
 
   // B2B hold
-  heldUntil: timestamp("held_until", { withTimezone: true }),
+  heldUntil: timestamp("held_until"),
 
   // Group booking reference
   groupRef: text("group_ref"),
@@ -80,10 +79,10 @@ export const bookings = pgTable("bookings", {
   userAgent:     text("user_agent"),
   whatsappPhone: text("whatsapp_phone"),  // Set when channel = WHATSAPP_BOT
 
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestampNow("created_at"),
+  updatedAt: timestampNow("updated_at"),
   // Set once the ₹50 customer booking bonus is credited (guards against double credit)
-  walletBonusCreditedAt: timestamp("wallet_bonus_credited_at", { withTimezone: true }),
+  walletBonusCreditedAt: timestamp("wallet_bonus_credited_at"),
 }, (t) => ({
   tenantStatusIdx: index("bookings_tenant_status_idx").on(t.tenantId, t.status),
   tenantAgentIdx:  index("bookings_tenant_agent_idx").on(t.tenantId, t.agentId),
@@ -91,31 +90,31 @@ export const bookings = pgTable("bookings", {
   groupRefIdx:     index("bookings_group_ref_idx").on(t.groupRef),
 }));
 
-export const bookingPassengers = pgTable("booking_passengers", {
-  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const bookingPassengers = sqliteTable("booking_passengers", {
+  id:        uuidPk(),
   bookingId: text("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
 
   passengerType: text("passenger_type").notNull(),  // ADULT | CHILD | INFANT
   title:         text("title"),
   firstName:     text("first_name").notNull(),
   lastName:      text("last_name").notNull(),
-  dob:           timestamp("dob", { withTimezone: true }),
+  dob:           timestamp("dob"),
   gender:        text("gender"),
   nationality:   text("nationality"),
 
   passportNumber:  text("passport_number"),
-  passportExpiry:  timestamp("passport_expiry", { withTimezone: true }),
+  passportExpiry:  timestamp("passport_expiry"),
   passportCountry: text("passport_country"),
 
   ticketNumber: text("ticket_number"),
   seatNumber:   text("seat_number"),
   mealCode:     text("meal_code"),
 
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestampNow("created_at"),
 });
 
-export const cancellationRequests = pgTable("cancellation_requests", {
-  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const cancellationRequests = sqliteTable("cancellation_requests", {
+  id:        uuidPk(),
   bookingId: text("booking_id").notNull().references(() => bookings.id),
 
   reason:          text("reason"),
@@ -126,18 +125,18 @@ export const cancellationRequests = pgTable("cancellation_requests", {
   tenantPenalty:   decimal("tenant_penalty",   { precision: 14, scale: 2 }),
   refundAmount:    decimal("refund_amount",     { precision: 14, scale: 2 }),
 
-  requestedAt:   timestamp("requested_at",   { withTimezone: true }).notNull().defaultNow(),
-  processedAt:   timestamp("processed_at",   { withTimezone: true }),
+  requestedAt:   timestampNow("requested_at"),
+  processedAt:   timestamp("processed_at"),
   processedById: text("processed_by_id"),
   notes:         text("notes"),
 });
 
-export const reissueRequests = pgTable("reissue_requests", {
-  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const reissueRequests = sqliteTable("reissue_requests", {
+  id:        uuidPk(),
   bookingId: text("booking_id").notNull().references(() => bookings.id),
 
-  newDepartureDate: timestamp("new_departure_date", { withTimezone: true }),
-  newReturnDate:    timestamp("new_return_date",     { withTimezone: true }),
+  newDepartureDate: timestamp("new_departure_date"),
+  newReturnDate:    timestamp("new_return_date"),
   newOrigin:        text("new_origin"),
   newDestination:   text("new_destination"),
   reason:           text("reason"),
@@ -149,14 +148,14 @@ export const reissueRequests = pgTable("reissue_requests", {
   tenantPenalty:    decimal("tenant_penalty",    { precision: 14, scale: 2 }),
   totalDue:         decimal("total_due",         { precision: 14, scale: 2 }),
 
-  requestedAt:   timestamp("requested_at",   { withTimezone: true }).notNull().defaultNow(),
-  processedAt:   timestamp("processed_at",   { withTimezone: true }),
+  requestedAt:   timestampNow("requested_at"),
+  processedAt:   timestamp("processed_at"),
   processedById: text("processed_by_id"),
 });
 
 // Post-booking changes requested with the supplier (currently TripJack cancellations).
-export const bookingAmendments = pgTable("booking_amendments", {
-  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const bookingAmendments = sqliteTable("booking_amendments", {
+  id:        uuidPk(),
   tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   bookingId: text("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
   userId:    text("user_id").references(() => users.id),
@@ -168,22 +167,26 @@ export const bookingAmendments = pgTable("booking_amendments", {
   amountPaid:      decimal("amount_paid",      { precision: 14, scale: 2 }).notNull(),
   supplierCharges: decimal("supplier_charges", { precision: 14, scale: 2 }),
   refundAmount:    decimal("refund_amount",    { precision: 14, scale: 2 }),
-  currency:        currencyEnum("currency").notNull(),
+  currency:        text("currency", { enum: currencyEnum }).notNull(),
   refundMethod:    text("refund_method").notNull().default("WALLET"),  // original payment method: WALLET | NOMOD | MANUAL
   refundStatus:    text("refund_status").notNull().default("PENDING"), // PENDING | PROCESSING | DONE | FAILED | MANUAL_REQUIRED
   refundReference: text("refund_reference"),
   refundError:     text("refund_error"),
-  refundedAt:      timestamp("refunded_at", { withTimezone: true }),
-  quote:                jsonb("quote"),
-  lastSupplierResponse: jsonb("last_supplier_response"),
+  refundedAt:      timestamp("refunded_at"),
+  quote:                json("quote"),
+  lastSupplierResponse: json("last_supplier_response"),
   adminNote:     text("admin_note"),
-  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  lastCheckedAt: timestamp("last_checked_at"),
+  createdAt: timestampNow("created_at"),
+  updatedAt: timestampNow("updated_at"),
+}, (t) => ({
+  // Only one live cancellation per booking (double-submit protection).
+  oneActiveCancelIdx: uniqueIndex("booking_amendments_one_active_cancel_idx").on(t.bookingId)
+    .where(sql`type = 'CANCELLATION' AND status IN ('SUBMITTED', 'PROCESSING', 'SUCCESS')`),
+}));
 
-export const supportRequests = pgTable("support_requests", {
-  id:        text("id").primaryKey().default(sql`gen_random_uuid()`),
+export const supportRequests = sqliteTable("support_requests", {
+  id:        uuidPk(),
   tenantId:  text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   userId:    text("user_id").references(() => users.id),
   bookingId: text("booking_id").references(() => bookings.id, { onDelete: "set null" }),
@@ -193,6 +196,6 @@ export const supportRequests = pgTable("support_requests", {
   contactPhone: text("contact_phone"),
   status:    text("status").notNull().default("OPEN"),  // OPEN | IN_PROGRESS | RESOLVED | CLOSED
   adminNote: text("admin_note"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestampNow("created_at"),
+  updatedAt: timestampNow("updated_at"),
 });

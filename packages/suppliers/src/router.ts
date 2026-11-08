@@ -111,25 +111,42 @@ async function searchWithTimeout(
   throw lastError ?? new Error(`Supplier timed out after ${totalBudgetMs}ms`);
 }
 
-// Deduplicates by flight number + departure time (same physical flight from both suppliers)
+// Deduplicates by flight number + departure time (same physical flight from both suppliers).
+// One-way: the supplier with the cheapest price for a flight wins, and all of its
+// fare options for that flight are kept (Basic / Value / Ultimate…) so the
+// customer can pick one.
 function deduplicate(fares: NormalizedFare[]): NormalizedFare[] {
   const seen = new Map<string, NormalizedFare>();
+  const flights = new Map<string, NormalizedFare[]>();
 
   for (const fare of fares) {
+    const flight = `${fare.flightNumber}_${fare.departureTime}_${fare.cabinClass}`;
+    if (!fare.tripKey) {
+      const list = flights.get(flight);
+      if (list) list.push(fare); else flights.set(flight, [fare]);
+      continue;
+    }
     // Journey (round trip / multi-city) fares keep one price per leg and fare type:
     // Special Return pairing needs both the SPECIAL_RETURN and PUBLISHED prices.
-    const journey = fare.tripKey
-      ? `${fare.tripKey}_${fare.fareIdentifier ?? ""}_${fare.sri ?? ""}_${fare.msri?.join("|") ?? ""}_${fare.segments?.map((s) => s.flightNumber).join("-") ?? ""}_`
-      : "";
-    const key = `${journey}${fare.flightNumber}_${fare.departureTime}_${fare.cabinClass}`;
+    const key = `${fare.tripKey}_${fare.fareIdentifier ?? ""}_${fare.sri ?? ""}_${fare.msri?.join("|") ?? ""}_${fare.segments?.map((s) => s.flightNumber).join("-") ?? ""}_${flight}`;
     const existing = seen.get(key);
+    if (!existing || fare.totalFare < existing.totalFare) seen.set(key, fare);
+  }
 
-    if (!existing || fare.totalFare < existing.totalFare) {
-      seen.set(key, fare);  // Keep cheapest when same flight appears from both suppliers
+  const kept = [...seen.values()];
+  for (const list of flights.values()) {
+    const cheapest = list.reduce((a, b) => (b.totalFare < a.totalFare ? b : a));
+    const ids = new Set<string>();
+    for (const f of list) {
+      if (f.supplier !== cheapest.supplier) continue;
+      const id = f.id || `${f.fareIdentifier ?? ""}_${f.totalFare}`;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      kept.push(f);
     }
   }
 
-  return Array.from(seen.values()).sort((a, b) => a.totalFare - b.totalFare);
+  return kept.sort((a, b) => a.totalFare - b.totalFare);
 }
 
 // Primary search router: runs ALL enabled suppliers concurrently ("available supplier wins").

@@ -189,7 +189,7 @@ tripsafeAdminRoutes.post("/bookings/:ref/amendment/confirm", zValidator("json", 
 
 tripsafeAdminRoutes.get("/bookings/:ref/certification.zip", async (c) => {
   const r = await record(c);
-  const files = await tripsafePack(c.env, c.get("db"), r);
+  const files = await tripsafePack(c.env, r);
   if (files.length <= 1) throw new HTTPException(404, { message: "No TripSafe API logs stored for this booking yet" });
   return new Response(buildZip(files), { headers: {
     "Content-Type": "application/zip",
@@ -211,14 +211,14 @@ tripsafeAdminRoutes.post("/search", zValidator("json", tripSchema), async (c) =>
 });
 
 tripsafeAdminRoutes.get("/exchanges", async (c) => {
-  const rows = await recentExchanges(c.get("db"), c.get("tenantId"));
+  const rows = await recentExchanges(c.get("logs"), c.get("tenantId"));
   return c.json({ exchanges: rows.map((x) => ({ ...x, hasResponse: Boolean(x.hasResponse) })) });
 });
 
 tripsafeAdminRoutes.get("/exchanges.zip", async (c) => {
   const ids = (c.req.query("ids") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 100);
   const settings = await tripsafeSettings(c.env, c.get("tenantId"));
-  const files = await exchangesPack(c.env, c.get("db"), c.get("tenantId"), ids, settings.environment);
+  const files = await exchangesPack(c.env, c.get("tenantId"), ids, settings.environment);
   if (!files.length) throw new HTTPException(404, { message: "No TripSafe API logs selected" });
   return new Response(buildZip(files), { headers: {
     "Content-Type": "application/zip",

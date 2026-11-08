@@ -1,8 +1,8 @@
 // Customer (B2C) wallet ledger: booking bonus, admin credit, wallet payment,
 // refunds and coupon sharing.
 //
-// The Neon HTTP driver has no interactive transactions, so every balance change
-// is a single conditional UPDATE … RETURNING (atomic in Postgres). A debit can
+// D1 has no interactive transactions, so every balance change is a single
+// conditional UPDATE … RETURNING (atomic in SQLite). A debit can
 // therefore never overdraw even under concurrent requests; the ledger row is
 // written from the returned balance.
 
@@ -33,7 +33,7 @@ export async function creditWallet(db: Db, walletId: string, amount: number, typ
   const amt = roundMoney(amount);
   if (!(amt > 0)) throw new Error("Credit amount must be positive");
   const [row] = await db.update(walletAccounts)
-    .set({ balance: sql`${walletAccounts.balance} + ${amt}`, updatedAt: new Date() })
+    .set({ balance: sql`round(${walletAccounts.balance} + ${amt}, 2)`, updatedAt: new Date() })
     .where(eq(walletAccounts.id, walletId))
     .returning({ balance: walletAccounts.balance });
   if (!row) throw new Error("Wallet not found");
@@ -46,7 +46,7 @@ export async function debitWallet(db: Db, walletId: string, amount: number, type
   const amt = roundMoney(amount);
   if (!(amt > 0)) throw new Error("Debit amount must be positive");
   const [row] = await db.update(walletAccounts)
-    .set({ balance: sql`${walletAccounts.balance} - ${amt}`, updatedAt: new Date() })
+    .set({ balance: sql`round(${walletAccounts.balance} - ${amt}, 2)`, updatedAt: new Date() })
     .where(and(eq(walletAccounts.id, walletId), gte(walletAccounts.balance, String(amt))))
     .returning({ balance: walletAccounts.balance });
   if (!row) return null;
