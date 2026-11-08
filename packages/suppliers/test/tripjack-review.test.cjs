@@ -187,8 +187,9 @@ test('actual results filter and booking handoff preserve unknown baggage', async
   const read = new Function('q', `return ${allowance}`);
   for (const query of ['', 'bag=']) assert.equal(read(new URLSearchParams(query)), '');
   assert.equal(read(new URLSearchParams('bag=20+KG')), '20 KG');
-  assert.match(book, /Checked baggage allowance not provided/);
-  assert.doesNotMatch(book, /15 KG/);
+  const details = fs.readFileSync(path.resolve(__dirname, '../../../apps/web/app/book/FlightDetails.tsx'), 'utf8');
+  assert.match(details, /Checked baggage allowance not provided/);
+  assert.doesNotMatch(book + details, /15 KG/);
 });
 
 test('extra-baggage selections, prices and supplier booking payload are preserved', async (t) => {

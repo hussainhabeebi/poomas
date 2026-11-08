@@ -11,6 +11,20 @@ export interface SsrOption { code: string; amount: number; desc: string }
 
 export interface ReviewSegment extends FareSegment {
   key:   string;   // segment id — the SSR "key" in the Book request
+  // Shown on the checkout itinerary (all optional — not every airline sends them).
+  originCity?:        string;
+  destinationCity?:   string;
+  originAirport?:     string;
+  destinationAirport?: string;
+  departureTerminal?: string;
+  arrivalTerminal?:   string;
+  aircraft?:          string;
+  cabinClass?:        string;   // ECONOMY / PREMIUM_ECONOMY / BUSINESS / FIRST
+  bookingClass?:      string;   // RBD, e.g. "Q"
+  checkedBaggage?:    string;   // adult check-in allowance, e.g. "30 Kg"
+  cabinBaggage?:      string;   // adult cabin allowance, e.g. "7 Kg"
+  mealIncluded?:      boolean;
+  refundable?:        boolean;
   ssr: { baggage: SsrOption[]; meal: SsrOption[]; extra: SsrOption[] };
 }
 
@@ -44,6 +58,12 @@ export interface ReviewSummary {
 
 const bool = (v: unknown) => v === true || v === "true";
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+
+// Optional display field: only set when the supplier sent a non-empty value.
+function text<K extends string>(k: K, v: unknown): Partial<Record<K, string>> {
+  const t = typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+  return t ? ({ [k]: t } as Record<K, string>) : {};
+}
 
 function ssrList(v: unknown): SsrOption[] {
   return Array.isArray(v)
@@ -84,9 +104,28 @@ export function reviewTotalFare(rr: Rec, pax?: { adults: number; children?: numb
 export function parseTripjackReview(result: Rec): ReviewSummary {
   const c = result?.conditions ?? {};
   const trips: Rec[] = Array.isArray(result?.tripInfos) ? result.tripInfos : [];
-  const segments: ReviewSegment[] = trips.flatMap((t) => (Array.isArray(t?.sI) ? t.sI : [])).map((s: Rec) => ({
+  const segments: ReviewSegment[] = trips.flatMap((t) => {
+    // Fare rules for the trip: the adult fare (or the first priced pax type).
+    const fd: Rec = t?.totalPriceList?.[0]?.fd ?? {};
+    const pax: Rec = fd.ADULT ?? fd.CHILD ?? fd.INFANT ?? {};
+    const trip = { bI: pax.bI ?? {}, cc: pax.cc, cB: pax.cB, mI: pax.mI, rT: pax.rT };
+    return (Array.isArray(t?.sI) ? t.sI : []).map((s: Rec) => ({ s, trip }));
+  }).map(({ s, trip }: { s: Rec; trip: Rec }) => ({
     ...normalizeTripjackSegment(s),
     key: String(s?.id ?? ""),
+    ...text("originCity", s?.da?.city),
+    ...text("destinationCity", s?.aa?.city),
+    ...text("originAirport", s?.da?.name),
+    ...text("destinationAirport", s?.aa?.name),
+    ...text("departureTerminal", s?.da?.terminal),
+    ...text("arrivalTerminal", s?.aa?.terminal),
+    ...text("aircraft", s?.fD?.eT),
+    ...text("cabinClass", trip.cc),
+    ...text("bookingClass", trip.cB),
+    ...text("checkedBaggage", trip.bI?.iB),
+    ...text("cabinBaggage", trip.bI?.cB),
+    ...(typeof trip.mI === "boolean" ? { mealIncluded: trip.mI } : {}),
+    ...(trip.rT === 0 || trip.rT === 1 || trip.rT === 2 ? { refundable: trip.rT !== 0 } : {}),
     ssr: {
       baggage: ssrList(s?.ssrInfo?.BAGGAGE),
       meal:    ssrList(s?.ssrInfo?.MEAL),
