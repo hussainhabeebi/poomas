@@ -366,6 +366,7 @@ function buildBookUrl(fare: any, fareCurrency: string, price: number, adults: nu
     cur:      fareCurrency,
     ref:      fare.isRefundable ? "1" : "0",
     bag:      fare.baggage?.checked ?? "",
+    cls:      fare.cabinClass ?? "",
   });
   if (payCurrency) p.set("pc", payCurrency);
   if (searchId) p.set("sid", searchId);   // links the booking to this search's TripJack logs
